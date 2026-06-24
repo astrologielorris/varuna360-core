@@ -1,0 +1,119 @@
+# Varuna360 Core — GitHub Actions canary
+#
+# This workflow is the post-leak safety net that runs ON the public mirror
+# after every push. If the release pipeline ever has a bug and a `pro`
+# import slips through, this workflow fails loudly on GitHub.
+#
+# It intentionally scans the FULL working tree (not a diff against HEAD~1)
+# so that the bootstrap commit and every subsequent sync are both scanned
+# end-to-end. It does NOT pull any dependencies from the private repo —
+# everything it needs is pip-installed from PyPI.
+
+name: No Pro Imports
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  check-imports:
+    name: Static import boundary
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install import-linter
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install import-linter==2.11
+
+      - name: Scan for `pro` imports (AST)
+        run: |
+          python - <<'PY'
+          import ast
+          import pathlib
+          import sys
+
+          root = pathlib.Path(".")
+          violations = []
+
+          for path in sorted(root.rglob("*.py")):
+              # Skip anything inside the venv or build folders
+              if any(part in {"venv", ".venv", "build", "dist", "__pycache__"} for part in path.parts):
+                  continue
+              try:
+                  source = path.read_text(encoding="utf-8")
+                  tree = ast.parse(source, filename=str(path))
+              except (OSError, SyntaxError) as e:
+                  print(f"WARN: could not parse {path}: {e}", file=sys.stderr)
+                  continue
+              for node in ast.walk(tree):
+                  if isinstance(node, ast.ImportFrom):
+                      if node.level == 0 and node.module and (
+                          node.module == "pro" or node.module.startswith("pro.")
+                      ):
+                          violations.append(f"{path}:{node.lineno}: from {node.module} import ...")
+                  elif isinstance(node, ast.Import):
+                      for alias in node.names:
+                          if alias.name == "pro" or alias.name.startswith("pro."):
+                              violations.append(f"{path}:{node.lineno}: import {alias.name}")
+
+          if violations:
+              print("FAIL: pro-namespace imports found in Core public mirror:")
+              for v in violations:
+                  print(f"  {v}")
+              sys.exit(1)
+          print("OK: no pro-namespace imports found.")
+          PY
+
+      - name: Scan for `pro` textual leaks
+        run: |
+          python - <<'PY'
+          import pathlib
+          import re
+          import sys
+
+          # Broad text scan: anywhere in any .py file, match references to
+          # the proprietary directory or its children.
+          PATTERNS = [
+              re.compile(r"\bpro[./]"),
+              re.compile(r'__import__\s*\(\s*[\'\"]pro'),
+              re.compile(r'importlib\.import_module\s*\(\s*[\'\"]pro'),
+              re.compile(r"\.dev_marker"),
+          ]
+
+          root = pathlib.Path(".")
+          violations = []
+
+          for path in sorted(root.rglob("*.py")):
+              if any(part in {"venv", ".venv", "build", "dist", "__pycache__"} for part in path.parts):
+                  continue
+              try:
+                  text = path.read_text(encoding="utf-8", errors="replace")
+              except OSError:
+                  continue
+              for lineno, line in enumerate(text.splitlines(), start=1):
+                  for pat in PATTERNS:
+                      if pat.search(line):
+                          violations.append(f"{path}:{lineno}: {line.strip()[:100]}")
+                          break
+
+          if violations:
+              print("FAIL: pro-namespace text references found in Core public mirror:")
+              for v in violations[:50]:
+                  print(f"  {v}")
+              if len(violations) > 50:
+                  print(f"  ... and {len(violations) - 50} more")
+              sys.exit(1)
+          print("OK: no pro-namespace text references found.")
+          PY

@@ -1,0 +1,36 @@
+# Varuna360 Core — runtime dependencies
+#
+# This file is template-owned by release_gates/templates/public_repo/
+# and is NOT derived from the private repo's requirements.txt. When Core
+# dependencies change, update this file manually and confirm nothing Pro-only
+# has slipped in.
+
+# Core astrology calculations
+pyswisseph>=2.10.0
+
+# Timezone and date handling
+tzdata>=2024.1
+pytz>=2024.1
+# timezonefinder 8.x is what we actually run. The old ==6.0.2 pin was
+# stale and broke fresh installs on Python 3.14 because it transitively
+# required h3==3.7.7 (no wheels for Py3.14, source build fails on
+# modern CMake). Upgrading to 8.x lets pip pull a modern h3 wheel.
+# Do NOT pin h3 directly — timezonefinder picks the compatible version.
+timezonefinder>=8.0
+
+# GUI framework
+PySide6>=6.6.0
+qt-material>=2.14
+
+# Image handling
+Pillow>=10.0.0
+
+# Geocoding
+geopy>=2.4.0
+
+# License validation
+PyJWT[crypto]>=2.8.0
+cryptography>=42.0.0
+
+# HTTP requests
+requests>=2.31.0
