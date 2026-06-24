@@ -1,0 +1,123 @@
+{
+    "_comment": "Per-background display presets. Calibrate with Coordinate Editor (Testing tab). Note: offsets position the TEXT TOP-LEFT, text extends ~22px down and ~30px right from that point.",
+    "stone_01": {
+        "house_number_base_offset": {
+            "Dhata": [52, -42],
+            "Aryama": [52, -42],
+            "Mitra": [52, -42],
+            "Varuna": [52, -42],
+            "Indra": [52, -42],
+            "Vivasvan": [52, -42],
+            "Tvasta": [52, -42],
+            "Vishnu": [52, -42],
+            "Amzu": [52, -42],
+            "Bhaga": [52, -42],
+            "Pusha": [52, -42],
+            "Parjanya": [52, -42]
+        },
+        "sign_label_base_offset": {
+            "Dhata": [-29, -13],
+            "Aryama": [-37, -12],
+            "Mitra": [-50, -12],
+            "Varuna": [-50, -40],
+            "Indra": [-52, -46],
+            "Vivasvan": [-52, -24],
+            "Tvasta": [-37, -27],
+            "Vishnu": [-31, -29],
+            "Amzu": [-21, -25],
+            "Bhaga": [-23, -49],
+            "Pusha": [-20, -42],
+            "Parjanya": [-21, -13]
+        }
+    },
+    "stone_05": {
+        "house_number_base_offset": {
+            "Dhata": [62, -26],
+            "Aryama": [52, -26],
+            "Mitra": [42, -26],
+            "Varuna": [42, -46],
+            "Indra": [42, -66],
+            "Vivasvan": [42, -86],
+            "Tvasta": [52, -86],
+            "Vishnu": [62, -86],
+            "Amzu": [72, -86],
+            "Bhaga": [72, -66],
+            "Pusha": [72, -46],
+            "Parjanya": [72, -26]
+        },
+        "sign_label_base_offset": {
+            "Dhata": [72, 80],
+            "Aryama": [62, 80],
+            "Mitra": [52, 80],
+            "Varuna": [52, 70],
+            "Indra": [52, 60],
+            "Vivasvan": [52, 50],
+            "Tvasta": [62, 50],
+            "Vishnu": [72, 50],
+            "Amzu": [82, 50],
+            "Bhaga": [82, 60],
+            "Pusha": [82, 70],
+            "Parjanya": [82, 80]
+        }
+    },
+    "stone_06": {
+        "house_number_base_offset": {
+            "Dhata": [52, -42],
+            "Aryama": [52, -42],
+            "Mitra": [52, -42],
+            "Varuna": [52, -42],
+            "Indra": [52, -42],
+            "Vivasvan": [52, -42],
+            "Tvasta": [52, -42],
+            "Vishnu": [52, -42],
+            "Amzu": [52, -42],
+            "Bhaga": [52, -42],
+            "Pusha": [52, -42],
+            "Parjanya": [52, -42]
+        },
+        "sign_label_base_offset": {
+            "Dhata": [-29, -13],
+            "Aryama": [-37, -12],
+            "Mitra": [-50, -12],
+            "Varuna": [-50, -40],
+            "Indra": [-52, -46],
+            "Vivasvan": [-52, -24],
+            "Tvasta": [-37, -27],
+            "Vishnu": [-31, -29],
+            "Amzu": [-21, -25],
+            "Bhaga": [-23, -49],
+            "Pusha": [-20, -42],
+            "Parjanya": [-21, -13]
+        }
+    },
+    "leather_08": {
+        "house_number_base_offset": {
+            "Dhata": [52, -42],
+            "Aryama": [52, -42],
+            "Mitra": [52, -42],
+            "Varuna": [52, -42],
+            "Indra": [52, -42],
+            "Vivasvan": [52, -42],
+            "Tvasta": [52, -42],
+            "Vishnu": [52, -42],
+            "Amzu": [52, -42],
+            "Bhaga": [52, -42],
+            "Pusha": [52, -42],
+            "Parjanya": [52, -42]
+        },
+        "sign_label_base_offset": {
+            "Dhata": [-29, -13],
+            "Aryama": [-37, -12],
+            "Mitra": [-50, -12],
+            "Varuna": [-50, -40],
+            "Indra": [-52, -46],
+            "Vivasvan": [-52, -24],
+            "Tvasta": [-37, -27],
+            "Vishnu": [-31, -29],
+            "Amzu": [-21, -25],
+            "Bhaga": [-23, -49],
+            "Pusha": [-20, -42],
+            "Parjanya": [-21, -13]
+        }
+    }
+}

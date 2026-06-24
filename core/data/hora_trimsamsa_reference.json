@@ -1,0 +1,552 @@
+{
+  "meta": {
+    "source": "Ernst Wilhelm Aditya Course, Section 9 teaching files",
+    "version": 1,
+    "total_horas": 24,
+    "total_trimsamsas": 60
+  },
+  "horas": {
+    "Dhata": {
+      "aditya": {
+        "theme": "",
+        "healthy": "",
+        "afflicted": ""
+      },
+      "naga": {
+        "name": "Vasuki",
+        "theme": "",
+        "healthy": "",
+        "afflicted": ""
+      }
+    },
+    "Aryama": {
+      "aditya": {
+        "theme": "",
+        "healthy": "",
+        "afflicted": ""
+      },
+      "naga": {
+        "name": "Kachanira",
+        "theme": "",
+        "healthy": "",
+        "afflicted": ""
+      }
+    },
+    "Mitra": {
+      "aditya": {
+        "theme": "",
+        "healthy": "",
+        "afflicted": ""
+      },
+      "naga": {
+        "name": "Takshaka",
+        "theme": "",
+        "healthy": "",
+        "afflicted": ""
+      }
+    },
+    "Varuna": {
+      "aditya": {
+        "theme": "",
+        "healthy": "",
+        "afflicted": ""
+      },
+      "naga": {
+        "name": "Shukra",
+        "theme": "",
+        "healthy": "",
+        "afflicted": ""
+      }
+    },
+    "Indra": {
+      "aditya": {
+        "theme": "",
+        "healthy": "",
+        "afflicted": ""
+      },
+      "naga": {
+        "name": "Elapatra",
+        "theme": "",
+        "healthy": "",
+        "afflicted": ""
+      }
+    },
+    "Vivasvan": {
+      "aditya": {
+        "theme": "",
+        "healthy": "",
+        "afflicted": ""
+      },
+      "naga": {
+        "name": "Shankhapala",
+        "theme": "",
+        "healthy": "",
+        "afflicted": ""
+      }
+    },
+    "Tvasta": {
+      "aditya": {
+        "theme": "",
+        "healthy": "",
+        "afflicted": ""
+      },
+      "naga": {
+        "name": "Kambala",
+        "theme": "",
+        "healthy": "",
+        "afflicted": ""
+      }
+    },
+    "Vishnu": {
+      "aditya": {
+        "theme": "",
+        "healthy": "",
+        "afflicted": ""
+      },
+      "naga": {
+        "name": "Ashvatara",
+        "theme": "",
+        "healthy": "",
+        "afflicted": ""
+      }
+    },
+    "Amzu": {
+      "aditya": {
+        "theme": "",
+        "healthy": "",
+        "afflicted": ""
+      },
+      "naga": {
+        "name": "Mahashankha",
+        "theme": "",
+        "healthy": "",
+        "afflicted": ""
+      }
+    },
+    "Bhaga": {
+      "aditya": {
+        "theme": "",
+        "healthy": "",
+        "afflicted": ""
+      },
+      "naga": {
+        "name": "Karkotaka",
+        "theme": "",
+        "healthy": "",
+        "afflicted": ""
+      }
+    },
+    "Pusha": {
+      "aditya": {
+        "theme": "",
+        "healthy": "",
+        "afflicted": ""
+      },
+      "naga": {
+        "name": "Dhananjaya",
+        "theme": "",
+        "healthy": "",
+        "afflicted": ""
+      }
+    },
+    "Parjanya": {
+      "aditya": {
+        "theme": "",
+        "healthy": "",
+        "afflicted": ""
+      },
+      "naga": {
+        "name": "Airavata",
+        "theme": "",
+        "healthy": "",
+        "afflicted": ""
+      }
+    }
+  },
+  "trimsamsas": {
+    "Dhata": {
+      "gandharva": {
+        "name": "Tumburu",
+        "theme": "",
+        "healthy": "",
+        "afflicted": ""
+      },
+      "rakshasa": {
+        "name": "Heti",
+        "theme": "",
+        "healthy": "",
+        "afflicted": ""
+      },
+      "rishi": {
+        "name": "Pulastya",
+        "theme": "",
+        "healthy": "",
+        "afflicted": ""
+      },
+      "yaksha": {
+        "name": "Rathakrit",
+        "theme": "",
+        "healthy": "",
+        "afflicted": ""
+      },
+      "apsara": {
+        "name": "Kritasthali",
+        "theme": "",
+        "healthy": "",
+        "afflicted": ""
+      }
+    },
+    "Aryama": {
+      "gandharva": {
+        "name": "Narada",
+        "theme": "",
+        "healthy": "",
+        "afflicted": ""
+      },
+      "rakshasa": {
+        "name": "Praheti",
+        "theme": "",
+        "healthy": "",
+        "afflicted": ""
+      },
+      "rishi": {
+        "name": "Pulaha",
+        "theme": "",
+        "healthy": "",
+        "afflicted": ""
+      },
+      "yaksha": {
+        "name": "Athauja",
+        "theme": "",
+        "healthy": "",
+        "afflicted": ""
+      },
+      "apsara": {
+        "name": "Punjikasthali",
+        "theme": "",
+        "healthy": "",
+        "afflicted": ""
+      }
+    },
+    "Mitra": {
+      "gandharva": {
+        "name": "Haha",
+        "theme": "",
+        "healthy": "",
+        "afflicted": ""
+      },
+      "rakshasa": {
+        "name": "Pauruseya",
+        "theme": "",
+        "healthy": "",
+        "afflicted": ""
+      },
+      "rishi": {
+        "name": "Atri",
+        "theme": "",
+        "healthy": "",
+        "afflicted": ""
+      },
+      "yaksha": {
+        "name": "Rathasvana",
+        "theme": "",
+        "healthy": "",
+        "afflicted": ""
+      },
+      "apsara": {
+        "name": "Menaka",
+        "theme": "",
+        "healthy": "",
+        "afflicted": ""
+      }
+    },
+    "Varuna": {
+      "gandharva": {
+        "name": "Huhu",
+        "theme": "",
+        "healthy": "",
+        "afflicted": ""
+      },
+      "rakshasa": {
+        "name": "Citrasvana",
+        "theme": "",
+        "healthy": "",
+        "afflicted": ""
+      },
+      "rishi": {
+        "name": "Vasishtha",
+        "theme": "",
+        "healthy": "",
+        "afflicted": ""
+      },
+      "yaksha": {
+        "name": "Rathacitra",
+        "theme": "",
+        "healthy": "",
+        "afflicted": ""
+      },
+      "apsara": {
+        "name": "Sahajanya",
+        "theme": "",
+        "healthy": "",
+        "afflicted": ""
+      }
+    },
+    "Indra": {
+      "gandharva": {
+        "name": "Vishvashu",
+        "theme": "",
+        "healthy": "",
+        "afflicted": ""
+      },
+      "rakshasa": {
+        "name": "Varya",
+        "theme": "",
+        "healthy": "",
+        "afflicted": ""
+      },
+      "rishi": {
+        "name": "Angiras",
+        "theme": "",
+        "healthy": "",
+        "afflicted": ""
+      },
+      "yaksha": {
+        "name": "Shruta",
+        "theme": "",
+        "healthy": "",
+        "afflicted": ""
+      },
+      "apsara": {
+        "name": "Pramlocha",
+        "theme": "",
+        "healthy": "",
+        "afflicted": ""
+      }
+    },
+    "Vivasvan": {
+      "gandharva": {
+        "name": "Ugrasena",
+        "theme": "",
+        "healthy": "",
+        "afflicted": ""
+      },
+      "rakshasa": {
+        "name": "Vyaghra",
+        "theme": "",
+        "healthy": "",
+        "afflicted": ""
+      },
+      "rishi": {
+        "name": "Bhrigu",
+        "theme": "",
+        "healthy": "",
+        "afflicted": ""
+      },
+      "yaksha": {
+        "name": "Asarana",
+        "theme": "",
+        "healthy": "",
+        "afflicted": ""
+      },
+      "apsara": {
+        "name": "Anumloca",
+        "theme": "",
+        "healthy": "",
+        "afflicted": ""
+      }
+    },
+    "Tvasta": {
+      "gandharva": {
+        "name": "Dhritarashtra",
+        "theme": "",
+        "healthy": "",
+        "afflicted": ""
+      },
+      "rakshasa": {
+        "name": "Brahmapeta",
+        "theme": "",
+        "healthy": "",
+        "afflicted": ""
+      },
+      "rishi": {
+        "name": "Jamadagni",
+        "theme": "",
+        "healthy": "",
+        "afflicted": ""
+      },
+      "yaksha": {
+        "name": "Shatajit",
+        "theme": "",
+        "healthy": "",
+        "afflicted": ""
+      },
+      "apsara": {
+        "name": "Tilottama",
+        "theme": "",
+        "healthy": "",
+        "afflicted": ""
+      }
+    },
+    "Vishnu": {
+      "gandharva": {
+        "name": "Suryavarcas",
+        "theme": "",
+        "healthy": "",
+        "afflicted": ""
+      },
+      "rakshasa": {
+        "name": "Makhapeta",
+        "theme": "",
+        "healthy": "",
+        "afflicted": ""
+      },
+      "rishi": {
+        "name": "Vishvamitra",
+        "theme": "",
+        "healthy": "",
+        "afflicted": ""
+      },
+      "yaksha": {
+        "name": "Satyajit",
+        "theme": "",
+        "healthy": "",
+        "afflicted": ""
+      },
+      "apsara": {
+        "name": "Rambha",
+        "theme": "",
+        "healthy": "",
+        "afflicted": ""
+      }
+    },
+    "Amzu": {
+      "gandharva": {
+        "name": "Ritasena",
+        "theme": "",
+        "healthy": "",
+        "afflicted": ""
+      },
+      "rakshasa": {
+        "name": "Vidyucchatru",
+        "theme": "",
+        "healthy": "",
+        "afflicted": ""
+      },
+      "rishi": {
+        "name": "Kashyapa",
+        "theme": "",
+        "healthy": "",
+        "afflicted": ""
+      },
+      "yaksha": {
+        "name": "Tarkshya",
+        "theme": "",
+        "healthy": "",
+        "afflicted": ""
+      },
+      "apsara": {
+        "name": "Urvashi",
+        "theme": "",
+        "healthy": "",
+        "afflicted": ""
+      }
+    },
+    "Bhaga": {
+      "gandharva": {
+        "name": "Urna",
+        "theme": "",
+        "healthy": "",
+        "afflicted": ""
+      },
+      "rakshasa": {
+        "name": "Sphurja",
+        "theme": "",
+        "healthy": "",
+        "afflicted": ""
+      },
+      "rishi": {
+        "name": "Ayu",
+        "theme": "",
+        "healthy": "",
+        "afflicted": ""
+      },
+      "yaksha": {
+        "name": "Arishtanemi",
+        "theme": "",
+        "healthy": "",
+        "afflicted": ""
+      },
+      "apsara": {
+        "name": "Purvachitti",
+        "theme": "Venus rules the 5th and 10th houses from Bhaga, making Venus the yoga karaka for this sign. The 5th house governs what is authentically true in a person, creations where they put their life force into the work. The 10th house governs career, command, and the capacity to direct others. Purvachitti connects Bhaga's dharmic self-expression with its active commanding power.",
+        "healthy": "The person has clarity about why they do what they do, having already perceived or envisioned a possibility before acting. This earlier perception gives them genuine confidence. They lead by inspiration, arousing in others the feeling that something is worth doing. Lucky breaks arrive as the karmic fruit of previous meritorious action, advancing their career and opening unexpected doors.",
+        "afflicted": "The earlier perception either does not arise clearly or does not translate into action. The person lacks confidence and capability, so they use the Apsara's emotional power to manipulate others into doing things for them. They put people in moods and create emotional states that serve their own agenda rather than the genuine good of those they influence. Bad luck disrupts their activities and career as the karmic fruit of previous misuse of will."
+      }
+    },
+    "Pusha": {
+      "gandharva": {
+        "name": "Suruci",
+        "theme": "",
+        "healthy": "",
+        "afflicted": ""
+      },
+      "rakshasa": {
+        "name": "Vata",
+        "theme": "",
+        "healthy": "",
+        "afflicted": ""
+      },
+      "rishi": {
+        "name": "Gautama",
+        "theme": "",
+        "healthy": "",
+        "afflicted": ""
+      },
+      "yaksha": {
+        "name": "Sushena",
+        "theme": "",
+        "healthy": "",
+        "afflicted": ""
+      },
+      "apsara": {
+        "name": "Ghritaci",
+        "theme": "",
+        "healthy": "",
+        "afflicted": ""
+      }
+    },
+    "Parjanya": {
+      "gandharva": {
+        "name": "Vishvavasu",
+        "theme": "",
+        "healthy": "",
+        "afflicted": ""
+      },
+      "rakshasa": {
+        "name": "Varca",
+        "theme": "",
+        "healthy": "",
+        "afflicted": ""
+      },
+      "rishi": {
+        "name": "Bharadvaja",
+        "theme": "",
+        "healthy": "",
+        "afflicted": ""
+      },
+      "yaksha": {
+        "name": "Senajit",
+        "theme": "",
+        "healthy": "",
+        "afflicted": ""
+      },
+      "apsara": {
+        "name": "Vishvaci",
+        "theme": "",
+        "healthy": "",
+        "afflicted": ""
+      }
+    }
+  }
+}
