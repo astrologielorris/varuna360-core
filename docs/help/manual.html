@@ -1,0 +1,2074 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  body {
+    font-family: 'Segoe UI', 'Inter', sans-serif;
+    line-height: 1.7;
+    padding: 20px 25px;
+    color: {{text}};
+    background-color: {{bg}};
+  }
+  h1 {
+    font-size: 22px;
+    border-bottom: 2px solid {{primary}};
+    padding-bottom: 8px;
+    margin-bottom: 15px;
+    color: {{primary}};
+  }
+  h2 {
+    font-size: 18px;
+    margin-top: 35px;
+    border-bottom: 1px solid {{border}};
+    padding-bottom: 5px;
+    color: {{heading}};
+  }
+  h3 {
+    font-size: 14px;
+    margin-top: 20px;
+    color: {{heading}};
+  }
+  p { margin: 6px 0; }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 12px 0;
+  }
+  th, td {
+    border: 1px solid {{border}};
+    padding: 6px 10px;
+    text-align: left;
+    font-size: 12px;
+  }
+  th {
+    background-color: {{surface}};
+    font-weight: bold;
+  }
+  kbd {
+    background: {{surface}};
+    padding: 2px 6px;
+    border-radius: 3px;
+    border: 1px solid {{border}};
+    font-family: monospace;
+    font-size: 11px;
+  }
+  .note {
+    background: {{surface}};
+    border-left: 3px solid {{primary}};
+    padding: 10px 14px;
+    margin: 12px 0;
+    border-radius: 0 6px 6px 0;
+  }
+  .coming-soon {
+    background: {{surface}};
+    border-left: 3px solid {{accent}};
+    padding: 10px 14px;
+    margin: 12px 0;
+    border-radius: 0 6px 6px 0;
+    font-style: italic;
+  }
+  ul { margin: 6px 0; padding-left: 22px; }
+  li { margin: 3px 0; }
+  code {
+    background: {{surface}};
+    padding: 1px 4px;
+    border-radius: 3px;
+    font-size: 12px;
+  }
+  hr { border: none; border-top: 1px solid {{border}}; margin: 25px 0; }
+  a { color: {{primary}}; text-decoration: underline; }
+  a:hover { color: {{heading}}; }
+  img {
+    margin-top: 2px;
+    margin-bottom: 0;
+  }
+  img.panel-screenshot {
+    border: 1px solid {{border}};
+    border-radius: 6px;
+  }
+  img.panel-overview {
+    border: 1px solid {{border}};
+    border-radius: 6px;
+  }
+  .img-wrap {
+    margin-top: 2px;
+    margin-bottom: 0;
+    margin-left: 0;
+    margin-right: 0;
+  }
+  .screenshot-caption {
+    font-size: 11px;
+    font-style: italic;
+    opacity: 0.7;
+    margin-top: 0;
+    margin-bottom: 10px;
+  }
+</style>
+</head>
+<body>
+
+<!-- ============================================================ -->
+<a name="welcome"></a>
+<h1>Varuna 360 &mdash; Help Manual</h1>
+
+<p><b>Varuna 360</b> is a professional astrology chart calculator that bridges
+<b>Vedic</b> and <b>Western</b> astrology in a single application, powered
+by Swiss Ephemeris calculations.</p>
+
+<p>Whether you come from Western or Vedic astrology, you will find familiar tools here.
+Many features exist in both traditions under different names &mdash; Varuna 360 uses the
+Vedic terminology by default, but offers the Western equivalents as well. If a concept
+is unfamiliar, chances are you already know it under a different name.</p>
+
+<p>The software offers three zodiac modes, selectable from the toolbar buttons.
+The active mode is highlighted in <b>green</b>:</p>
+
+<p><b>Aditya Circle</b> (default) &mdash; A Tropical Vedic system mapping the 12
+Solar Deities (Adityas) to zodiac signs. This is the signature feature of Varuna 360.</p>
+<p class="img-wrap"><img src="images/toolbar_aditya_green.webp"
+   alt="Aditya Circle active (green button)"></p>
+
+<p><b>Tropical Classic</b> &mdash; Standard Western tropical astrology
+(Aries, Taurus, Gemini, etc.). If you are a Western astrologer, start here.</p>
+<p class="img-wrap"><img src="images/toolbar_tropical_star.webp"
+   alt="Tropical Classic active with Western names (default)"></p>
+
+<p><b>Sidereal</b> &mdash; Traditional sidereal zodiac with your chosen ayanamsa
+(Lahiri, KP, Raman&hellip;). Uses Western/Sanskrit sign names, which are essentially
+the same (Aries = Mesha/Ram, Leo = Simha/Lion, etc.). The signs align with the star
+constellations, but the actual star divisions are the <b>nakshatras</b>, not the signs.
+Toggle with <kbd>Alt+S</kbd>.</p>
+<p class="img-wrap"><img src="images/toolbar_sidereal_star2.webp"
+   alt="Sidereal active with Western names (default)"></p>
+
+<p>Each zodiac mode also has an <b>alternative naming option</b>, accessed by clicking
+the same button a second time. This gives 6 total combinations:</p>
+
+<p><b>Aditya Circle with Western names</b> &mdash; Uses the Aditya Circle zodiac (the 30 degree
+shift from Ernst Wilhelm) but displays familiar Western sign names instead of Aditya names.
+This is probably the most accessible version of the Aditya system: you get the power of the
+Aditya zodiac without needing to learn 12 new names right away. The Western sign names also
+carry a rich mythology that most people already know. Many users may prefer this as a
+starting point before learning the full Aditya names.</p>
+<p class="img-wrap"><img src="images/toolbar_aditya_star.webp"
+   alt="Aditya Circle with Western names (black button)"></p>
+
+<p><b>Tropical Classic with Aditya names</b> (advanced) &mdash; Uses the standard Western
+tropical zodiac but displays Aditya names. This is an advanced, experimental option.
+Useful for those who want to test whether the zodiac shift described by Ernst Wilhelm is
+happening, or simply to explore the Aditya naming on the classical framework. Do not use
+this unless you understand both systems or your intuition is guiding you there.</p>
+<p class="img-wrap"><img src="images/toolbar_tropical_green.webp"
+   alt="Tropical Classic with Aditya names (green, advanced)"></p>
+
+<p><b>Sidereal with Aditya names</b> (advanced) &mdash; Sidereal zodiac with the Aditya god
+names instead of the traditional Western/Sanskrit sign names. This option exists but is
+not commonly used in India. It is available for those who want to explore the Aditya
+framework applied to the sidereal zodiac.</p>
+<p class="img-wrap"><img src="images/toolbar_sidereal_green.webp"
+   alt="Sidereal with Aditya names (green button, advanced)"></p>
+
+<p>See the <a href="#zodiac-modes">Zodiac Modes</a> section for more detail on all 6 options.</p>
+
+<p>The default calculation settings follow <b>Ernst Wilhelm's Tropical Vedic</b> approach.
+If you are familiar with his courses, you will feel right at home. If you prefer standard
+Western astrology, simply switch to <b>Tropical Classic</b> mode &mdash; all classic
+Western options are fully available. You can switch at any time without losing any data.</p>
+
+<div class="note">
+<b>Tip:</b> The zodiac mode can be switched at any time using the buttons on the toolbar
+or with <kbd>Alt+Z</kbd> (Aditya) / <kbd>Alt+C</kbd> (Classic). Your choice is saved
+automatically and persists across sessions.
+</div>
+
+<div class="coming-soon">
+<b>More features coming:</b> Varuna 360 is actively developed. New panels, calculation
+options, and analysis tools are added regularly. Check back with each update for new
+capabilities.
+</div>
+
+<!-- ============================================================ -->
+<a name="getting-started"></a>
+<h2>Getting Started</h2>
+
+<h3>Interface Layout</h3>
+<p>The main window is organized as follows:</p>
+
+<p class="img-wrap"><img src="images/interface_full.webp"
+   alt="Full application window showing all areas: memory panel, toolbar, dasha panels, chart display, and info panels"></p>
+
+<ul>
+  <li><b>Top</b> &mdash; Chart memory buttons (two rows of loaded charts, click to switch)</li>
+  <li><b>Toolbar row</b> &mdash; View controls, chart title, action buttons (NOW, ADD CHART, SEARCH, etc.),
+      zodiac mode toggles, and memory controls (LOAD FOLDER, SORT, CLEAR ALL)</li>
+  <li><b>Left panel</b> &mdash; Two dasha panels side by side:
+      the <b>left dasha</b> (Vedanga Jyotisha) and the <b>right dasha</b>
+      (switchable between Vimshottari and Planetary Ages with <kbd>F7</kbd>)</li>
+  <li><b>Center</b> &mdash; Chart display (South Indian, Wheel, or North Indian)</li>
+  <li><b>Right panel</b> &mdash; Info panels (Karakas, Strength, Aspects)</li>
+</ul>
+
+<div class="note">
+<b>Zoom in and out:</b> This software was built with zooming in mind. Use your <b>mouse
+scroll wheel</b> or trackpad pinch gesture to zoom in and out of the chart. Many features
+(retinue ring labels, degree markers, cusp information) become readable only when zoomed in.
+If you never zoom, you are missing a significant part of the experience. Scrolling to zoom
+is the recommended way to interact with the chart.
+</div>
+
+<h3>Loading a Chart</h3>
+
+<p>The easiest way to load charts is <b>drag and drop</b>: drag a CHTK file or an entire
+folder of CHTK files from your file manager directly onto the application window. All
+charts are loaded instantly.</p>
+
+<p class="img-wrap"><img src="images/drag_drop_chtk.webp"
+   alt="Dragging a CHTK file from the file manager onto the application to load it"></p>
+<p class="screenshot-caption">Drag and drop a CHTK file directly onto the app to load it.</p>
+
+<p>CHTK is the chart format used by <b>Kala</b> (Ernst Wilhelm's astrology software).
+If you have charts from Kala, they work directly. Other chart formats from other software
+can be integrated upon request.</p>
+
+<p>Other ways to load charts:</p>
+<ul>
+  <li><b>File &gt; Open CHTK</b> (<kbd>Ctrl+O</kbd>) &mdash; Open a single CHTK chart file</li>
+  <li><b>Load Folder</b> button in the memory panel &mdash; Load an entire folder of CHTK files at once
+      (useful for research on multiple charts)</li>
+  <li><b>Add Chart</b> button (<kbd>Alt+A</kbd>) &mdash; Quick chart entry from the toolbar</li>
+</ul>
+
+<h3>Creating a New Chart</h3>
+<p>There are two ways to create a chart:</p>
+<ul>
+  <li><b>File &gt; New Chart</b> (<kbd>Ctrl+N</kbd>) &mdash; Opens the Edit Chart tab &gt;
+      New Chart subtab with a full form</li>
+  <li><b>Add Chart</b> button (<kbd>Alt+A</kbd>) &mdash; Quick entry dialog from the toolbar</li>
+</ul>
+
+<!-- ============================================================ -->
+<a name="chart-views"></a>
+<h2>Chart Views</h2>
+
+<p>Varuna 360 offers three chart visualization styles. Press <kbd>F2</kbd> to cycle through them,
+or use <b>View &gt; Cycle Chart View</b>.</p>
+
+<h3>South Indian Chart</h3>
+<p>The most <b>graphically designed</b> view. Features a diamond/square layout with sign icons
+and a custom stone background that changes with the selected theme (light themes use a light stone,
+dark themes use a dark stone).</p>
+
+<p class="img-wrap"><img src="images/chart_south_indian.webp"
+   alt="South Indian chart view with Aditya sign names, stone background, and planet icons"></p>
+
+<p>The South Indian chart is a <b>sign-centric</b> format: the signs are always in the same
+position on the grid, and the houses (numbered from the Ascendant) rotate around them.
+This makes it excellent for:</p>
+<ul>
+  <li><b>Transit work</b> &mdash; Since the signs never move, it is easy to track transiting
+      planets without getting disoriented when jumping between dates. You always know
+      where Aries is, where Leo is, etc.</li>
+  <li><b>Sign-based techniques</b> &mdash; Any technique that focuses on sign rulerships,
+      sign aspects, or sign-based yogas is easier to read here.</li>
+</ul>
+<p><b>Transit Overlay</b> (<kbd>F3</kbd>) &mdash; When transit mode is active, the center box
+displays transit planets alongside the natal chart, letting you compare transiting positions
+directly inside the South Indian layout.</p>
+
+<p class="img-wrap"><img src="images/transit_overlay_south_indian.webp"
+   alt="South Indian chart with transit overlay showing transit planets in the center box"></p>
+<p class="screenshot-caption">Transit overlay in the South Indian chart. The center box shows
+the transit chart while the outer boxes display the natal chart.</p>
+
+<p>Interactive features:</p>
+<ul>
+  <li>Click a <b>planet</b> to open a detailed info dialog (position, house, aspects, dignity)</li>
+  <li>Click a <b>sign</b> to see its 12 icon variations</li>
+</ul>
+
+<h3>Wheel View</h3>
+<p>The most <b>information-dense</b> and optimized view. A circular zodiac wheel with concentric
+rings displaying multiple layers of data simultaneously.</p>
+
+<p class="img-wrap"><img src="images/chart_wheel.webp"
+   alt="Wheel chart view with Aditya sign names, element-colored sectors, planet icons, and house numbers"></p>
+<ul>
+  <li><b>Dual Rim</b> &mdash; Toggle an overlay showing both Tropical and Aditya positions
+      (button: <code>+ Tropical</code> / <code>+ Aditya</code>)</li>
+</ul>
+<p class="img-wrap"><img src="images/wheel_dual_rim.webp"
+   alt="Wheel with dual rim showing both Aditya (inner) and Tropical (outer) zodiac icons"></p>
+<ul>
+  <li><b>Transit Overlay</b> (<kbd>F3</kbd>) &mdash; Show transiting planets in an outer ring.
+      Blue lines connect natal planets to their transit positions. Transit overlay is available
+      in all three chart views: the Wheel shows a transit rim, the South Indian shows transits
+      in the center box, and the North Indian shows a smaller transit diamond overlaid on the
+      natal chart.</li>
+</ul>
+<p class="img-wrap"><img src="images/wheel_transit_rim.webp"
+   alt="Wheel with transit rim showing transiting planets in outer ring with blue aspect lines"></p>
+<ul>
+  <li><b>Retinue Rings</b> (<kbd>F5</kbd>) &mdash; Colored house rings showing planetary retinues.
+      Each sector represents a retinue being (Gandharva, Rakshasa, Rishi, Yaksha, Apsara)
+      with the being's name visible. Click any sector to see its full description.</li>
+</ul>
+<p class="img-wrap"><img src="images/wheel_retinue_rings.webp"
+   alt="Wheel with retinue rings showing all being names around the chart"></p>
+<ul>
+  <li><b>Pie Charts</b> (<kbd>Shift+F5</kbd>) &mdash; Element and modality pie charts displayed
+      on the wheel, showing the percentage distribution at a glance.</li>
+</ul>
+<p class="img-wrap"><img src="images/wheel_pie_chart.webp"
+   alt="Element pie chart showing Water 56%, Fire 31%, Earth 12%"></p>
+<ul>
+  <li><b>Cusp Lines</b> (<kbd>F9</kbd>) &mdash; Cycle through Off / Soft glow / Bright for house
+      boundaries. Shows the exact cusp degree and house number (e.g., "C6 18" for cusp 6 at 18 degrees).</li>
+</ul>
+<p class="img-wrap"><img src="images/wheel_cusp_lines.webp"
+   alt="Zoomed wheel showing cusp line with DESC 17 and C6 18 degree markers"></p>
+<ul>
+  <li><b>House Display Mode</b> &mdash; Choose between <b>Sign-based (traditional)</b>
+      where each sign is one house, and <b>Standard Western houses</b> where house 1
+      starts at the Ascendant degree, matching Astro.com. Change in
+      Settings &gt; Zodiac &amp; Calculation &gt; Wheel house display.</li>
+</ul>
+
+<p class="img-wrap"><img src="images/settings_house_system.webp"
+   alt="Settings showing House System (Placidus) and Wheel house display (Sign-based traditional) dropdowns"></p>
+
+<p class="img-wrap"><img src="images/wheel_western_houses.webp"
+   alt="Wheel with Standard Western house layout showing unequal house sizes starting at ASC 17 degrees"></p>
+<p class="screenshot-caption">Standard Western house layout: house 1 starts at the exact Ascendant degree (ASC 17), houses are unequal in size. Compare with the sign-based layout where each house is exactly one sign.</p>
+
+<ul>
+  <li><b>Double-click a planet</b> to open the <b>Planet Details dialog</b>. This popup
+      shows the planet's full position (sign, degree, element), its dignity status (Own Sign,
+      Exalted, Debilitated...), and a detailed table of contents covering the Aditya description,
+      meaning, body part significance, rishi association, stories, attributes, and core questions.
+      The dialog has its own scrollable content area for reading the full Aditya text.</li>
+</ul>
+
+<p class="img-wrap"><img src="images/planet_details_dialog.webp" class="panel-screenshot"
+   alt="Mars Details dialog showing Own Sign dignity, Aditya description with Contents sidebar"></p>
+<p class="screenshot-caption">Double-click any planet to open its details. Here Mars in its Own Sign (Dhata/Aries) shows the full Aditya description with a Contents sidebar for navigation.</p>
+
+<ul>
+  <li><b>Fixed Ascendant</b> (<kbd>F4</kbd>) &mdash; Cycle through the 12 signs as ascendant.
+      This lets you view the chart from any sign's perspective &mdash; for example,
+      setting Dhata as the fixed ascendant can offer a different analytical viewpoint.</li>
+  <li><b>Degree Labels</b> (<kbd>F6</kbd>) &mdash; Toggle degree markers on the Trimsamsa ring
+      sectors, showing the exact degree boundaries for each being.</li>
+</ul>
+
+<h3>Wheel Interaction: Sectors, Houses, and Retinue</h3>
+
+<p>When <b>Retinue Rings</b> (<kbd>F5</kbd>) are enabled, the wheel becomes fully interactive.
+Three layers of interaction let you explore the chart's retinue structure:</p>
+
+<p><b>1. Hover over a sector</b> (any colored ring segment): the corresponding house number
+lights up in the center of the wheel. This shows you which house that sector activates.
+For example, hovering over a Gandharva sector in Mitra will highlight the houses that
+Mitra's Gandharva activates. A tooltip shows the being's name and element.</p>
+
+<p class="img-wrap"><img src="images/wheel_hover_sector.webp"
+   alt="Hovering over a Yaksha sector showing tooltip 'Shrota (Yaksha) Earth' and house highlight"></p>
+
+<p><b>2. Hover over a house number</b> (in the center): all sectors connected to that house
+light up on the wheel. This is the reverse view, showing you every being across every sign
+that activates this house. Useful for seeing which retinue beings are channeling energy
+into a specific life area.</p>
+
+<p class="img-wrap"><img src="images/wheel_hover_house.webp"
+   alt="Hovering over house 2 in the center, highlighting all sectors connected to that house"></p>
+
+<p><b>3. Click any sector</b> to open the <b>Sector Info Dialog</b>. This popup gives you
+the full structural breakdown for that sign's retinue:</p>
+<ul>
+  <li>The sign's <b>Hora structure</b> (Aditya side and Naga side, which houses each activates)</li>
+  <li>The sign's <b>Trimsamsa beings</b> (Gandharva, Rakshasa, Rishi, Yaksha, Apsara) with their
+      exact degree ranges, elements, and house activations</li>
+  <li>Each being's <b>theme description</b> with healthy and afflicted expressions</li>
+  <li>If a planet is in the clicked sector, the popup also shows its <b>uplifted and afflicted
+      expression totals</b> (avastha virupas split into positive and negative)</li>
+</ul>
+
+<p class="img-wrap"><img src="images/sector_dialog.webp"
+   alt="Sector Info Dialog showing Indra structure with Yaksha Shruta theme, healthy and afflicted expressions, and Mercury uplifted +120"></p>
+
+<div class="note">
+<b>Tip:</b> The sector interaction is one of the most important features for understanding
+how the retinue system works. Each sector is not just a visual indicator: it maps a specific
+being to specific houses, creating a web of connections across the chart. Clicking sectors
+is the fastest way to learn how trimsamsa beings operate in practice.
+</div>
+
+<h3>North Indian Chart</h3>
+<p>A square chart with horizontal and vertical lines showing all planets including
+outer planets (Uranus, Neptune, Pluto) when enabled with <kbd>F8</kbd>, plus Rahu and Ketu.</p>
+
+<p class="img-wrap"><img src="images/chart_north_indian.webp"
+   alt="North Indian chart with diamond layout, element-colored houses, and Aditya sign names"></p>
+
+<p>The North Indian chart is a <b>house-centric</b> format: the houses are always in the same
+position (1st house at top, 7th at bottom), and the signs rotate around them.
+This makes it excellent for:</p>
+<ul>
+  <li><b>House-based analysis</b> &mdash; When you want to focus on which planets are in the
+      1st, 7th, 10th house, etc., the positions are always in the same visual location.</li>
+  <li><b>Quick house identification</b> &mdash; You can instantly see angular (1/4/7/10),
+      trinal (1/5/9), and dusthana (6/8/12) planets at a glance.</li>
+</ul>
+
+<p><b>Transit Overlay</b> (<kbd>F3</kbd>) &mdash; When transit mode is active, a smaller
+diamond chart appears overlaid on the natal chart, showing the transiting planets in each house.
+The transit overlay uses the same element-colored houses and sign icons as the natal chart,
+making it easy to compare natal and transit positions at a glance.</p>
+
+<p class="img-wrap"><img src="images/transit_overlay_north_indian_full.webp"
+   alt="North Indian chart with transit overlay diamond showing transiting planets overlaid on natal chart"></p>
+<p class="screenshot-caption">Transit overlay on the North Indian chart. The smaller inner diamond shows
+transit planets while the outer diamond displays the natal chart. The dasha panel on the left shows
+the active dasha period.</p>
+
+<div class="note">
+<b>Tip:</b> Switching between views helps your intuition. Each format highlights different
+patterns &mdash; the South Indian makes sign relationships obvious, the North Indian makes
+house placements obvious, and the Wheel shows the most data at once. If you feel stuck
+in your analysis, try switching views with <kbd>F2</kbd> &mdash; a different visual layout
+often sparks new insights.
+</div>
+
+<h3>Sign Selector Column (Right of Chart)</h3>
+
+<p>To the right of the chart area, you will see a column of <b>12 numbered buttons</b>
+labeled 1 through 12. These numbers represent the 12 signs of the zodiac, not house numbers.</p>
+
+<p class="img-wrap"><img src="images/sign_selector_buttons.webp"
+   alt="Sign selector column with buttons 1 through 12, button 7 selected"></p>
+
+<p>In Vedic astrology, signs are traditionally referred to by number (1 = Aries/Dhata,
+2 = Taurus/Aryama, etc.). This is the convention used here. Hover over any button
+to see the full sign name in the tooltip.</p>
+
+<p>Clicking a number <b>recalculates the chart from that sign's perspective as Ascendant</b>.
+This is based on Ernst Wilhelm's structure course: by viewing the chart from each of the 12
+sign positions, you can analyze how each Aditya's theme manifests in the person's life.
+For example, clicking "7" shows the chart with Tvasta as the 1st house, revealing
+the house structure from Tvasta's perspective.</p>
+
+<p>Click the same button again to deselect it and return to the natal Ascendant.
+Only one sign can be selected at a time.</p>
+
+<p><b>South Indian chart:</b> When you select a sign, the center of the chart transforms
+into a mini <b>North Indian chart</b> showing the chart from the selected sign's perspective.
+The outer grid stays fixed (signs never move in South Indian). This gives you a quick
+house overview from any sign without leaving the South Indian view.</p>
+
+<p class="img-wrap"><img src="images/sign_selector_south.webp"
+   alt="South Indian chart with sign 7 (Tvasta) selected, showing mini North Indian in the center"></p>
+<p class="screenshot-caption">South Indian with sign 7 selected: Tvasta is the 1st house in the center mini chart. Notice
+the Ascendant cusp (H1) is in Indra but the 1st house is Tvasta, which would be impossible
+in a normal chart. This is a deliberate analytical view, not an error.</p>
+
+<p><b>Wheel and North Indian charts:</b> The entire chart redraws with the selected sign
+as Ascendant. The house numbers rotate so the selected sign becomes house 1.</p>
+
+<p class="img-wrap"><img src="images/sign_selector_wheel.webp"
+   alt="Wheel chart with sign 7 (Tvasta) selected as Ascendant, houses rotated"></p>
+<p class="screenshot-caption">Wheel with sign 7 selected: the entire chart redraws from Tvasta's perspective.</p>
+
+<div class="note">
+<b>For new users:</b> If you see numbers next to the chart and wonder what they are,
+they are signs, not house numbers. This is a standard Vedic convention where signs are
+identified by their ordinal position in the zodiac. The tooltip on each button shows
+the corresponding sign name.
+</div>
+
+<!-- ============================================================ -->
+<a name="info-panels"></a>
+<h2>Info Panels (Right Side)</h2>
+
+<p>The right side of the window contains three stacked panel groups. Each group has
+multiple sub-tabs &mdash; click the header buttons to switch between them.</p>
+
+<p class="img-wrap"><img src="images/panels_overview.webp" class="panel-overview"
+   alt="All three info panels: Karakas (enriched), Strength, and Aspects"></p>
+<p class="screenshot-caption">The three info panels with Karakas in enriched mode, Strength, and Aspects.</p>
+
+<h3>Panel Interaction</h3>
+
+<p>All three panels share the same interaction pattern:</p>
+<ul>
+  <li><b>Tab buttons</b> in the header bar switch between sub-views within the panel</li>
+  <li><b>Swap icon</b> (arrow button at the right end of the header) toggles between
+      alternative views. Each panel's swap does something different:
+      <ul>
+        <li><b>Karakas panel:</b> toggles between basic tables and enriched analytical views
+            (Karakas + Avastha, Planetary Condition compact)</li>
+        <li><b>Strength panel:</b> toggles column headers between Sanskrit and English terms
+            (e.g., Digbala vs Direction)</li>
+        <li><b>Aspects panel:</b> toggles between Vedic and Tajika aspect systems</li>
+      </ul>
+  </li>
+  <li><b>Double-click</b> any panel to open a <b>fullscreen zoom</b> dialog. The zoom version
+      shows expanded data with more columns and detail than the compact panel. Use the
+      arrow buttons or clickable tabs at the top to navigate between pages.</li>
+  <li><b>Copy All as JSON</b> button in every fullscreen zoom dialog lets you copy all
+      the panel data to your clipboard in JSON format. This is designed for use with AI
+      assistants: paste the JSON into Claude, ChatGPT, or any AI tool for chart analysis.</li>
+</ul>
+
+<p>Many of these concepts exist in both Vedic and Western astrology under different names.
+The table below maps the key terms:</p>
+
+<table>
+  <tr><th>Vedic Term</th><th>Western Equivalent</th></tr>
+  <tr><td>Karakas (significators)</td><td>No direct equivalent &mdash; unique to Vedic system</td></tr>
+  <tr><td>Digbala (directional strength)</td><td>Angular strength &mdash; Hellenistic "busy places"; later "accidental dignity"</td></tr>
+  <tr><td>Uccha Bala (exaltation strength)</td><td>Essential dignity (exaltation/fall/domicile/detriment)</td></tr>
+  <tr><td>Chesta Bala (confidence)</td><td>No direct equivalent &mdash; synodic cycle strength (star planets), solstice/phase (luminaries)</td></tr>
+  <tr><td>Elements (Fire/Earth/Air/Water)</td><td>Same &mdash; identical concept in both systems</td></tr>
+  <tr><td>Modality (Moveable/Fixed/Dual)</td><td>Same &mdash; Cardinal/Fixed/Mutable</td></tr>
+  <tr><td>Vedic aspects (graha drishti)</td><td>Aspects with special planetary rules</td></tr>
+  <tr><td>Tajika aspects</td><td>Nearly identical to Western aspects (orb-based)</td></tr>
+  <tr><td>Avastha (planetary states)</td><td>No direct equivalent &mdash; age/vitality of planets</td></tr>
+  <tr><td>Avastha / Shame (Lajjitaadi)</td><td>No equivalent &mdash; uniquely Vedic concept (not the same as combustion or debilitation)</td></tr>
+</table>
+
+<h3>Karakas / Hora / Trimsamsa / Houses</h3>
+
+<p>The Karakas panel has <b>four tabs</b>: Karakas, Hora, Trim, Houses.
+Two of these tabs have enriched views accessible via the swap icon.</p>
+
+<p><b>Karakas</b> (Chara Karakas) &mdash; A concept unique to Vedic astrology with no direct
+Western equivalent. The 7 visible planets are sorted by degree within their sign, and each
+is assigned a significator role based on that ranking:</p>
+
+<p class="img-wrap"><img src="images/panel_karakas.webp" class="panel-screenshot"
+   alt="Karakas tab showing 7 karaka rankings with planet and cusp lord columns"></p>
+<ul>
+  <li><b>AK</b> (Atmakaraka) &mdash; Significator of the Self (highest degree)</li>
+  <li><b>AmK</b> (Amatyakaraka) &mdash; Significator of Career/Minister</li>
+  <li><b>BK</b> (Bhratrukaraka) &mdash; Significator of Siblings</li>
+  <li><b>MK</b> (Matrukaraka) &mdash; Significator of Mother</li>
+  <li><b>PiK</b> (Pitrukaraka) &mdash; Significator of Father</li>
+  <li><b>GK</b> (Gnatikaraka) &mdash; Significator of Relatives</li>
+  <li><b>DK</b> (Darakaraka) &mdash; Significator of Spouse (lowest degree)</li>
+</ul>
+<p>Each row also shows the <b>cusp lord</b> for the associated house. The cusp lord is
+determined by the actual house cusp degree (using your selected house system, e.g. Placidus
+or Campanus), which can differ from the whole sign lord when the cusp falls in a different
+sign. Ernst Wilhelm recommends using both perspectives. The <b>AK</b> and <b>DK</b> rows
+are highlighted as the most significant.</p>
+
+<p><b>Karakas enriched view</b> (swap icon) &mdash; When you click the swap icon, the Karakas
+tab shows an enriched version with each karaka's sign, house connections, avastha total
+(uplifted or afflicted), and dominant condition (Exalted, Shamed, Supported, Starved, etc.).
+Rows are colored by trimsamsa being type.</p>
+
+<p class="img-wrap"><img src="images/panel_karakas_enriched.webp" class="panel-screenshot"
+   alt="Karakas enriched view with sign, houses, avastha total, and condition per karaka"></p>
+
+<p><b>Hora</b> &mdash; The Hora divides each sign into two halves &mdash; like two sides of
+a mountain. Each side represents a fundamentally different way the sign's love is expressed:</p>
+
+<p class="img-wrap"><img src="images/panel_hora.webp" class="panel-screenshot"
+   alt="Hora tab showing each planet's hora being name and Aditya/Naga ruler"></p>
+
+<table>
+  <tr><th></th><th>Sun Hora (Aditya side)</th><th>Moon Hora (Naga side)</th></tr>
+  <tr><td><b>Degrees</b></td><td>0&deg;-15&deg; in odd signs, 15&deg;-30&deg; in even</td>
+      <td>15&deg;-30&deg; in odd signs, 0&deg;-15&deg; in even</td></tr>
+  <tr><td><b>Action</b></td><td>Fire up your engines &mdash; actively express the Aditya's love</td>
+      <td>Take the brakes off &mdash; release unconscious blocks preventing love</td></tr>
+  <tr><td><b>When healthy</b></td><td>Powerful, truthful, purposeful expression</td>
+      <td>Natural flow of love once blocks are released</td></tr>
+  <tr><td><b>When afflicted</b></td><td>Aggressive, selfish, pushy &mdash; force twisted into ego</td>
+      <td>Sad, wounded, stuck &mdash; something is missing, can't feel love</td></tr>
+  <tr><td><b>What to work on</b></td><td>Express the Aditya purely, untwist selfishness</td>
+      <td>Let go of unconscious conditioning (the Naga work)</td></tr>
+</table>
+
+<p>The same affliction in the same sign produces <b>completely different manifestations</b>
+depending on which hora the planet is in. This is one of the most practical insights
+from Ernst Wilhelm's system.</p>
+
+<p><b>Trimsamsa</b> &mdash; Each sign is divided into 5 unequal segments ruled by Mars, Saturn,
+Jupiter, Mercury, and Venus. In the Aditya system, each segment activates a specific
+<b>being from the Aditya's retinue</b>:</p>
+
+<p class="img-wrap"><img src="images/panel_trim.webp" class="panel-screenshot"
+   alt="Trimsamsa tab showing each planet's being, type, and element"></p>
+<table>
+  <tr><th>Ruler</th><th>Being</th><th>Element</th><th>Hora</th><th>Role</th></tr>
+  <tr><td>Mars</td><td>Gandharva</td><td>Fire</td><td>Sun</td><td>The warrior-inspirer &mdash; fires up the Aditya force with strength and purpose</td></tr>
+  <tr><td>Saturn</td><td>Rakshasa</td><td>Air</td><td>Sun</td><td>The destroyer of threats &mdash; permanently eliminates what blocks love</td></tr>
+  <tr><td>Jupiter</td><td>Rishi</td><td>Ether</td><td>Both</td><td>The only being spanning both horas &mdash; brings truth and wisdom to both sides</td></tr>
+  <tr><td>Mercury</td><td>Yaksha</td><td>Earth</td><td>Moon</td><td>The keeper of wealth &mdash; changes environment to retrain the unconscious</td></tr>
+  <tr><td>Venus</td><td>Apsara</td><td>Water</td><td>Moon</td><td>The mood-shifter &mdash; dissolves conditioning through emotional alchemy</td></tr>
+</table>
+
+<p><b>Houses</b> &mdash; The default view shows a <b>House Activation bar graph</b>,
+a visual summary of which houses are most activated by the chart's retinue beings.
+Taller bars mean more retinue beings channel energy into that house.</p>
+
+<p class="img-wrap"><img src="images/panel_houses.webp" class="panel-screenshot"
+   alt="Houses tab showing the house activation bar graph with retinue being icons"></p>
+
+<p><b>Planetary Condition</b> (swap icon) &mdash; When you click the swap icon on the Houses
+tab, you get a compact Planetary Condition table showing each planet's sign, house connections,
+avastha total (colored green for positive, red for negative), and lajjitaadi condition states.
+Rows are colored by trimsamsa being type. This is a condensed version of the full Planetary
+Condition page available in the fullscreen zoom.</p>
+
+<p class="img-wrap"><img src="images/panel_condition.webp" class="panel-screenshot"
+   alt="Planetary Condition compact view with planet, houses, avastha total, and conditions"></p>
+
+<h3>Karakas Fullscreen Zoom (Double-Click)</h3>
+
+<p>Double-click anywhere on the Karakas panel to open a <b>6-page fullscreen view</b>.
+Navigate between pages using the arrow buttons or clickable tab chips at the top.
+Each page shows an expanded version of the panel data with more columns and detail.
+A <b>Copy All as JSON</b> button at the bottom right copies the entire page content
+for use with AI tools.</p>
+
+<p>At the bottom of every zoom page, a <b>Five Being Types</b> reference strip
+shows all five retinue beings (Gandharva, Rakshasa, Rishi, Yaksha, Apsara) with their
+ruler, element, hora side, and role. This serves as a quick legend while reading
+the data above.</p>
+
+<p><b>Page 1: Karakas</b> &mdash; The basic karaka ranking table at full screen size.
+Three wide columns (Karaka, Planet, Cusp Lord) with each row colored by its trimsamsa
+being type. The AK and DK rows are highlighted as the most significant.</p>
+
+<p class="img-wrap"><img src="images/zoom_karakas.webp" class="panel-screenshot"
+   alt="Karakas fullscreen zoom showing 7 karakas with being-type row colors and cusp lords"></p>
+
+<p><b>Page 2: Karakas+</b> &mdash; The enriched karaka view with the full <b>avastha
+interaction matrix</b>. Each row shows the karaka name, its retinue being type, and then
+7 columns (Su, Mo, Ma, Me, Ju, Ve, Sa) showing how much each planet helps or harms
+this karaka. Values are color-coded: green with <code>+</code> for positive (uplifting)
+interactions, red with <code>~</code> for negative (afflicting) ones. Special markers
+like <code>OH</code> (Own House) appear when a planet is in its own sign.
+The <b>Tot</b> column sums all interactions, and the <b>Condition</b> column lists
+the specific lajjitaadi avasthas (Mudita, Kshobhita, Kshudhita, Trishita, Svastha)
+with their virupa values.</p>
+
+<p class="img-wrap"><img src="images/zoom_karakas_plus.webp" class="panel-screenshot"
+   alt="Karakas+ zoom showing avastha matrix with per-planet interaction values and conditions"></p>
+
+<p><b>Page 3: Hora</b> &mdash; Extended hora table with additional columns.</p>
+
+<p><b>Page 4: Trimsamsa</b> &mdash; Extended trimsamsa table with additional columns.</p>
+
+<p><b>Page 5: Graph</b> &mdash; The house activation bar graph at full size.</p>
+
+<p><b>Page 6: Planetary Condition</b> &mdash; The most data-rich page. Shows every planet
+(including Ascendant, Rahu, and Ketu) with its sign and degree, Hora and Trimsamsa house
+connections, retinue being name, the full 7-column avastha interaction matrix, total,
+and condition summary. For Rahu and Ketu (which have no sign of their own), the
+<b>Lord</b> of the sign they occupy is shown instead. Retinue being names are
+<b>clickable</b>: clicking one opens a popup showing the uplifted and afflicted
+expression totals for that sector.</p>
+
+<p class="img-wrap"><img src="images/zoom_planetary_condition.webp" class="panel-screenshot"
+   alt="Planetary Condition fullscreen zoom with houses, retinue, avastha matrix, and conditions for all planets"></p>
+
+<div class="note">
+<b>Learn more:</b> The Hora and Trimsamsa system is part of Ernst Wilhelm's Adityas course,
+based on Srimad Bhagavatam 12.11.33-44. For the full interactive study guide with degree tables
+for all 12 signs, visit
+<a href="https://360heartsinthesky.com/en/docs/nouveau-zodiac">360heartsinthesky.com/en/docs/nouveau-zodiac</a>
+</div>
+
+<h3>Strength / Elements / Modality / Dignities</h3>
+
+<p><b>Strength</b> &mdash; Displays three planetary strength measurements for each of the 7 planets.
+The column headers can be toggled between Sanskrit terms and plain English by clicking
+the <b>swap icon</b> on the Strength panel header. Western astrologers will recognize
+these concepts under their dignity system:</p>
+
+<p class="img-wrap"><img src="images/panel_strength.webp" class="panel-screenshot"
+   alt="Strength tab with Sanskrit column headers: Digbala, Uccha, Chesta">
+<img src="images/panel_strength_english.webp" class="panel-screenshot"
+   alt="Strength tab with English column headers: Direction, Energy, Confidence"></p>
+<p class="screenshot-caption">Left: Sanskrit terms (default). Right: English terms (after clicking the swap icon).</p>
+
+<table>
+  <tr><th>Vedic Name</th><th>English Name</th><th>What It Measures</th><th>Western Parallel</th></tr>
+  <tr><td>Digbala</td><td>Direction</td><td>Strength from house position &mdash; each planet has a "best house" where it gains maximum directional strength</td><td>Angular strength (Hellenistic: planets in angular places are strongest). Later called "accidental dignity" in Medieval astrology &mdash; "accidental" here means "circumstantial", not "by chance"</td></tr>
+  <tr><td>Uccha Bala</td><td>Energy</td><td>Strength from sign position &mdash; how close the planet is to its exaltation degree</td><td>Essential dignity &mdash; exaltation, domicile, detriment, fall</td></tr>
+  <tr><td>Chesta Bala</td><td>Confidence</td><td>A composite strength that varies by planet type. For the 5 star planets (Mars, Mercury, Jupiter, Venus, Saturn) it is based on their synodic cycle and apparent motion &mdash; this is closely related to retrograde status (see note below). The Sun uses Ayana Bala (solstice strength) and the Moon uses Paksha Bala (lunar phase strength)</td><td>No direct Western equivalent &mdash; partially relates to Hellenistic concepts of planetary speed and sect</td></tr>
+</table>
+
+<div class="note">
+<b>Chesta Bala and Retrograde:</b> For the 5 star planets, Chesta Bala is calculated from
+the planet's elongation from the Sun in its synodic cycle &mdash; the same cycle that produces
+retrograde motion. A high Chesta Bala often indicates a retrograde or near-retrograde planet.
+When a planet is retrograde, the Chesta column shows <b>R*</b> before the value
+(e.g., <code>R* 52.3</code>) as a quick visual indicator. The Sun and Moon are never
+retrograde, so they never show this marker &mdash; their Chesta values come from entirely
+different calculations (Ayana Bala and Paksha Bala respectively).
+</div>
+
+<p><b>Elements</b> &mdash; The distribution of planets across Fire, Earth, Air, and Water.
+This is <b>identical in both Vedic and Western astrology</b> &mdash; same four elements,
+same sign assignments. Shown as percentages with the list of planets in each element.
+The dominant element is marked with a star.</p>
+
+<p class="img-wrap"><img src="images/panel_elements.webp" class="panel-screenshot"
+   alt="Elements tab showing Water 37.5%, Fire 25%, Earth 25%, Air 12.5%"></p>
+
+<p><b>Modality</b> &mdash; The distribution across the three modalities. Same concept in
+both traditions, just different names:</p>
+<table>
+  <tr><th>Vedic Term</th><th>Western Term</th><th>Signs</th></tr>
+  <tr><td>Moveable (Chara)</td><td>Cardinal</td><td>Aries, Cancer, Libra, Capricorn</td></tr>
+  <tr><td>Fixed (Sthira)</td><td>Fixed</td><td>Taurus, Leo, Scorpio, Aquarius</td></tr>
+  <tr><td>Dual (Dwiswabhava)</td><td>Mutable</td><td>Gemini, Virgo, Sagittarius, Pisces</td></tr>
+</table>
+<p class="img-wrap"><img src="images/panel_modality.webp" class="panel-screenshot"
+   alt="Modality tab showing Moveable, Fixed, and Dual with descriptions"></p>
+
+<p>Click the <b>swap icon</b> on the Modality tab to toggle between the standard modality
+view and the <b>Rajju, Musala, and Nala yoga</b> calculation modes. These are traditional
+groupings of signs that reveal different structural patterns:</p>
+<ul>
+  <li><b>Rajju</b> (Rope) &mdash; Pulled from experience to experience, charming, vivid presence</li>
+  <li><b>Musala</b> (Pestle) &mdash; Sustained accumulative labor, each pass refining what came before</li>
+  <li><b>Nala</b> (Reed) &mdash; Rapid growth, bridging categories, incorporating and transforming</li>
+</ul>
+
+<p class="img-wrap"><img src="images/panel_modality_yoga.webp" class="panel-screenshot"
+   alt="Rajju, Musala, Nala yoga view with percentages and descriptions"></p>
+
+<p>Click on any yoga name to open a <b>detailed description popup</b> explaining the yoga's
+meaning, how it manifests with healthy avasthas, and how it manifests with unhealthy ones.</p>
+
+<p class="img-wrap"><img src="images/panel_modality_yoga_popup.webp" class="panel-screenshot"
+   alt="Musala Yoga popup with full description of its meaning and manifestation"></p>
+
+<p><b>Dignities</b> &mdash; Shows the dignity status of each planet across multiple
+divisional charts (vargas). The table displays whether each planet is in its own sign,
+exalted, debilitated, in a friendly sign, or in an enemy sign, checked across the main
+chart (D1) and key vargas.</p>
+<p class="img-wrap"><img src="images/panel_dignities.webp" class="panel-screenshot"
+   alt="Dignities tab showing Classical varga dignities across D1 to D20"></p>
+
+<p>Click the <b>swap icon</b> on the Dignities tab to cycle between three varga calculation
+styles:</p>
+<ul>
+  <li><b>Classical</b> &mdash; Standard varga calculation</li>
+  <li><b>Parivritti</b> &mdash; Cyclic varga calculation (note: some rows show "p" suffix, e.g. D2p, D3p)</li>
+  <li><b>Reversed</b> &mdash; Reversed varga calculation</li>
+</ul>
+
+<p class="img-wrap"><img src="images/panel_dignities_parivritti.webp" class="panel-screenshot"
+   alt="Dignities tab in Parivritti mode showing D2p, D3p, D4p rows"></p>
+<p class="screenshot-caption">Parivritti mode: varga rows labeled D2p, D3p, D4p to distinguish from Classical.</p>
+
+<h3>Strength Fullscreen Zoom (Double-Click)</h3>
+
+<p>Double-click the Strength panel to open a <b>4-panel fullscreen view</b> showing all
+four tabs side by side: Strength, Elements, Modality, and Dignities in Vargas.</p>
+
+<p>The fullscreen view shows all data at once without needing to switch tabs. The Dignities
+panel expands to show <b>all vargas from D1 to D60</b> (the compact panel only shows
+D1 through D20). A color-coded legend at the bottom explains each dignity abbreviation:
+EX (Exalted), MT (Moolatrikona), OH (Own House), GF (Great Friend), F (Friend),
+N (Neutral), E (Enemy), GE (Great Enemy), DB (Debilitated).</p>
+
+<p class="img-wrap"><img src="images/zoom_strength.webp" class="panel-screenshot"
+   alt="Strength fullscreen zoom showing all four panels side by side with dignities up to D60"></p>
+
+<h3>Aspects / Avastha / Shame / Exchange</h3>
+
+<p>This panel has four tabs in Vedic mode (Aspects V, Avastha, Shame, Exch) and
+three tabs in Tajika mode (Aspects T, Relations, Yogas). To switch between Vedic and
+Tajika, click the <b>swap icon</b> at the right end of the Aspects header bar.</p>
+
+<p><b>Aspects V</b> (Vedic) &mdash; Vedic-style aspects (graha drishti). A 9&times;7 grid
+showing aspect relationships between all grahas. Vedic aspects differ from Western aspects:
+all planets aspect the 7th house (opposition), plus special aspects &mdash;
+Mars aspects the 4th and 8th, Jupiter the 5th and 9th, Saturn the 3rd and 10th.
+These are full-strength aspects with no orbs.</p>
+
+<p class="img-wrap"><img src="images/panel_aspects_vedic.webp" class="panel-screenshot"
+   alt="Vedic aspects grid showing 7 planets plus Rahu and Ketu"></p>
+
+<p><b>Aspects T</b> (Tajika) &mdash; This system is <b>nearly identical to Western aspects</b>.
+If you are a Western astrologer, this is the aspect panel you will want to use. It shows
+conjunction, opposition, trine, square, and sextile with <b>precise orb calculations</b>,
+just like in Western astrology. The Tajika system was historically transmitted between
+the Hellenistic, Arabic, and Indian traditions &mdash; it is essentially the same aspect
+system Western astrologers use today.</p>
+
+<div class="note">
+<b>For Western astrologers:</b> Click the <b>swap icon</b> (at the right end of the
+"ASPECTS" header) to switch to Tajika mode. This gives you the familiar
+conjunction, trine, square, sextile, and opposition aspects with orbs &mdash; the same
+system you are used to. The Tajika system provides <b>16 levels of precision</b> for
+each aspect, describing the effect of each planetary combination. These aspects are
+also usable in horary astrology (Prasna) for event prediction.
+</div>
+
+<p>Tajika mode has three tabs:</p>
+<ul>
+  <li><b>Aspects T</b> &mdash; A color-coded matrix using symbols for each aspect type
+      (stars for trines, squares for squares, circles for conjunctions/oppositions, arrows
+      for sextiles). Includes outer planets (Uranus, Neptune, Pluto) when enabled.</li>
+  <li><b>Relations</b> &mdash; Lists each aspect pair with its type, Virupas Rating (VR),
+      and orb in degrees. Grouped by relationship quality: Openly Friendly, Secretly Friendly,
+      Openly Hostile, Secretly Hostile, and Neutral.</li>
+  <li><b>Yogas</b> &mdash; Detects Tajika yogas (Ithasala, Easarapha, Nakta, Yamaya, etc.)
+      with detailed descriptions. Shows whether the event is currently manifesting, approaching,
+      or separating.</li>
+</ul>
+
+<p class="img-wrap"><img src="images/panel_aspects_tajika.webp" class="panel-screenshot"
+   alt="Tajika aspect matrix with color-coded symbols for each aspect type">
+<img src="images/panel_tajika_relations.webp" class="panel-screenshot"
+   alt="Tajika relations listing each pair with aspect, VR, and orb">
+<img src="images/panel_tajika_yogas.webp" class="panel-screenshot"
+   alt="Tajika yogas showing detected Ithasala yogas with descriptions"></p>
+
+<p><b>Avastha</b> &mdash; The Avastha panel shows the Lajjitaadi Avastha calculations for
+the current chart. Each cell shows how much one planet helps (<code>+</code>) or harms
+(<code>~</code>) another, with the total and the sign's avastha state in the bottom rows.</p>
+
+<p class="img-wrap"><img src="images/panel_avastha.webp" class="panel-screenshot"
+   alt="Avastha panel showing planet interaction matrix with totals and sign row"></p>
+
+<p><b>Shame</b> (Lajjita Avastha) &mdash; Shows which planets are in a state of shame.
+The panel lists each shamed planet with its sign, house, the source of shame, and
+a summary count at the bottom. Shame occurs in two specific situations:</p>
+
+<p class="img-wrap"><img src="images/panel_shame.webp" class="panel-screenshot"
+   alt="Shame panel showing Mercury and Venus shamed by Sun via Ketu conjunction"></p>
+<ul>
+  <li>A planet is conjunct <b>Rahu or Ketu</b> (the lunar nodes) together with a
+      "cruel" planet (<b>Sun, Mars, or Saturn</b>) in the same sign</li>
+  <li>A "cruel" planet is conjunct another planet in the <b>5th house</b>
+      (same sign is enough &mdash; exact degree conjunction is not required)</li>
+</ul>
+<p>For example, Mars and Moon in the 5th house causes the Moon to feel shame &mdash;
+practically meaning a deep wound connected to the inner feminine child (Moon period, age 0-1).</p>
+
+<p>There are also <b>avasthas of pride</b>, which occur when a planet is in its sign
+of exaltation &mdash; the opposite of shame, giving inner confidence.</p>
+
+<div class="note">
+<b>Note:</b> Combustion (planet too close to the Sun) is actually part of the full avastha
+system but is not shown in this simplified panel. The complete avastha system as taught
+by Ernst Wilhelm is quite complex &mdash; what you see here is a practical subset focused
+on the Lajjitaadi states. A planet can be in a strong sign yet still be "ashamed" due to
+who it shares the room with &mdash; like being stuck in a room with an enemy.
+For a complete explanation with examples, visit
+<a href="https://360heartsinthesky.com/en/docs/PAE/20240617104234">360heartsinthesky.com/en/docs/PAE/20240617104234</a>
+</div>
+
+<p><b>Exchange Yogas</b> (Parivartana) &mdash; Shows exchange yogas between planets. An exchange
+occurs when two planets are in each other's signs (e.g., Mars in Cancer and Moon in Aries).
+Click the yoga name for a full explanation. Three types are detected:</p>
+
+<p class="img-wrap"><img src="images/panel_exchange.webp" class="panel-screenshot"
+   alt="Exchange panel showing a Khala Yoga between Mars and Venus"></p>
+<ul>
+  <li><b>Maha Parivartana</b> &mdash; Exchange between lords of benefic houses (1, 2, 4, 5, 7, 9, 10, 11).
+      Generally positive, strengthening both planets and their house themes.</li>
+  <li><b>Khala Parivartana</b> &mdash; Exchange involving the 3rd house lord.
+      Mixed results: can give courage and initiative but also restlessness.</li>
+  <li><b>Dainya Parivartana</b> &mdash; Exchange involving a dusthana lord (6th, 8th, or 12th house).
+      Generally challenging, bringing the difficult themes of dusthana houses into prominence.</li>
+</ul>
+<p>Each exchange is shown with a description of its effects and the houses involved.
+Click the yoga name for a <b>detailed popup</b> explaining the yoga's full meaning,
+how the 3rd house "exam" works, and how it manifests with healthy or unhealthy avasthas.
+The fullscreen zoom (double-click) provides expanded descriptions.</p>
+
+<p class="img-wrap"><img src="images/panel_exchange_popup.webp" class="panel-screenshot"
+   alt="Khala Yoga popup with full explanation of the 3rd house exam pattern"></p>
+
+<h3>Aspects Fullscreen Zoom (Double-Click)</h3>
+
+<p>Double-click the Aspects panel to open a <b>7-page fullscreen view</b> with paged
+navigation. The zoom version shows all data at full screen width.</p>
+
+<p><b>Page 1: Aspects</b> &mdash; The Vedic aspect grid at full size with color-coded cells.
+Values are virupas (max 60). <code>Y</code> means Yuti (same sign conjunction). The legend
+at the bottom explains: values 45+ are strong, 30+ are moderate.</p>
+
+<p class="img-wrap"><img src="images/zoom_aspects_vedic.webp" class="panel-screenshot"
+   alt="Vedic aspects fullscreen zoom with color-coded virupas grid"></p>
+
+<p><b>Page 2: Avastha</b> &mdash; Full avastha matrix at full width.</p>
+
+<p><b>Page 3: Shame</b> &mdash; Expanded shame panel with full descriptions.</p>
+
+<p><b>Page 4: Tajika Aspects</b> &mdash; The Tajika matrix at full size with all planets
+including outer planets (Uranus, Neptune, Pluto) and the Ascendant (LG). Color-coded
+symbols show aspect types: green stars (trine/sextile), red squares/triangles
+(square/opposition), yellow circles (conjunction).</p>
+
+<p class="img-wrap"><img src="images/zoom_aspects_tajika.webp" class="panel-screenshot"
+   alt="Tajika aspects fullscreen zoom with color-coded symbols for all aspect types"></p>
+
+<p><b>Page 5: Tajika Relations</b> &mdash; Full list of every aspect pair, grouped by
+relationship quality (Openly Friendly, Secretly Friendly, Neutral, Secretly Inimical,
+Openly Inimical). Each row shows the pair, aspect type, Virupas Rating (VR), and exact orb.
+Sorted by strength within each group.</p>
+
+<p class="img-wrap"><img src="images/zoom_tajika_relations.webp" class="panel-screenshot"
+   alt="Tajika relations fullscreen showing all aspects grouped by relationship quality"></p>
+
+<p><b>Page 6: Tajika Yogas</b> &mdash; Full Tajika yoga analysis at screen width.</p>
+
+<p><b>Page 7: Exchange Yogas</b> &mdash; Expanded exchange yoga descriptions.</p>
+
+<!-- ============================================================ -->
+<a name="dasha-system"></a>
+<h2>Dasha System (Left Side)</h2>
+
+<p>Dashas are <b>planetary timing systems</b> &mdash; they tell you which planet is "ruling"
+a given period of your life. Western astrology has similar concepts in <b>planetary periods</b>
+(Firdaria) and <b>annual profections</b>, but the Vedic dasha systems are far more
+detailed and precise, with nested sub-periods down to minutes.</p>
+
+<p>The left side of the window contains <b>two dasha panels side by side</b>:</p>
+<ul>
+  <li><b>Left dasha panel</b> &mdash; Vimshottari dasha with its own independent ayanamsa setting
+      (default: Vedanga Jyotisha). Click the title bar dropdown arrow to change the ayanamsa.</li>
+  <li><b>Right dasha panel</b> &mdash; Switchable between Vimshottari and Planetary Ages (Nisarga).
+      Press <kbd>F7</kbd> to cycle, or change in Settings &gt; Zodiac &amp; Calculation &gt;
+      Right panel mode.</li>
+</ul>
+<p>Each dasha panel can use a <b>different ayanamsa</b>, letting you compare two ayanamsa
+systems side by side on the same chart. Both panels have the same Karaka/Cusp/House
+highlight filters at the bottom.</p>
+
+<h3>Vimshottari Dasha</h3>
+<p>The primary timing system used in Vedic astrology, and one of its most powerful tools.
+It divides life into planetary periods based on the Moon's nakshatra (lunar mansion) at birth.
+Varuna 360 supports <b>5 nested levels</b>:</p>
+<ol>
+  <li><b>Mahadasha</b> &mdash; Major period (6-20 years)</li>
+  <li><b>Antardasha</b> &mdash; Sub-period</li>
+  <li><b>Pratyantar Dasha</b> &mdash; Sub-sub-period</li>
+  <li><b>Sookshma Dasha</b> &mdash; Fine period</li>
+  <li><b>Prana Dasha</b> &mdash; Finest period</li>
+</ol>
+<p>Click any period to expand and see its sub-periods. Each entry shows the
+planet, the exact start date, and the age at that time. The currently active period is
+marked with <b>&#9654;</b>. The numbered buttons (1-5) at the top select the dasha level depth.</p>
+
+<p class="img-wrap"><img src="images/dasha_vedanga_level1.webp" class="panel-screenshot"
+   alt="Vimshottari dasha level 1 showing mahadasha periods with dates and ages">
+<img src="images/dasha_vedanga_level2.webp" class="panel-screenshot"
+   alt="Vimshottari dasha level 2 showing antardasha sub-periods within Rahu mahadasha"></p>
+<p class="screenshot-caption">Left: Level 1 (mahadashas). Right: Level 2 (antardasha sub-periods within Rahu).</p>
+
+<p><b>120-Year Cycles:</b> Use the <code>&lt;</code> / <code>&gt;</code>
+buttons to navigate through 120-year cycle windows.</p>
+
+<h3>Ayanamsa Selection</h3>
+<p>The <b>ayanamsa</b> is the offset angle between the tropical and sidereal zodiacs, caused by
+the precession of the equinoxes. Western astrologers may not be familiar with this concept
+since it only matters when calculating sidereal-based features like nakshatras and dashas.
+The ayanamsa determines <b>which nakshatra the Moon falls in</b>, which in turn determines
+the starting point of the Vimshottari dasha sequence.</p>
+
+<p>There are two ways to change the ayanamsa:</p>
+<ul>
+  <li><b>Title bar dropdown</b> &mdash; Click the small arrow on the dasha panel title bar
+      to open the Ayanamsa selection dialog directly</li>
+  <li><b>Settings</b> &mdash; Go to Settings &gt; Zodiac &amp; Calculation to set the ayanamsa
+      for each panel independently (left and right), plus the right panel mode
+      (Vimshottari or Planetary Ages)</li>
+</ul>
+
+<p class="img-wrap"><img src="images/dasha_ayanamsa_dialog.webp" class="panel-screenshot"
+   alt="Ayanamsa selection dialog showing Chart Zodiac, Custom Equatorial, and Standard Sidereal options"></p>
+
+<p class="img-wrap"><img src="images/settings_dasha_ayanamsa.webp" class="panel-screenshot"
+   alt="Settings panel showing per-panel ayanamsa and right panel mode dropdowns"></p>
+
+<p>Over <b>50 ayanamsa systems</b> are available, organized by category:</p>
+<ul>
+  <li><b>Custom Equatorial:</b> Dhruva GC mid-Mula, Vedanga Jyotisha, Tropical 0&deg;</li>
+  <li><b>Standard Sidereal:</b> Lahiri, True Citra, KP, Raman, Fagan/Bradley</li>
+  <li><b>Historical:</b> Aryabhata, Surya Siddhanta, Hipparchos, Babylonian variants</li>
+  <li><b>Galactic:</b> GC at 0&deg; Sag, Galactic Eq IAU 1958, GC mid-Mula</li>
+</ul>
+
+<div class="note">
+<b>Default:</b> The default ayanamsa follows Ernst Wilhelm's recommended system.
+You can change it at any time &mdash; the setting is saved per session.
+</div>
+
+<h3>Nisarga Dasha (Planetary Ages)</h3>
+<p>A natural timing system based on planetary maturation ages. Press <kbd>F7</kbd> to switch
+the right dasha panel between Vimshottari and Planetary Ages mode.</p>
+
+<p>The panel shows two sections in a single view:</p>
+<ul>
+  <li><b>Natural Age Periods</b> (top) &mdash; Seven life phases, each ruled by a planet:
+      Moon (0-1y), Mars (1-3y), Mercury (3-12y), Venus (12-32y), Jupiter (32-50y),
+      Sun (50-70y), Saturn (70-120y). The currently active period is marked with
+      <b>&#9654;</b>. Each period represents a fundamentally different stage of life
+      governed by its ruling planet.</li>
+  <li><b>Maturation Years</b> (bottom, after the separator) &mdash; Nine specific ages
+      when each planet's influence crystallizes: Jupiter (15-16y), Sun (20-21y),
+      Moon (23-24y), Venus (24-25y), Mars (27-28y), Mercury (31-32y), Saturn (35-36y),
+      Rahu (41-42y), Ketu (47-48y). These are milestone years where a planet's themes
+      become fully active in the person's life.</li>
+</ul>
+
+<p class="img-wrap"><img src="images/dasha_planetary_ages.webp" class="panel-screenshot"
+   alt="Planetary Ages panel showing natural age periods and maturation years"></p>
+
+<h3>Dasha Highlight Filters</h3>
+
+<p>At the bottom of each dasha panel, three dropdown filters let you <b>highlight</b>
+specific periods in the dasha list:</p>
+<ul>
+  <li><b>Karaka</b> &mdash; Select a karaka (AK, AmK, BK, etc.) to highlight every dasha
+      period ruled by the planet holding that karaka role. For example, selecting "AK"
+      highlights all periods where the Atmakaraka planet is active.</li>
+  <li><b>Cusp</b> &mdash; Select a house cusp (1st through 12th) to highlight periods ruled
+      by the lord of that cusp.</li>
+  <li><b>House</b> &mdash; Select a house to highlight periods ruled by the planet occupying
+      that house.</li>
+</ul>
+
+<p>This is a powerful tool for <b>timing events</b>. Instead of manually scanning through
+dasha periods trying to find when a specific planet is active, you select the relevant
+karaka or house lord and the matching periods light up instantly. For example, to find
+when career themes are strongest, select "10th" in the Cusp filter and all periods ruled
+by the 10th house lord are highlighted.</p>
+
+<p class="img-wrap"><img src="images/dasha_planetary_ages_highlight.webp" class="panel-screenshot"
+   alt="Planetary Ages with AK karaka and 10th cusp filters highlighting Mercury and Venus periods">
+<img src="images/dasha_vimshottari_highlight.webp" class="panel-screenshot"
+   alt="Vimshottari dasha with AK and 10th cusp highlight showing Mercury and Ketu periods"></p>
+<p class="screenshot-caption">Left: Planetary Ages with AK + 10th cusp highlighted. Right: Vimshottari with the same filters.</p>
+
+<h3>Left Dasha Panel</h3>
+<p>The left dasha panel defaults to <b>Vedanga Jyotisha</b> ayanamsa, which is the
+current default for the Aditya Zodiac system. This is still an <b>active area of research</b>
+&mdash; it replaced the previous default setting (Dhruva GC mid-Mula) as we continue
+testing which ayanamsa produces the most accurate dasha timing for the Tropical Vedic
+approach. You can change the left panel's ayanamsa independently from the right panel
+via the title bar dropdown or in Settings. Both panels support the same 5-level dasha
+expansion and Karaka/Cusp/House highlight filters.</p>
+
+<!-- ============================================================ -->
+<a name="chart-memory"></a>
+<h2>Chart Memory &amp; Profiles</h2>
+
+<p>The chart memory system works like <b>browser tab profiles</b> (similar to Chrome profiles).
+Each profile maintains its own collection of loaded charts, session state, and preferences.
+All charts are <b>automatically saved</b> when you close the application and restored on
+restart. You never need to manually save your chart collection.</p>
+
+<h3>Memory Panel (Top Bar)</h3>
+<p>The memory panel sits at the top of the chart area. It displays your loaded charts
+as clickable buttons arranged in <b>2 rows &times; 20 columns</b> (40 charts per page).</p>
+
+<p class="img-wrap"><img src="images/interface_memory_panel.webp"
+   alt="Memory panel showing loaded charts, toolbar, and controls"></p>
+
+<h3>Loading Charts into Memory</h3>
+
+<p>There are several ways to load charts into the memory panel:</p>
+<ul>
+  <li><b>Drag and drop a folder</b> &mdash; The fastest method. Drag a folder containing
+      CHTK files directly onto the memory panel, and all charts in that folder are loaded
+      at once. A CHTK file is the chart format used by <b>Kala</b> (Ernst Wilhelm's astrology
+      software), so if you already have charts from Kala, they work directly.</li>
+  <li><b>Drag and drop individual files</b> &mdash; You can also drag one or more CHTK files
+      directly onto the memory panel.</li>
+  <li><b>Load Folder button</b> &mdash; Click the yellow <b>Load Folder</b> button on the
+      right side of the memory panel to open a folder picker and load all CHTK files from
+      the selected folder.</li>
+  <li><b>File &gt; Open CHTK</b> (<kbd>Ctrl+O</kbd>) &mdash; Open a single CHTK file.</li>
+  <li><b>Add Chart</b> (<kbd>Alt+A</kbd>) &mdash; Create a new chart from the toolbar.</li>
+  <li><b>File &gt; New Chart</b> (<kbd>Ctrl+N</kbd>) &mdash; Create a new chart from the
+      full Edit Chart form.</li>
+</ul>
+
+<p>If you have never used CHTK files before, you can also <b>save</b> charts you create in
+Varuna 360 as CHTK files (<kbd>Ctrl+Shift+S</kbd>) and reload them later or share them
+with other users.</p>
+
+<h3>Navigating Your Charts</h3>
+<ul>
+  <li><b>Chart buttons:</b> Click any chart button to instantly switch to that chart. The
+      currently selected chart is highlighted.</li>
+  <li><b>Pagination arrows:</b> When you have more than 40 charts, the panel splits into
+      pages. Use the <b>&laquo;</b> / <b>&raquo;</b> arrow buttons or
+      <kbd>Alt+PgUp</kbd> / <kbd>Alt+PgDown</kbd> to navigate pages. The page indicator
+      shows your current position (e.g., "1/3").</li>
+  <li><b>Chart count:</b> Displayed next to the arrows (e.g., "(31 charts)").</li>
+  <li><b>Quick navigation:</b> <kbd>Alt+Left</kbd> / <kbd>Alt+Right</kbd> move to the
+      previous or next chart without clicking.</li>
+</ul>
+
+<h3>Memory Panel Controls (Right Side)</h3>
+
+<p class="img-wrap"><img src="images/memory_controls.webp"
+   alt="Memory panel controls: Load Folder, pagination arrows, chart count, Search, Sort, Clear All, Select"></p>
+
+<ul>
+  <li><b>Search</b> &mdash; Opens the Find Chart dialog (<kbd>Ctrl+F</kbd>). Searches across
+      <b>all profiles</b>, not just the current one. You can search by name, date, or
+      planetary criteria. This is essential when you have hundreds of charts spread across
+      multiple profiles and need to find a specific one.</li>
+  <li><b>Sort</b> &mdash; Cycles through three sorting modes:
+      <b>A&rarr;Z</b> (alphabetical by name), <b>Date</b> (by birth date, oldest first),
+      and <b>Added</b> (in the order you loaded them).</li>
+  <li><b>Clear All</b> &mdash; Removes all charts from the current profile's memory
+      (with confirmation prompt). This does not delete the CHTK files from disk.</li>
+  <li><b>Select</b> &mdash; Enters selection mode where you can pick specific charts to
+      remove, instead of clearing everything. Useful when you want to remove a few charts
+      without losing the rest.</li>
+</ul>
+
+<h3>Right-Click on Chart Buttons</h3>
+<p>Right-click any chart button in the memory panel for a context menu:</p>
+<ul>
+  <li><b>Remove from memory</b> &mdash; Remove just this chart</li>
+  <li><b>Clear all charts</b> &mdash; Remove all charts (with confirmation)</li>
+</ul>
+
+<h3>Profiles</h3>
+<p>Profiles let you organize charts into <b>separate collections</b>. Each profile has its
+own charts, session state, and avatar. This is useful for separating work by context
+(e.g., clients, research, family, students).</p>
+
+<p>The <b>profile avatar</b> is the round button at the <b>top-right corner</b> of the window.
+Click it to open the profile menu.</p>
+
+<p class="img-wrap"><img src="images/profile_menu.webp"
+   alt="Profile menu showing multiple profiles with Create and Manage options"></p>
+
+<ul>
+  <li><b>Switch profile:</b> Click any profile name in the menu. The current profile is
+      marked with a checkmark. Switching profiles loads a completely different set of charts.</li>
+  <li><b>+ Create Profile:</b> Create a new profile with its own name and avatar
+      (planet images or the app logo).</li>
+  <li><b>Manage Profiles...:</b> Rename, delete, or change avatars for existing profiles.</li>
+</ul>
+
+<p>There is <b>no limit</b> on the number of profiles you can create. Each profile stores
+its charts independently. Within each profile, you can have <b>multiple pages</b> of charts
+(40 per page), so a single profile can hold hundreds of charts.</p>
+
+<div class="note">
+<b>Tip:</b> When you have charts spread across multiple profiles, use <kbd>Ctrl+F</kbd>
+(Find Chart) to search across <b>all profiles at once</b>. The search finds charts by name
+regardless of which profile they are in.
+</div>
+
+<!-- ============================================================ -->
+<a name="edit-chart"></a>
+<h2>Edit Chart</h2>
+
+<p>The Edit Chart tab (<kbd>Ctrl+E</kbd>) has three sub-tabs accessible from the left sidebar:
+<b>Edit Info</b>, <b>New Chart</b>, and <b>Map View</b>.</p>
+
+<h3>Edit Info</h3>
+<p>A form-based editor for the currently loaded chart. The form is split into sections:</p>
+
+<p><b>Top section:</b> Full Name, Date (MM/DD/YYYY), Time Format (Local Time or UTC Time),
+Local Time (HH:MM:SS), and Gender (Male/Female).</p>
+
+<p class="img-wrap"><img src="images/edit_chart_top.webp" class="panel-screenshot"
+   alt="Edit Chart form showing Full Name, Date, Time Format toggle, Local Time, and Gender fields"></p>
+
+<p><b>Bottom section:</b> Birth Location (city search with auto-completion), Coordinates
+(Latitude/Longitude, editable directly or via the USE MAP button), Timezone (IANA name
+with numeric offset, e.g. +04:00), and Daylight Saving Time (No / Yes / War Time).</p>
+
+<p class="img-wrap"><img src="images/edit_chart_bottom.webp" class="panel-screenshot"
+   alt="Edit Chart form showing Birth Location, Coordinates, Timezone, DST, and Save/Cancel buttons"></p>
+
+<p>Click <b>SEARCH OR PICK ON MAP</b> to switch to the Map View and select the location
+visually. Click <b>SAVE CHANGES</b> when done, or <b>CANCEL</b> to discard.</p>
+
+<h3>New Chart</h3>
+<p>Create a brand new chart from scratch. Uses the same form as Edit Info but starts
+with empty fields. Fill in the birth data and submit to calculate the chart and add it
+to memory. The <b>Add Chart</b> button (<kbd>Alt+A</kbd>) in the toolbar is often faster
+for quick entry since it accepts copy-pasted text.</p>
+
+<h3>Map View</h3>
+<p>An interactive offline map for selecting birth locations. Type a city, country, or
+address in the search bar at the top and click <b>SEARCH</b>. You can also click
+directly on the map to place a location pin. The selected coordinates are shown and
+the timezone is automatically determined.</p>
+
+<p class="img-wrap"><img src="images/edit_chart_map.webp" class="panel-screenshot"
+   alt="Map View with search bar, world map, red location pin on Reunion Island, and Apply button"></p>
+<p class="screenshot-caption">Map View: search for a city or click on the map. Click APPLY &amp; RETURN TO EDIT INFO to use the selected coordinates.</p>
+
+<p>Click <b>APPLY &amp; RETURN TO EDIT INFO</b> at the bottom right to apply the selected
+location and go back to the Edit Info form with the coordinates pre-filled.</p>
+
+<!-- ============================================================ -->
+<a name="human-design"></a>
+<h2>Human Design</h2>
+
+<p>Toggle with <kbd>Alt+H</kbd> or the Human Design button in the toolbar.</p>
+
+<p>This feature calculates the <b>astrological chart at 88&deg; before the natal Sun position</b>,
+as described by the creator of Human Design. It produces the "Design" or "unconscious" chart
+that shows pre-birth planetary influences.</p>
+
+<div class="note">
+<b>Important:</b> This is purely the <b>astrological chart</b> used in Human Design.
+It does not include the Gates, Channels, or Bodygraph. Most Human Design practitioners
+do not use this underlying astrology chart directly, making this an area of
+<b>active research</b> that has been tested for over a year with promising results.
+</div>
+
+<p>When Human Design mode is active, the Human Design button turns green.
+The mode automatically deactivates when you load a new chart, reload the current chart,
+or load a "Now" chart.</p>
+
+<!-- ============================================================ -->
+<a name="toolbar"></a>
+<h2>Toolbar (Left to Right)</h2>
+
+<p>The main toolbar sits between the chart memory panel and the chart display.
+Here is each button from left to right:</p>
+
+<p class="img-wrap"><img src="images/toolbar_main.webp"
+   alt="Main toolbar showing all buttons from left to right"></p>
+
+<h3>Left Side: View and Chart Name</h3>
+
+<p><b>Wheel / South / North</b> (<kbd>F2</kbd>) &mdash; Shows the current chart view style.
+Click to cycle between Wheel, South Indian, and North Indian views.</p>
+
+<p><b>Open in Kala</b> (<kbd>Alt+K</kbd>) &mdash; Opens the current chart in Kala software
+(Ernst Wilhelm's astrology program). Requires Kala to be installed and configured in
+Settings.</p>
+
+<p><b>WikiBio</b> &mdash; Opens a biography search for the current person. This searches
+biographical databases and works best with known celebrities or public figures. If the
+person is not publicly known, it will not return useful results.</p>
+
+<p><b>Chart name pill</b> &mdash; The rounded blue bar showing the person's name and current
+age (e.g., "Ali Larter 50y 3m"). <b>Right-click</b> this pill to open a research menu
+with multiple search and dasha timing options:</p>
+
+<p class="img-wrap"><img src="images/chart_rightclick_menu.webp"
+   alt="Right-click menu showing Astro-Databank, Wikipedia, Google Images, and dasha search options"></p>
+
+<p><b>Astrology searches:</b></p>
+<ul>
+  <li><b>Astro-Databank</b> &mdash; Search on Astro.com's Astro-Databank, the most authoritative
+      source for verified birth data (Rodden Ratings). Essential for checking data accuracy.</li>
+</ul>
+
+<p><b>Biography searches:</b></p>
+<ul>
+  <li><b>Wikipedia</b> &mdash; Look up the person on Wikipedia for a timeline of their life,
+      career milestones, and major events.</li>
+  <li><b>Google Images</b> &mdash; Search for photos of the person. Useful for visual identification
+      and getting a feel for the person's appearance at different life stages.</li>
+</ul>
+
+<p><b>Dasha Event Search</b> &mdash; The right-click menu includes dynamic submenus based on
+the <b>current dasha system</b> selected in the left panel. The label reflects your current
+ayanamsa setting (e.g., Dhruva GC mid-Mula, Lahiri, Vedanga Jyotisha). <b>Click a dasha
+period in the left panel first</b> to select it (it highlights in blue). The highlighted
+period is the one used for the search.</p>
+
+<p>Two search methods are available for each antardasha sub-period:</p>
+
+<table>
+  <tr><th>Submenu</th><th>What it does</th></tr>
+  <tr>
+    <td><b>[Ayanamsa] &mdash; Google Search</b></td>
+    <td>Opens Google with the person's name and a <b>date range filter</b> matching the
+        sub-period. Google only returns results published or dated within that period &mdash;
+        great for finding news articles, interviews, and events.</td>
+  </tr>
+  <tr>
+    <td><b>[Ayanamsa] &mdash; Copy AI Prompt</b></td>
+    <td>Copies a natural-language prompt to your clipboard, ready to paste into any AI
+        assistant (Claude, ChatGPT, Gemini, Perplexity, etc.). The prompt asks:
+        <i>&ldquo;What significant events happened to [Name] between [Month Year] and
+        [Month Year]?&rdquo;</i></td>
+  </tr>
+</table>
+
+<p>Each entry shows the <b>antardasha sub-period</b> (e.g., &ldquo;Ra/Ju (01/18/2004 - 03/22/2006)&rdquo;).
+The currently active sub-period is marked with <b>&blacktriangleright;</b>.</p>
+
+<p class="img-wrap"><img src="images/dasha_search_jupiter.webp"
+   alt="Jupiter mahadasha selected (highlighted blue), right-click menu showing Ju/Ju through Ju/Ra sub-periods for Google search"></p>
+<p class="screenshot-caption">Jupiter mahadasha selected in the dasha panel (blue highlight). The right-click submenu shows each antardasha sub-period with date ranges.</p>
+
+<p class="img-wrap"><img src="images/dasha_search_mars.webp"
+   alt="Mars mahadasha selected, right-click menu showing Ma/Ma through Ma/Mo sub-periods"></p>
+<p class="screenshot-caption">Clicking a different dasha (Mars) changes which sub-periods appear in the search menu.</p>
+
+<p>The Google Search option automatically sets a <b>Custom date range</b> matching the dasha
+period. This is not immediately visible in Google's results page: you need to click
+<b>Tools</b> and hover over the date filter to see "Custom range..." with a checkmark,
+confirming the search is already filtered to that period.</p>
+
+<p class="img-wrap"><img src="images/google_custom_range.webp"
+   alt="Google search with Tools expanded showing Custom range already set to the dasha period"></p>
+<p class="screenshot-caption">Google Tools showing the custom date range automatically set by the dasha search.</p>
+
+<p><b>Why antardasha?</b> Antardasha sub-periods (the second level of the Vimshottari system)
+typically last 1-3 years &mdash; long enough to correlate with life events, but specific enough
+to pinpoint timing. Mahadasha periods (14-20 years) are too broad for event research.</p>
+
+<p><b>Planetary Ages &amp; Maturation</b> &mdash; When the right panel is in Nisarga mode
+(<kbd>F7</kbd>), the right-click menu adds four submenus:</p>
+
+<table>
+  <tr><th>Submenu</th><th>What it shows</th></tr>
+  <tr>
+    <td><b>Planetary Ages &mdash; Google Search</b></td>
+    <td>Each planet rules a period of life (e.g., Moon 0-4y, Mars 4-14y, Mercury 14-24y).
+        Searches Google with a date range matching that period.</td>
+  </tr>
+  <tr>
+    <td><b>Planetary Ages &mdash; Copy AI Prompt</b></td>
+    <td>Copies a clipboard prompt for the selected planetary age period.</td>
+  </tr>
+  <tr>
+    <td><b>Maturation Ages &mdash; Google Search</b></td>
+    <td>Each planet matures at a specific age (e.g., Jupiter at 16y, Sun at 22y, Moon at 24y).
+        These are milestone years where the planet's themes crystallize. Searches Google
+        for events during the maturation window.</td>
+  </tr>
+  <tr>
+    <td><b>Maturation Ages &mdash; Copy AI Prompt</b></td>
+    <td>Copies a clipboard prompt for the selected maturation period.</td>
+  </tr>
+</table>
+
+<p>Maturation entries are marked with <b>&starf;</b> in the menu. The currently active period
+is marked with <b>&blacktriangleright;</b>.</p>
+
+<p><b>Transit from Dasha</b> &mdash; The dasha right-click menu also includes two transit actions
+that use the start date of the selected dasha period:</p>
+<ul>
+  <li><b>Open in Transit</b> &mdash; Opens the Transit tab set to the dasha period's start date,
+      showing a full transit chart for that moment.</li>
+  <li><b>Show as transit overlay</b> &mdash; Activates the transit overlay (<kbd>F3</kbd>) on the
+      current chart view, set to the dasha period's start date. This works in all three views:
+      Wheel (transit rim), South Indian (center box), and North Indian (inner diamond). This is
+      the fastest way to see where the planets were at the start of any dasha period, directly
+      compared to the natal chart.</li>
+</ul>
+
+<p class="img-wrap"><img src="images/dasha_rightclick_transit_overlay.webp"
+   alt="Dasha panel right-click menu showing Open in Transit, Create chart, and Show as transit overlay options"></p>
+<p class="screenshot-caption">Right-click a dasha period to open the context menu. "Show as transit overlay"
+activates the transit overlay set to that dasha's start date, visible in all three chart views.</p>
+
+<p><b>Close button</b> (red X) &mdash; Removes the current chart from memory.</p>
+
+<h3>Right Side: Action Buttons</h3>
+
+<p><b>NOW</b> (<kbd>Alt+N</kbd>) &mdash; Creates a transit chart for the current moment
+at your location. Useful for quick transit checks: what planets are active right now?
+You can combine this with the Birth Time button to move forward or backward in time.
+Press <kbd>F3</kbd> to toggle the transit overlay, which shows transit planets directly
+on the natal chart in all three views (Wheel rim, South Indian center box, North Indian
+inner diamond).</p>
+
+<p><b>+ Add Chart</b> (<kbd>Alt+A</kbd>) &mdash; Quick chart entry dialog. This is the fastest
+way to create a chart: just copy and paste the birth information (name, date, time, location)
+as a single line of text, and the built-in parser will automatically extract and separate
+the fields. Much faster than filling out the full Edit Chart form. Always verify that the
+parsed information is correct before generating the chart, as the parser does not always
+get it right (especially with unusual date formats or uncommon city names).</p>
+
+<p class="img-wrap"><img src="images/add_chart_dialog.webp"
+   alt="Add New Chart dialog with pasted text 'michael Jackson, August 29, 1958, Gary, Indiana, United States'"></p>
+
+<p><b>Birth Time</b> (<kbd>Alt+T</kbd>) &mdash; Opens a time adjustment widget that lets you
+shift the birth time by seconds, minutes, or hours. Useful for birth time rectification
+(testing slightly different times to see how the chart changes), or for moving through time
+on a transit chart created with the NOW button.</p>
+
+<p class="img-wrap"><img src="images/birth_time_widget.webp"
+   alt="Birth Time adjustment widget with buttons from -1S to +50Y and a Save button"></p>
+
+<p><b>Human Design</b> (<kbd>Alt+H</kbd>) &mdash; Toggles Human Design mode. When active
+(green), the chart shows the "Design" chart calculated at 88 degrees before the natal Sun.
+See the <a href="#human-design">Human Design</a> section for details. This is an experimental
+feature.</p>
+
+<p><b>Aditya Circle / Tropical Classic</b> &mdash; Zodiac mode buttons. See the
+<a href="#zodiac-modes">Zodiac Modes</a> section for all 6 options.</p>
+
+<h3>View Menu Buttons (F-keys)</h3>
+<table>
+  <tr><th>Button</th><th>Shortcut</th><th>Description</th></tr>
+  <tr><td>Transit Overlay</td><td><kbd>F3</kbd></td>
+      <td>Toggle transit overlay on current chart view (all three views)</td></tr>
+  <tr><td>Retinue Rings</td><td><kbd>F5</kbd></td>
+      <td>Toggle colored house rings showing planetary retinues</td></tr>
+  <tr><td>Pie Charts</td><td><kbd>Shift+F5</kbd></td>
+      <td>Toggle element and modality pie charts on the wheel</td></tr>
+  <tr><td>Outer Planets</td><td><kbd>F8</kbd></td>
+      <td>Toggle visibility of Uranus, Neptune, and Pluto</td></tr>
+  <tr><td>Cusp Lines</td><td><kbd>F9</kbd></td>
+      <td>Cycle cusp line glow: Off &rarr; Soft &rarr; Bright</td></tr>
+  <tr><td>Ascendant Cycle</td><td><kbd>F4</kbd></td>
+      <td>Cycle through 12 signs as ascendant (planets stay fixed, houses rotate)</td></tr>
+</table>
+
+<!-- ============================================================ -->
+<a name="varga-charts"></a>
+<h2>Varga (Divisional) Charts</h2>
+
+<p>Vargas are <b>divisional charts</b> &mdash; they divide each sign into smaller segments
+to zoom into specific life areas. Western astrology uses a similar concept with <b>harmonic
+charts</b> (the D9/Navamsa is equivalent to the 9th harmonic). If you are a Western
+astrologer, think of vargas as harmonics with specific traditional meanings attached.</p>
+
+<p>Access via <b>View &gt; Varga Charts</b> in the menu, or use the <b>varga sidebar</b>
+on the left edge of the chart area. The sidebar shows numbered buttons for quick switching
+between divisional charts.</p>
+
+<p class="img-wrap"><img src="images/varga_column.webp" class="panel-screenshot"
+   alt="Varga sidebar showing buttons from D1 to D60, including D10R and D24R reversed vargas"></p>
+<p class="screenshot-caption">The varga sidebar: click any button to switch divisional chart. D1 (Rasi) is the main chart.</p>
+
+<table>
+  <tr><th>Varga</th><th>Name</th><th>Signification</th></tr>
+  <tr><td>D1</td><td>Rasi</td><td>Main chart &mdash; overall life</td></tr>
+  <tr><td>D2</td><td>Hora</td><td>Wealth and resources</td></tr>
+  <tr><td>D3</td><td>Drekkana</td><td>Siblings, courage, initiative</td></tr>
+  <tr><td>D4</td><td>Chaturthamsa</td><td>Property, vehicles, fixed assets</td></tr>
+  <tr><td>D7</td><td>Saptamsa</td><td>Children, progeny</td></tr>
+  <tr><td>D9</td><td>Navamsa</td><td>Spouse, dharma, spiritual path</td></tr>
+  <tr><td>D10</td><td>Dasamsa</td><td>Career, profession, public status</td></tr>
+  <tr><td>D12</td><td>Dwadasamsa</td><td>Parents, ancestry</td></tr>
+  <tr><td>D16</td><td>Shodasamsa</td><td>Vehicles, comforts, pleasures</td></tr>
+  <tr><td>D20</td><td>Vimsamsa</td><td>Spiritual practices, upasana</td></tr>
+  <tr><td>D24</td><td>Chaturvimsamsa</td><td>Education, learning, intelligence</td></tr>
+  <tr><td>D27</td><td>Saptavimsamsa</td><td>Strengths and weaknesses</td></tr>
+  <tr><td>D30</td><td>Trimsamsa</td><td>Misfortunes, ethics</td></tr>
+  <tr><td>D40</td><td>Khavedamsa</td><td>Auspicious and inauspicious effects</td></tr>
+  <tr><td>D45</td><td>Akshavedamsa</td><td>General well-being, moral character</td></tr>
+  <tr><td>D60</td><td>Shashtiamsa</td><td>Past life karma, finest division</td></tr>
+</table>
+
+<p>The sidebar also includes <b>D10R</b> and <b>D24R</b> (reversed Dasamsa and reversed
+Chaturvimsamsa), which use the BPHS deity-based calculation method instead of the standard
+cyclic method.</p>
+
+<!-- ============================================================ -->
+<a name="planet-placements"></a>
+<h2>Planet Placements</h2>
+
+<p>Press <kbd>Ctrl+P</kbd> or go to <b>View &gt; Planet Placements</b> to open a comprehensive
+data table showing all planetary positions in one view. This dialog includes:</p>
+<ul>
+  <li><b>Planet positions</b> with sign, degree, minute, and second for all planets
+      (including outer planets if enabled)</li>
+  <li><b>Nakshatra</b> (lunar mansion) for each planet, with the pada (quarter) number</li>
+  <li><b>Dasha lord</b> for each planet based on its nakshatra</li>
+  <li><b>Retrograde status</b> marked with "R" where applicable</li>
+  <li><b>Cards of Truth</b> table (optional, toggle in Settings) &mdash; see below</li>
+</ul>
+<p>The ayanamsa source used for nakshatra calculations is displayed at the bottom of the dialog.</p>
+
+<h3>Cards of Truth</h3>
+
+<p>The Cards of Truth system maps each planet to a playing card based on the birth date.
+This is a cross-disciplinary system that combines astrology with the traditional 52-card
+deck, where each card carries symbolic meaning linked to planetary energies. The table
+shows each planet's position (Base, Sun, Moon, Mars, Mercury, Jupiter, Venus, Saturn,
+Rahu, Ketu), the corresponding card (e.g., J&#9824;, 8&#9827;, T&#9829;), and which
+planets share the same card energy.</p>
+
+<p class="img-wrap"><img src="images/cards_of_truth.webp" class="panel-screenshot"
+   alt="Cards of Truth table showing each planet's card and associated planets"></p>
+
+<p>Click <b>COPY TO CLIPBOARD</b> to copy the card data for use with AI tools or personal
+reference. A full Cards of Truth module with expanded interpretation is planned for a
+future version.</p>
+
+<!-- ============================================================ -->
+<a name="chart-search"></a>
+<h2>Chart Search</h2>
+
+<p>There are two ways to search for charts: the <b>Find Chart tab</b> (full-featured search
+across all your CHTK files on disk) and the <b>Search popup</b> (quick search across charts
+loaded in memory).</p>
+
+<h3>Find Chart Tab</h3>
+
+<p>The Find Chart tab is a powerful chart database browser. It indexes all CHTK files in your
+configured folders and lets you filter by name, planetary position, and retinue being. The
+tab shows a results table with columns for Name, ASC, Sun, Moon, City, Country, Birth date,
+Modified date, and file Path.</p>
+
+<p class="img-wrap"><img src="images/find_chart_main.webp" class="panel-screenshot"
+   alt="Find Chart tab showing 5084 indexed charts with search bar, sort/group options, and results table"></p>
+
+<h3>Folder Paths</h3>
+
+<p>Click the <b>Folder Paths</b> header to expand the folder configuration. You can set up
+to 3 folders to index. The default folder is your Kala charts directory. The chart count
+shows how many charts are currently indexed (loaded from cache for speed).</p>
+
+<p class="img-wrap"><img src="images/find_chart_folders.webp" class="panel-screenshot"
+   alt="Folder Paths section showing Path 1 with Kala directory, Path 2 and 3 empty, Loaded 5084 charts from cache, and REBUILD INDEX button"></p>
+
+<p>Click <b>REBUILD INDEX</b> to re-scan all folders and rebuild the search cache. This is
+useful after adding new CHTK files to your folders.</p>
+
+<h3>Filter by Planetary Position</h3>
+
+<p>Click the <b>Filter by Planetary Position</b> header to expand. Each planet (Asc, Sun,
+Moon, Mars, Mercury, Jupiter, Venus, Saturn, Rahu, Ketu, plus outer planets) has a dropdown
+where you can select a specific sign. Only charts matching ALL selected filters are shown.
+The sign names respect your current zodiac mode (Aditya names in Aditya mode, Western names
+in Tropical Classic).</p>
+
+<p><b>Filter by Retinue Being</b> is a second filter row where you can search by which
+retinue being (Gandharva, Rakshasa, Rishi, Yaksha, Apsara) each planet activates. This is
+unique to the Aditya system.</p>
+
+<p class="img-wrap"><img src="images/find_chart_filters.webp" class="panel-screenshot"
+   alt="Filter by Planetary Position with dropdowns for each planet, and Filter by Retinue Being with being-type dropdowns"></p>
+
+<p>Click <b>CLEAR ALL FILTERS</b> (red button) to reset all dropdowns back to (Any).</p>
+
+<h3>Search and Results</h3>
+
+<p>Type a name, city, or country in the <b>Search</b> field. Results update live as you type.
+Use the <b>Sort by</b> dropdown (name, birth date, modified date) and <b>Group by</b> dropdown
+(none, country, path) to organize results. The chart count updates to show how many charts
+match your current filters.</p>
+
+<p>Click any result row to load that chart immediately. Double-click to load and switch to the
+Chart tab.</p>
+
+<h3>Web Search</h3>
+
+<p>When your search returns no local results, a <b>SEARCH WEB</b> button appears at the
+bottom of the results area. Clicking it opens a web search for birth data matching the
+name you typed. This lets you quickly look up birth data for people not yet in your
+chart collection.</p>
+
+<p class="img-wrap"><img src="images/find_chart_web_search.webp" class="panel-screenshot"
+   alt="No local charts found for Chelsea Jordan, showing SEARCH WEB button to search the web for birth data"></p>
+
+<p>The <b>SEARCH WEB</b> button is also available at the top right of the search bar, letting
+you search the web at any time (even when local results are shown).</p>
+
+<h3>Search Popup (Memory Panel)</h3>
+
+<p>Press <kbd>Ctrl+F</kbd> or click the <b>SEARCH</b> button in the memory panel to open a
+quick search popup. This searches across <b>all charts loaded in memory across all profiles</b>,
+not the CHTK files on disk.</p>
+
+<p class="img-wrap"><img src="images/search_popup_results.webp" class="panel-screenshot"
+   alt="Search Charts popup showing 'lor' matching 4 of 184 charts across Default and Main profiles"></p>
+<p class="screenshot-caption">Typing "lor" matches 4 charts across all profiles. Each result shows the profile name in brackets.</p>
+
+<p>Double-click a result or press Enter to load that chart immediately. The popup shows which
+profile each chart belongs to (e.g., [Default], [Main]).</p>
+
+<p>When the popup finds no results for your search, a <b>SEARCH IN FIND CHART TAB</b> button
+appears. Clicking it closes the popup and opens the Find Chart tab with your search query
+pre-filled, so you can search the full CHTK database on disk instead of just memory.</p>
+
+<p class="img-wrap"><img src="images/search_popup_redirect.webp" class="panel-screenshot"
+   alt="Search popup showing 0 results for Chelsea Jordan, with SEARCH IN FIND CHART TAB button at the bottom"></p>
+<p class="screenshot-caption">No memory results for "Chelsea Jordan". Click SEARCH IN FIND CHART TAB to search the full disk database.</p>
+
+<!-- ============================================================ -->
+<a name="settings"></a>
+<h2>Settings</h2>
+
+<p>The Settings tab has <b>6 sub-tabs</b> accessible from the left sidebar: Appearance,
+Display Scale, Font Sizes, Chart Display, Zodiac &amp; Calculation, and Default Folders.
+All settings are saved automatically and persist across restarts. Settings marked with
+a <b>lock icon</b> are saved per session profile.</p>
+
+<h3>Appearance</h3>
+
+<p>Select the application color theme. Varuna 360 offers <b>19 color themes</b>:</p>
+<ul>
+  <li><b>9 Dark themes:</b> Dark Teal, Dark Blue, Dark Amber, Dark Cyan, Dark Green,
+      Dark Pink, Dark Purple, Dark Red, Dark Yellow</li>
+  <li><b>10 Light themes:</b> Light Teal, Light Blue, Light Amber, Light Cyan, Light Green,
+      Light Pink, Light Purple, Light Red, Light Yellow, Light Orange</li>
+</ul>
+
+<p class="img-wrap"><img src="images/settings_appearance.webp" class="panel-screenshot"
+   alt="Appearance settings showing all 19 theme cards with color swatches, Dark Blue selected"></p>
+
+<p>Changes apply immediately. The <b>South Indian chart background</b> automatically
+switches between a light stone texture (light themes) and a dark stone texture (dark themes).
+Each theme card shows a preview swatch of its three accent colors.</p>
+
+<div class="note">
+<b>Note:</b> Some color themes have contrast issues that make certain text or panel elements
+hard to read. This is a known limitation that will be resolved in a later update. If you find
+a theme difficult to read, switch to <b>Dark Teal</b> or <b>Dark Blue</b>, which have the
+best contrast.
+</div>
+
+<p><b>Other Settings</b> at the bottom of this tab:</p>
+<ul>
+  <li><b>Language</b> &mdash; Sign names language (English, French, Spanish,
+      Brazilian Portuguese, European Portuguese, German, Italian, Russian, Chinese).
+      Currently only English is fully supported. Other languages change zodiac sign names
+      on chart views. Full UI translation is planned for a later update.</li>
+  <li><b>Remember window geometry</b> &mdash; Restores window size and position on restart</li>
+  <li><b>Auto-restore session</b> &mdash; Reloads your charts and state from the last session</li>
+  <li><b>Restore last tab</b> &mdash; Returns to the tab you were on when you closed the app</li>
+</ul>
+
+<h3>Display Scale</h3>
+
+<p>Adjust the overall UI scaling for your screen resolution. This affects panels, buttons,
+and text across the entire application. The chart wheel has its own independent zoom
+(mouse scroll).</p>
+
+<p class="img-wrap"><img src="images/settings_display_scale.webp" class="panel-screenshot"
+   alt="Display Scale settings with slider, Reset to 100%, Auto-Detect DPI, and Apply buttons, plus live preview"></p>
+
+<ul>
+  <li><b>Scale slider</b> &mdash; Drag to adjust. Recommended values: 60% for 720p, 80% for
+      1080p, 100-120% for 2K, 140-160% for 4K.</li>
+  <li><b>Reset to 100%</b> &mdash; Return to default scaling</li>
+  <li><b>Auto-Detect DPI</b> &mdash; Let the app detect your screen's DPI and set the scale
+      automatically</li>
+  <li><b>Apply</b> &mdash; Apply the new scale. Restart Varuna 360 after applying to ensure
+      every panel uses the new scale.</li>
+  <li><b>Preview</b> &mdash; Shows a live preview of the Strength panel at the current scale
+      so you can see the effect before applying.</li>
+</ul>
+
+<h3>Font Sizes</h3>
+
+<p>Fine-tune the font size for each UI area independently. The <b>All Areas</b> spinner at
+the top sets a base size that applies everywhere. Below it, each area has its own spinner
+with a description and live preview showing sample text at the current size.</p>
+
+<p class="img-wrap"><img src="images/settings_font_sizes.webp" class="panel-screenshot"
+   alt="Font Sizes settings showing per-area spinners with live previews for Tables, Headers, Titles, Info, Buttons, Sidebar, Status, and Tab Bar"></p>
+
+<p>The areas are:</p>
+<ul>
+  <li><b>Tables &amp; Data</b> &mdash; Center panels (Strength, Aspects, Elements, Karakas data rows),
+      planet positions in chart info, Find Chart results, dasha cycle labels</li>
+  <li><b>Table Headers</b> &mdash; Column headers above data tables (PLANET, DIGBALA, UCCHA...),
+      section headers in chart info dialogs, dual chart comparison names</li>
+  <li><b>Panel Titles</b> &mdash; Large section headings (Strength / Aspects / Elements / Karakas),
+      dialog titles, welcome screen, chart creation headers, Find Chart section titles</li>
+  <li><b>Info &amp; Descriptions</b> &mdash; Help text, tooltips, descriptions throughout the app,
+      chart editing form labels, ayanamsa dialog help, search field labels, loading messages</li>
+  <li><b>Buttons &amp; Controls</b> &mdash; All clickable controls: top bar buttons (Transit, Now,
+      Aditya Circle, Add Chart), dialog OK/Cancel, dasha level selectors, Save buttons,
+      combo box labels</li>
+  <li><b>Sidebar &amp; Navigation</b> &mdash; Left column lists (sign selector, varga selector),
+      chart memory expanded subtitles (houses, planets, strengths)</li>
+  <li><b>Status &amp; Captions</b> &mdash; Small captions and status messages: dasha active cycle
+      info below the list, dual chart comparison metadata, login error messages, Find Chart
+      result counts, footnotes in chart info panels</li>
+  <li><b>Tab Bar</b> &mdash; Main tab bar at the top (CHART, SETTINGS, FIND CHART, NAKSHATRA,
+      PREDICTIVE TOOLS)</li>
+</ul>
+
+<p>These sizes are multiplied by the Display Scale. Change these for relative emphasis
+between areas.</p>
+
+<h3>Chart Display</h3>
+
+<p>Controls what is visible on the chart and which sub-tabs open by default.</p>
+
+<p class="img-wrap"><img src="images/settings_chart_display.webp" class="panel-screenshot"
+   alt="Chart Display settings showing chart view, outer planets, retinue rings, element pies, cusp glow, and default sub-tab selections"></p>
+
+<ul>
+  <li><b>Chart view</b> &mdash; Default chart style: South Indian (fixed grid), North Indian
+      (diamond), or Wheel (circular). Can also be changed with <kbd>F2</kbd>.</li>
+  <li><b>Show outer planets</b> &mdash; Show Uranus, Neptune, and Pluto on the chart. Same as
+      <kbd>F8</kbd>.</li>
+  <li><b>Retinue rings (Wheel)</b> &mdash; Show the Hora and Trimsamsa outer rings on the wheel.
+      Same as <kbd>F5</kbd>.</li>
+  <li><b>Element pies (Wheel)</b> &mdash; Show the fire/earth/air/water balance as pie slices
+      on the wheel. Same as <kbd>Shift+F5</kbd>.</li>
+  <li><b>Cusp glow (Wheel)</b> &mdash; Highlight house cusps. Options: Off, Angles only
+      (1/4/7/10), or All. Same as <kbd>F9</kbd>.</li>
+</ul>
+
+<p><b>Default sub-tabs (Chart tab)</b> &mdash; Choose which sub-tab each panel opens on at
+launch. Lock a panel to always start on the chosen tab. Unlocked, it remembers the last
+tab you used.</p>
+<ul>
+  <li><b>Karakas panel:</b> Karakas, Hora, Trimsamsa, or Houses</li>
+  <li><b>Strength panel:</b> Strength, Elements, Modes, or Dignities</li>
+  <li><b>Aspects panel:</b> Aspects (Vedic), Avastha, Shame, Exchange, Aspects (Tajika),
+      Relations, or Yogas</li>
+</ul>
+
+<h3>Zodiac &amp; Calculation</h3>
+
+<p>The most important settings tab. Controls the zodiac system, ayanamsa for each dasha panel,
+house system, and Cards of Truth display.</p>
+
+<p class="img-wrap"><img src="images/settings_zodiac_calculation.webp" class="panel-screenshot"
+   alt="Zodiac and Calculation settings showing Experience Level, Zodiac mode, Ayanamsa, Dasha settings, House System, and Cards of Truth options"></p>
+
+<p><b>Experience level</b> &mdash; Beginner (default) shows only the 3 main zodiac systems.
+Advanced unlocks all 6 zodiac options including alternative naming. See
+<a href="#zodiac-modes">Zodiac Modes</a> for details.</p>
+
+<p><b>Zodiac System &amp; Sign Naming</b></p>
+<ul>
+  <li><b>Zodiac mode</b> &mdash; Select from 3 modes (Beginner) or 6 modes (Advanced):
+      Aditya Circle, Tropical Classic, Sidereal, plus their alternative naming variants.</li>
+</ul>
+
+<p><b>Ayanamsa (Sidereal only)</b> &mdash; The angular difference between the Tropical and
+Sidereal zodiacs. Only applies in Sidereal mode. Over 50 ayanamsa systems are available.</p>
+
+<p><b>Dasha Ayanamshas</b> &mdash; Each dasha panel can use its own ayanamsa independently.
+The right panel only uses an ayanamsa in Vimshottari mode; Planetary Ages uses fixed
+natural periods.</p>
+<ul>
+  <li><b>Left (Vimshottari) ayanamsa</b> &mdash; Default: Vedanga Jyotisha</li>
+  <li><b>Right panel mode</b> &mdash; Vimshottari or Planetary Ages (same as <kbd>F7</kbd>)</li>
+  <li><b>Right (Vimshottari) ayanamsa</b> &mdash; Only active when right panel is in Vimshottari mode</li>
+  <li><b>Nakshatra coordinates</b> &mdash; Controls how custom ayanamsas (Dhruva, Vedanga) compute
+      nakshatra positions. "Neither" (ecliptic, default) matches Kala's behavior.</li>
+</ul>
+
+<p><b>House System</b></p>
+<ul>
+  <li><b>House system</b> &mdash; Campanus (default, used in Ernst Wilhelm's group studies),
+      Placidus (common Western default), Koch, Equal, Whole Sign (one sign per house),
+      Porphyry, and Regiomontanus. Applies immediately to the open chart.</li>
+  <li><b>Wheel house display</b> &mdash; Sign-based (traditional, each sign = one house) or
+      Standard Western (house 1 starts at exact Ascendant degree). Affects the wheel chart
+      only. See the <a href="#chart-views">Wheel View</a> section for visual comparison.</li>
+</ul>
+
+<p><b>Cards of Truth</b></p>
+<ul>
+  <li><b>Planet order</b> &mdash; Vedic (Sun, Moon, Mars, Mercury...) or Solar System
+      (Sun, Moon, Mercury, Venus, Mars...). Controls the order in the Cards of Truth table
+      shown in the Planet Placements dialog (<kbd>Ctrl+P</kbd>).</li>
+</ul>
+
+<h3>Default Folders</h3>
+
+<p>Define default folders for chart loading and searching. When you use Load Folder or
+open CHTK files, the app starts in these folders.</p>
+
+<p class="img-wrap"><img src="images/settings_default_folders.webp" class="panel-screenshot"
+   alt="Default Folders settings showing chart folder paths, extra folders, and Kala executable path"></p>
+
+<ul>
+  <li><b>Default Folder</b> &mdash; The primary folder where your CHTK chart files live
+      (e.g., /home/lorris/Documents/Kala). This is searched first when loading charts.</li>
+  <li><b>Folder 1 / Folder 2</b> &mdash; Additional folders for chart storage. Useful if
+      you keep charts in multiple locations (e.g., research folder, client folder).</li>
+</ul>
+
+<p><b>Kala Software</b></p>
+<ul>
+  <li><b>Kala Executable</b> &mdash; Path to the Kala.exe file. On Linux/macOS, Kala is
+      launched through Wine. This enables the <b>Open in Kala</b> button
+      (<kbd>Alt+K</kbd>) in the toolbar. Leave empty if you do not use Kala.</li>
+</ul>
+
+<p>Click <b>SAVE SETTINGS</b> at the bottom right to apply folder changes.</p>
+
+<h3>Auto-Save Behavior</h3>
+<p>All settings are saved automatically when you make a change:</p>
+<ul>
+  <li>Zodiac mode (Aditya/Classic/Sidereal) persists after restart</li>
+  <li>Selected theme persists after restart</li>
+  <li>Window size and position are restored (if enabled)</li>
+  <li>Chart memory is saved automatically (no manual save needed)</li>
+  <li>Dasha settings (ayanamsa, levels) are preserved per session</li>
+  <li>Display scale and font sizes persist after restart</li>
+  <li>Chart display options (outer planets, retinue rings, cusp glow) persist</li>
+  <li>Default sub-tab selections persist (when locked)</li>
+</ul>
+
+<!-- ============================================================ -->
+<a name="chtk-files"></a>
+<h2>CHTK File Import/Export</h2>
+
+<p>Varuna 360 uses the <b>CHTK file format</b> for chart data, which is compatible with the
+<b>Kala</b> astrology software by Ernst Wilhelm. This means you can:</p>
+<ul>
+  <li><b>Import</b> CHTK files from Kala or any other software that exports this format
+      (<kbd>Ctrl+O</kbd> or drag-and-drop)</li>
+  <li><b>Export</b> charts you create in Varuna 360 back to CHTK format for use in Kala
+      (<kbd>Ctrl+Shift+S</kbd> &gt; Save As CHTK)</li>
+  <li><b>Bulk load</b> entire folders of CHTK files via the Load Folder button in the memory panel</li>
+</ul>
+<p>All birth data (name, date, time, location, timezone, DST) is preserved during import/export.</p>
+
+<!-- ============================================================ -->
+<a name="keyboard-shortcuts"></a>
+<h2>Keyboard Shortcuts</h2>
+
+<h3>File Operations</h3>
+<table>
+  <tr><th>Shortcut</th><th>Action</th></tr>
+  <tr><td><kbd>Ctrl+O</kbd></td><td>Open CHTK file</td></tr>
+  <tr><td><kbd>Ctrl+N</kbd></td><td>New Chart</td></tr>
+  <tr><td><kbd>Ctrl+E</kbd></td><td>Edit Chart</td></tr>
+  <tr><td><kbd>Ctrl+Shift+S</kbd></td><td>Save As CHTK / Save Chart as PNG</td></tr>
+  <tr><td><kbd>Ctrl+R</kbd></td><td>Reload Current Chart</td></tr>
+  <tr><td><kbd>Ctrl+F</kbd></td><td>Find Chart (search across all charts)</td></tr>
+  <tr><td><kbd>F12</kbd></td><td>Screenshot</td></tr>
+  <tr><td><kbd>Ctrl+Q</kbd></td><td>Quit</td></tr>
+</table>
+
+<h3>View Controls</h3>
+<table>
+  <tr><th>Shortcut</th><th>Action</th></tr>
+  <tr><td><kbd>F2</kbd></td><td>Cycle Chart View (South Indian &rarr; Wheel &rarr; North Indian)</td></tr>
+  <tr><td><kbd>F3</kbd></td><td>Toggle Transit Overlay</td></tr>
+  <tr><td><kbd>F4</kbd></td><td>Cycle Sign as Ascendant</td></tr>
+  <tr><td><kbd>F5</kbd></td><td>Toggle Retinue Rings</td></tr>
+  <tr><td><kbd>Shift+F5</kbd></td><td>Toggle Pie Charts</td></tr>
+  <tr><td><kbd>F6</kbd></td><td>Toggle Trimsamsa Degree Labels</td></tr>
+  <tr><td><kbd>F7</kbd></td><td>Cycle Right Dasha (Vimshottari / Planetary Ages)</td></tr>
+  <tr><td><kbd>F8</kbd></td><td>Toggle Outer Planets (Uranus, Neptune, Pluto)</td></tr>
+  <tr><td><kbd>F9</kbd></td><td>Cycle Cusp Line Glow</td></tr>
+  <tr><td><kbd>Ctrl+P</kbd></td><td>Planet Placements Table</td></tr>
+</table>
+
+<h3>Navigation</h3>
+<table>
+  <tr><th>Shortcut</th><th>Action</th></tr>
+  <tr><td><kbd>Alt+Left</kbd></td><td>Previous chart in memory</td></tr>
+  <tr><td><kbd>Alt+Right</kbd></td><td>Next chart in memory</td></tr>
+  <tr><td><kbd>Alt+Up</kbd></td><td>Previous tab</td></tr>
+  <tr><td><kbd>Alt+Down</kbd></td><td>Next tab</td></tr>
+  <tr><td><kbd>Alt+PgUp</kbd></td><td>Previous memory page</td></tr>
+  <tr><td><kbd>Alt+PgDown</kbd></td><td>Next memory page</td></tr>
+</table>
+
+<h3>Quick Actions</h3>
+<table>
+  <tr><th>Shortcut</th><th>Action</th></tr>
+  <tr><td><kbd>Alt+A</kbd></td><td>Add Chart (quick entry dialog)</td></tr>
+  <tr><td><kbd>Alt+N</kbd></td><td>Load "Now" Chart (current date/time)</td></tr>
+  <tr><td><kbd>Alt+W</kbd></td><td>Switch to Wheel View</td></tr>
+  <tr><td><kbd>Alt+H</kbd></td><td>Toggle Human Design Mode</td></tr>
+  <tr><td><kbd>Alt+T</kbd></td><td>Toggle Time Adjust Widget</td></tr>
+  <tr><td><kbd>Alt+Z</kbd></td><td>Set Aditya Zodiac Mode</td></tr>
+  <tr><td><kbd>Alt+C</kbd></td><td>Set Tropical Classic Mode</td></tr>
+  <tr><td><kbd>Alt+S</kbd></td><td>Toggle Sidereal Mode</td></tr>
+  <tr><td><kbd>Alt+K</kbd></td><td>Open Current Chart in Kala</td></tr>
+  <tr><td><kbd>F1</kbd></td><td>Open Help Manual</td></tr>
+</table>
+
+<!-- ============================================================ -->
+<a name="search-navigation"></a>
+<h2>Search &amp; Navigation</h2>
+
+<p>See <a href="#chart-memory">Chart Memory &amp; Profiles</a> for all chart navigation features
+(memory panel controls, pagination, sorting, profiles) and
+<a href="#keyboard-shortcuts">Keyboard Shortcuts</a> for the complete shortcut reference.</p>
+
+<!-- Anchor kept for any external links pointing here -->
+<a name="chart-research"></a>
+
+<!-- ============================================================ -->
+<a name="zodiac-modes"></a>
+<h2>Zodiac Modes</h2>
+
+<p>The toolbar shows two zodiac buttons. The active mode is highlighted in <b>green</b>.
+Clicking the same button a <b>second time</b> toggles the alternative naming scheme
+(shown with a <b>*</b> suffix). This gives <b>6 different options</b> in total.</p>
+
+<p>If this feels complex, that is normal. Even professional astrologers may not fully
+understand all these options at first. The system itself is simple once learned, but
+there is a lot to take in for a beginner. Most users will only ever use one or two
+of these options.</p>
+
+<h3>The 3 Default Options</h3>
+
+<p>These are the three standard modes. Each uses its natural naming scheme:</p>
+
+<p><b>1. Aditya Circle</b> (green = Aditya names) &mdash; The recommended default.
+Uses the 12 Aditya names (Dhata, Aryama, Mitra...). The green color on the button
+means Aditya names are active.</p>
+<p class="img-wrap"><img src="images/toolbar_aditya_green.webp"
+   alt="Aditya Circle with green button (Aditya names)"></p>
+
+<p><b>2. Tropical Classic</b> (black button = Western names) &mdash; Standard Western astrology.
+Uses the familiar Western sign names (Aries, Taurus, Gemini...). This is what 99% of
+Western astrologers will use. The button is <b>not green</b> because it uses Western names,
+not Aditya names.</p>
+<p class="img-wrap"><img src="images/toolbar_tropical_star.webp"
+   alt="Tropical Classic with black button (Western names, default)"></p>
+
+<p><b>3. Sidereal</b> (Western/Sanskrit names) &mdash; Traditional sidereal zodiac with the
+standard sign names (Aries/Mesha, Leo/Simha, etc.). These names are essentially the same
+in Western and Sanskrit traditions. The signs align with star constellations, but the
+actual star divisions are the nakshatras, not the signs.</p>
+<p class="img-wrap"><img src="images/toolbar_sidereal_star2.webp"
+   alt="Sidereal with Western/Sanskrit names (default)"></p>
+
+<h3>The 3 Alternative Options</h3>
+
+<p>Click the active button a second time to toggle the alternative naming. The button
+shows a <b>*</b> suffix to indicate the non-default naming is active.</p>
+
+<p><b>4. Tropical Classic with green button</b> (green = Aditya names on Western zodiac) &mdash;
+This uses the Tropical Classic zodiac but displays Aditya names instead of Western names.
+<b>Do not use this unless you know what you are doing</b> or your intuition is guiding
+you there. Currently very few people use this option. It is an experimental, advanced
+option. Most people don't even know the Adityas exist, so adding Aditya names on top of
+a zodiac system they are still learning creates confusion.</p>
+<p class="img-wrap"><img src="images/toolbar_tropical_green.webp"
+   alt="Tropical Classic with green button (Aditya names, advanced option)"></p>
+
+<p><b>5. Aditya Circle *</b> (with star = Western names on Aditya zodiac) &mdash;
+This uses the Aditya Circle zodiac but displays Western sign names instead of Aditya names.
+Some people who learned the Aditya system this way prefer it, and we offer the option.
+You are free to use whatever pleases you.</p>
+<p class="img-wrap"><img src="images/toolbar_aditya_star.webp"
+   alt="Aditya Circle with star (Western names on Aditya zodiac)"></p>
+
+<p><b>6. Sidereal with Aditya names</b> (advanced) &mdash;
+Sidereal zodiac with the Aditya god names. Not commonly used in India but the option
+exists for exploration.</p>
+<p class="img-wrap"><img src="images/toolbar_sidereal_green.webp"
+   alt="Sidereal with Aditya names (green button, advanced)"></p>
+
+<h3>Beginner / Advanced Mode</h3>
+
+<p>By default, the software starts in <b>Beginner mode</b>, which shows only the
+<b>3 default zodiac options</b> (Aditya Circle, Tropical Classic, Sidereal) with their
+natural naming. The alternative naming options (options 4, 5, 6 above) are hidden.</p>
+
+<p>To unlock all 6 options, switch to <b>Advanced mode</b> in
+<b>Settings &gt; Zodiac &amp; Calculation &gt; Experience Level</b>. In Advanced mode, clicking
+an already-active zodiac button toggles the alternative naming (the button gains a
+<b>*</b> suffix). In Beginner mode, clicking the active button does nothing.</p>
+
+<p>This distinction exists because most new users find the 6-option system confusing.
+Start with the 3 defaults, and switch to Advanced mode when you are ready to explore
+the alternative namings.</p>
+
+<div class="note">
+<b>Recommendation for beginners:</b> Start with <b>Aditya Circle</b> (option 1, green button)
+and use the Aditya names for at least a month before trying the Western names alternative.
+This builds familiarity with the 12 Solar Deities as distinct archetypes. If you are a
+Western astrologer, use <b>Tropical Classic</b> (option 2, black button) with its default
+Western names. Do not use the starred alternatives unless you are experimenting or already
+understand the system. The naming is a label preference only: the underlying zodiac
+calculation does not change when you toggle names.
+</div>
+
+<h3>Aditya Circle (Default)</h3>
+<p>The Aditya Circle maps the 12 Solar Deities (Adityas) from the Rig Veda to the
+tropical zodiac signs. The signs are shifted by +1 position relative to tropical:</p>
+<table>
+  <tr><th>Tropical Sign</th><th>Aditya Name</th><th>Love / Core Meaning</th></tr>
+  <tr><td>Aries (0&deg;-30&deg;)</td><td>Aryama</td><td>Love of Liberality &mdash; the intimate friend and companion</td></tr>
+  <tr><td>Taurus (30&deg;-60&deg;)</td><td>Mitra</td><td>Love of Harmony &mdash; the friend who creates concord</td></tr>
+  <tr><td>Gemini (60&deg;-90&deg;)</td><td>Varuna</td><td>Love of Consciousness &mdash; guardian of truth, binds liars with his noose</td></tr>
+  <tr><td>Cancer (90&deg;-120&deg;)</td><td>Indra</td><td>Love of Self-Conquest &mdash; the love of self that elevates to king of the heavens</td></tr>
+  <tr><td>Leo (120&deg;-150&deg;)</td><td>Vivasvan</td><td>Love for Humanity &mdash; the passage where divine light meets earthly condition</td></tr>
+  <tr><td>Virgo (150&deg;-180&deg;)</td><td>Tvasta</td><td>Love of Creating Forms &mdash; the cosmic artisan who shapes and sculpts</td></tr>
+  <tr><td>Libra (180&deg;-210&deg;)</td><td>Vishnu</td><td>Universal Love &mdash; the omnipresent, radical acceptance of all existence</td></tr>
+  <tr><td>Scorpio (210&deg;-240&deg;)</td><td>Amzu</td><td>Love of Inner Purity &mdash; the individual light that shines through natural purity</td></tr>
+  <tr><td>Sagittarius (240&deg;-270&deg;)</td><td>Bhaga</td><td>Love of Abundance &mdash; the dispenser who distributes shares by merit</td></tr>
+  <tr><td>Capricorn (270&deg;-300&deg;)</td><td>Pusha</td><td>Love of Nourishing &mdash; traces paths, nourishes, and protects all travelers</td></tr>
+  <tr><td>Aquarius (300&deg;-330&deg;)</td><td>Parjanya</td><td>Love of Growth &mdash; the rain that fertilizes worlds and releases growth</td></tr>
+  <tr><td>Pisces (330&deg;-360&deg;)</td><td>Dhata</td><td>Love of Creativity &mdash; the one who carries, supports, and establishes</td></tr>
+</table>
+
+<h3>Tropical Classic</h3>
+<p>Standard Western tropical astrology using the season-based zodiac (Aries at the
+Spring Equinox). All conventional Western astrology techniques apply. Choose this mode
+if you are primarily a Western astrologer.</p>
+
+<h3>Sidereal</h3>
+<p>Sidereal mode displays planets and houses in the fixed-star-based zodiac used in
+traditional Jyotish, with your chosen ayanamsa applied. All chart views update
+immediately &mdash; South Indian, North Indian, and Wheel.</p>
+
+<p>The full <b>Nakshatra Wheel</b> &mdash; displaying all 27 nakshatra names directly
+on the chart &mdash; is available in the <b>Pro version</b>.</p>
+
+<h4>How to enable</h4>
+<ol>
+  <li>Open the <b>Vimshottari</b> or <b>Vedanga</b> dasha panel.</li>
+  <li>Click the <b>dasha name button</b> at the top of the panel (the button showing
+      the current lord name, e.g. &ldquo;Dhruva GC mid-Mu&rdquo;) to open the
+      <b>Ayanamsa Settings</b> dialog.</li>
+  <li>Under <b>Chart Zodiac</b>, select <b>Sidereal Chart</b>.</li>
+  <li>Choose your ayanamsa (Lahiri, True Citra, KP, Raman, Fagan/Bradley&hellip;).</li>
+  <li>Click <b>OK</b> &mdash; the chart recalculates with sidereal positions.</li>
+</ol>
+<p>You can also toggle sidereal on/off with <kbd>Alt+S</kbd> (uses the last-selected
+ayanamsa, Lahiri by default). When sidereal is active, the Tropical Classic button
+relabels to <b>Sidereal</b> and lights up green.</p>
+
+<div class="note">
+<b>Note:</b> Dasha calculations already use sidereal positions via nakshatra &mdash;
+enabling sidereal chart mode updates sign placements across all chart views.
+</div>
+
+<!-- ============================================================ -->
+<a name="ernst-wilhelm"></a>
+<h2>About Ernst Wilhelm's System</h2>
+
+<p>The default calculation settings in Varuna 360 follow <b>Ernst Wilhelm's Tropical Vedic</b>
+astrology approach. This is a system that applies Vedic astrology concepts (dashas, karakas,
+vargas, avasthas) using the <b>Tropical zodiac</b> rather than the Sidereal zodiac used in
+mainstream Indian astrology (Jyotish).</p>
+
+<p>If you have studied Ernst Wilhelm's courses, the defaults will feel familiar:</p>
+<ul>
+  <li>Ayanamsa defaults align with his recommended settings</li>
+  <li>Karaka calculations follow his methodology</li>
+  <li>Varga calculations use his conventions</li>
+  <li>Strength calculations (Digbala, Uccha, Chesta) follow his system</li>
+</ul>
+
+<p>The default wheel chart layout also follows Ernst's sign-based convention, where
+each sign is one house. Users who prefer the standard Western chart layout (house 1
+starting at the Ascendant degree) can switch via <b>Settings &gt; Zodiac &amp;
+Calculation &gt; Wheel house display</b>.</p>
+
+<p>If you prefer to use <b>standard Western astrology</b>, simply switch to
+<b>Tropical Classic</b> mode (<kbd>Alt+C</kbd>). The software fully supports
+classic Western astrological techniques alongside the Vedic features.</p>
+
+<div class="note">
+<b>Note:</b> This software is not affiliated with Ernst Wilhelm. The Aditya Zodiac
+system and the Tropical Vedic approach are publicly available knowledge that Varuna 360
+implements as its default framework.
+</div>
+
+<hr>
+<p style="text-align: center; font-size: 11px; opacity: 0.7;">
+Varuna 360 &mdash; &copy; 2024-2026 Lorris Turpin / 360 Hearts in the Sky<br>
+Licensed under AGPL-3.0
+</p>
+
+</body>
+</html>

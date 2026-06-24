@@ -1,0 +1,20 @@
+# Varuna360 Core — public mirror .gitattributes
+#
+# IMPORTANT: This file is template-owned. It must never be copied from the
+# private repo. Keep this file MINIMAL — export-ignore rules, LFS patterns,
+# or file categories that exist only because of Pro would leak the existence
+# of Pro even through this file.
+
+*.py text eol=lf
+*.md text eol=lf
+*.txt text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
+
+# Binary assets
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.ico binary
+*.chtk binary

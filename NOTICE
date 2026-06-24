@@ -1,0 +1,83 @@
+# Varuna360 — Licensing Notice
+
+## Open Core Licensing Model
+
+This software uses an open core licensing model with two components:
+
+### 1. Varuna360 Core (AGPL-3.0)
+
+The core application — chart rendering, calculation engine, panels,
+widgets, managers, and tools — is licensed under the GNU Affero
+General Public License version 3.0.
+
+See the LICENSE file for the full text.
+
+You may use, modify, and redistribute this code under the AGPL-3.0
+terms. If you distribute modified versions, you must also make your
+source code available under AGPL-3.0.
+
+### 2. Varuna360 Pro (Proprietary)
+
+The AI interpretation tools (AI_tools/) are proprietary software
+distributed as compiled binary modules. These are NOT covered by
+the AGPL-3.0 license. All rights reserved.
+
+Varuna360 Pro requires a subscription: https://360heartsinthesky.com
+
+### Commercial Exception
+
+Lorris Turpin, as sole copyright holder of both the Core and Pro
+codebases, grants himself a perpetual commercial license to use
+AGPL-3.0 Core code in proprietary derivative works (Varuna360 Pro).
+This exception applies exclusively to Lorris Turpin and
+360 Hearts in the Sky.
+
+## Third-Party Components
+
+### Swiss Ephemeris
+
+Planetary calculations use the Swiss Ephemeris library.
+
+- C Library: Copyright (c) 1997-2026 Astrodienst AG, Zurich, Switzerland
+  Authors: Dieter Koch, Alois Treindl
+  License: AGPL-3.0 (compatible with this project's AGPL-3.0 license)
+  https://www.astro.com/swisseph/
+
+- Python Wrapper (pyswisseph): Copyright (c) Stanislas Marquis
+  License: AGPL-3.0 (compatible)
+  https://github.com/astrorigin/pyswisseph
+
+### Vimshottari Dasha
+
+The Vimshottari Dasha implementation (core/vimshottari_dasha.py) is
+adapted from pydasha.py by Josh Harper, licensed under AGPL-3.0 (compatible).
+Original: https://github.com/joshharper/pydasha
+
+### PySide6 / Qt6
+
+The graphical interface uses PySide6, the official Python bindings
+for Qt6, licensed under LGPL v3.
+
+Copyright (c) The Qt Company Ltd.
+
+PySide6/Qt6 libraries are dynamically linked and distributed as
+separate .so files within the AppImage. Users may replace these
+libraries with modified versions per LGPL-3.0 requirements.
+
+### Additional Dependencies
+
+See requirements.txt for a complete list of third-party packages.
+
+## Acknowledgments
+
+This software was developed with inspiration from the teachings of
+Ernst Wilhelm and the Kala astrology software. The CHTK file format
+specification was derived through interoperability research. Varuna360
+is an independent project and is not affiliated with or endorsed by
+Vedic Software (Kala) or Ernst Wilhelm.
+
+## Contact
+
+Copyright Holder: Lorris Turpin / 360 Hearts in the Sky
+Website: https://360heartsinthesky.com
+Email: contact@360heartsinthesky.com
