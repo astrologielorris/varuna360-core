@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 # Copyright (C) 2026 Lorris Turpin / 360 Hearts in the Sky
 # Licensed under AGPL-3.0 — see LICENSE file for details.
-# Commercial exception: see NOTICE file.
 """
 Chart Memory Panel - Multi-chart memory with visual selector (PySide6)
 Ported from ui/chart_memory_panel.py (CustomTkinter version)
@@ -21,7 +20,7 @@ from PySide6.QtGui import QFont, QIcon
 # Import centralized theme - uses get_theme_colors() for theme-adaptive styling
 from ui.qt_theme import (
     BG, SURFACE, HOVER, BORDER, TEXT_PRIMARY, TEXT_SECONDARY,
-    STATUS, get_theme_colors, scaled_px, scaled_area_px, scaled_area_size
+    STATUS, get_theme_colors, scaled_px, scaled_area_px, scaled_area_size, desat_hex
 )
 
 # Import calculation logic
@@ -29,12 +28,32 @@ from ui.qt_theme import (
 # core.chart_factory (mode-aware Chart at construction time).
 # Panel constants
 CHART_MEMORY_PANEL_HEIGHT = 70  # Fixed height in pixels
-CHART_BUTTON_WIDTH = 95  # Width of each chart button
+CHART_BUTTON_WIDTH_RATIO = 9.5  # cell width = font px * ratio (95px at default size 10)
 CHART_BUTTON_HEIGHT = 28  # Height of each chart button
-CHART_BUTTON_FONT_SIZE = 11  # Font size for chart names
 CHARTS_PER_ROW = 20  # Number of chart buttons per row
 NUM_ROWS = 2  # Number of rows to display
 CHARTS_PER_PAGE = CHARTS_PER_ROW * NUM_ROWS  # 40 charts per page
+
+
+def _stamp(entry):
+    """Mark this entry as changed NOW (SPEC-SES-002 §4.5).
+
+    Stamped on real mutation only — created, edited, healed — and NEVER on
+    save. That distinction is the whole mechanism: if a save stamped every
+    entry, no deletion record could ever be newer than the entry it deletes,
+    every delete would lose to the other instance's next tick, and the file
+    would oscillate forever. The spec calls it the single easiest way to
+    build this wrong.
+
+    Two things read it: the cross-instance merge (newer wins) and the
+    favorites sync (a star older than a live edit may not revert it). Both
+    fail CLOSED on a missing stamp, so an unstamped entry is safe — it just
+    cannot win an argument.
+    """
+    from datetime import datetime, timezone
+    entry['updated_at'] = datetime.now(timezone.utc).isoformat()
+    return entry
+
 
 class ChartMemoryPanel:
     """
@@ -80,6 +99,10 @@ class ChartMemoryPanel:
         self.SORT_LABELS = {"az": "A→Z", "date": "Date", "added": "Added"}
         self.current_sort_mode = None  # None = unsorted (load order)
         self._insertion_order = []  # Track original add order for "Added" mode
+        # SPEC-SES-002 INV-3/INV-4: every removal leaves a record, or the
+        # merge resurrects the chart from the other instance's copy. Drained
+        # into session.json by save_session and merged from there.
+        self.tombstones = []
 
         # Multi-select mode state
         self._select_mode = False
@@ -354,7 +377,7 @@ class ChartMemoryPanel:
         if mode is None:
             mode = self.gui.state.aditya_mode
         if ayanamsa is None:
-            ayanamsa = getattr(self.gui, 'chart_sidereal_ayanamsa_id', 1)
+            ayanamsa = getattr(self.gui, 'chart_sidereal_ayanamsa_id', 100)
 
         # All keys must be present: heal-on-match (S5.2) does existing.update(chart_entry)
         chart_entry = {
@@ -381,6 +404,10 @@ class ChartMemoryPanel:
         chart_entry['planets_data'] = {}
         chart_entry['aditya_mode'] = mode
         chart_entry['source_params'] = None
+        # A new chart is a mutation, and so is the heal-on-match below: it
+        # replaces the stored recipe wholesale, so the stamp travels with it
+        # through existing.update() and the other instance sees a newer entry.
+        _stamp(chart_entry)
 
         for i, existing in enumerate(self.charts):
             if self._is_same_chart(existing, chart_entry):
@@ -477,6 +504,11 @@ class ChartMemoryPanel:
                 ayanamsa=self.gui.chart_sidereal_ayanamsa_id,
                 house_system=self.gui.state.house_system,
                 is_human_design=preserved_hd,
+                # SPEC-ECL-002 section 6 (td-n3h3.8 7d): the ONLY writer of
+                # origin_memory_id. Marks the active chart as dispatched from
+                # this memory entry; edit/new-chart paths construct fresh
+                # source_params without the key.
+                origin_memory_id=entry.get('id'),
             ),
         ))
 
@@ -510,12 +542,59 @@ class ChartMemoryPanel:
         if hasattr(self.gui, 'edit_chart_panel') and self.gui.edit_chart_panel:
             self.gui.edit_chart_panel.load_chart_from_memory(entry)
 
+    def _unstar_if_in_favorites_profile(self, entries):
+        """Unstar charts removed from the Favorites panel (SPEC-PROF-002 §5.1.0).
+
+        Scoped to the Favorites profile ON PURPOSE. A star is global, so
+        deleting a chart from the `models` panel must not silently unstar it —
+        only deleting it from the star list's own view means "unstar". Without
+        this, a starred chart deleted here comes back on the next sync, or
+        (once SPEC-SES-002 lands) is dropped by its own tombstone forever while
+        the star still points at it.
+        """
+        try:
+            pm = getattr(self.gui, 'profile_manager', None)
+            if not pm or pm.get_current_profile() != 'favorites':
+                return
+            from managers import favorites_manager
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    continue
+                # Pass the ID, not just the recipe. A recipe match misses
+                # after a time edit (the star holds the old snapshot) and
+                # overmatches within its 7.2 s tolerance, unstarring a
+                # rectification variant's original. See unstar().
+                favorites_manager.unstar(entry.get('recipe'), entry.get('id'))
+        except Exception as e:
+            print(f"[MEMORY] Unstar-on-delete skipped: {e}")
+
+    def _record_removal(self, entries):
+        """Remember that these charts were deleted (SPEC-SES-002 §4.4).
+
+        Union-by-identity without this is worse than the overwrite it
+        replaces: a chart deleted here would come straight back from the
+        other instance's list on the next merge, and there would be no way
+        to delete anything while two windows are open.
+
+        Best-effort — a bookkeeping failure must never block the deletion the
+        user asked for.
+        """
+        try:
+            from managers.session_merge import make_tombstone
+            for entry in entries:
+                if isinstance(entry, dict):
+                    self.tombstones.append(make_tombstone(entry))
+        except Exception as e:                          # noqa: BLE001
+            print(f"[MEMORY] Could not record the removal: {e}")
+
     def remove_chart(self, index):
         """Remove a chart from memory."""
         if 0 <= index < len(self.charts):
             removed_id = self.charts[index].get('id')
             if removed_id in self._insertion_order:
                 self._insertion_order.remove(removed_id)
+            self._unstar_if_in_favorites_profile([self.charts[index]])
+            self._record_removal([self.charts[index]])
             self.charts.pop(index)
 
             # Adjust current index
@@ -538,6 +617,12 @@ class ChartMemoryPanel:
             self._select_mode = False
             self._selected_ids.clear()
             self._restore_action_buttons()
+        self._unstar_if_in_favorites_profile(list(self.charts))
+        # One batch through the same locked write. Bounded by the panel size,
+        # which is bounded by what the user can see (§4.4 — the watermark
+        # this replaces saved nothing measurable and cost a chain of
+        # compensations).
+        self._record_removal(list(self.charts))
         self.charts.clear()
         self._insertion_order.clear()
         self.current_sort_mode = None
@@ -585,6 +670,17 @@ class ChartMemoryPanel:
         entry = self.charts[self.current_index]
         recipe = entry['recipe']
 
+        from core.chart_factory import RECIPE_INSTANT_FIELDS
+        # Snapshot BEFORE mutating. Comparing the resulting values (rather than
+        # inspecting `updates` keys) is what makes this robust: callers pass
+        # `local_year`, `year` or nothing at all, and a caller that writes the
+        # same value back must not be treated as an edit.
+        _instant_before = {k: recipe.get(k) for k in RECIPE_INSTANT_FIELDS}
+        # td-hba1: the DST pair needs the same before/after comparison, and
+        # for the same reason — a caller writing the same flag back is not an
+        # edit and must not coarsen an exact half-hour offset.
+        _dst_flag_before = recipe.get('time_change_flag')
+
         _KEY_MAP = {
             'latitude': 'lat', 'longitude': 'lon',
             'local_year': 'year', 'local_month': 'month', 'local_day': 'day',
@@ -605,6 +701,51 @@ class ChartMemoryPanel:
             if _h is not None and _m is not None:
                 recipe['timedec'] = float(_h) + float(_m) / 60.0 + float(_s or 0) / 3600.0
 
+        # td-nbl8: a stored julian_day WINS over civil time in
+        # build_chart_from_recipe, so an edit that moves the instant without
+        # re-deriving it is silently discarded on the next rebuild — the user's
+        # saved time adjustment snapped back on the first mode switch. Only
+        # TOML-origin recipes carry a JD; CHTK-origin ones stay untouched.
+        if recipe.get('julian_day') is not None and any(
+                recipe.get(k) != _instant_before[k] for k in RECIPE_INSTANT_FIELDS):
+            from core.chart_factory import jd_from_recipe_civil
+            try:
+                recipe['julian_day'] = float(jd_from_recipe_civil(recipe))
+            except (TypeError, ValueError, KeyError) as e:
+                # Never keep a JD we know is stale: falling back to None makes
+                # the builder recompute from civil time, which is the whole
+                # point. Keeping it would restore the bug.
+                print(f"[MEMORY] julian_day re-derive failed, clearing: {e}")
+                recipe['julian_day'] = None
+
+        # td-hba1, the same family. A recipe can carry BOTH time_change_flag
+        # (an integer: 0 none, 1 DST, 2 War Time) and dst_offset_hours (the
+        # exact float, so Lord Howe's half hour survives). Every consumer
+        # prefers the float when it is present — toml_chart._recover_offsets,
+        # BirthDataManager._compute_chtk_timezone — so editing the flag alone
+        # changes nothing at all, and the user's DST correction is silently
+        # discarded on the next write.
+        #
+        # The float wins, so the float has to follow. float(flag) is not a
+        # guess: the flag's whole meaning is "this many hours", and the only
+        # case where the float says something the flag cannot (a half-hour
+        # DST) is the case where the flag did not change and this does not
+        # run.
+        if (recipe.get('dst_offset_hours') is not None
+                and 'time_change_flag' in recipe
+                and recipe['time_change_flag'] != _dst_flag_before):
+            flag = recipe.get('time_change_flag')
+            if flag in (0, 1, 2):
+                recipe['dst_offset_hours'] = float(flag)
+            else:
+                # -1 is Kala's AUTO sentinel and anything else is unknown.
+                # Clearing sends every consumer back to the flag, which has
+                # resolve_recipe_dst_flag to interpret it; keeping a stale
+                # float would override that with the OLD answer.
+                print(f"[MEMORY] dst flag {flag!r} is not a fixed amount; "
+                      f"clearing dst_offset_hours")
+                recipe['dst_offset_hours'] = None
+
         entry['_chart'] = None
 
         from core.chart_factory import metadata_from_recipe
@@ -620,13 +761,19 @@ class ChartMemoryPanel:
         if hasattr(self.gui, '_current_birth_data'):
             self.gui._current_birth_data = None
 
+        # The single edit funnel (time_adjust_widget and edit_chart_panel both
+        # arrive here), so one stamp covers every user edit. Without it the
+        # other instance's older copy wins the next merge and the correction
+        # is undone by a window the user was not even looking at.
+        _stamp(entry)
+
         self.refresh()
         if hasattr(self.gui, 'session_manager') and self.gui.session_manager:
             self.gui.session_manager.save_session()
         return True
 
     # validate_chart_against_chtk and validate_all_charts removed —
-    # an enhanced validator is available in the proprietary edition.
+    # an enhanced validator is available in the paid edition.
     def _clear_display_only(self):
         """Clear charts from display WITHOUT saving to session.
         Used during profile switching to avoid overwriting the new profile's session.
@@ -787,6 +934,10 @@ class ChartMemoryPanel:
         end = min(start + CHARTS_PER_PAGE, len(self.charts))
         visible_charts = self.charts[start:end]
 
+        # Compute chart-memory font size and derived button width
+        mem_px = scaled_area_px('chart_memory')
+        btn_width = round(mem_px * CHART_BUTTON_WIDTH_RATIO)
+
         # Create grid of buttons
         for i, chart in enumerate(visible_charts):
             actual_index = start + i
@@ -805,7 +956,7 @@ class ChartMemoryPanel:
                 display_name = self._truncate_name(chart['person_name'].title(), 20)
 
             btn = QPushButton(display_name)
-            btn.setFixedSize(CHART_BUTTON_WIDTH, CHART_BUTTON_HEIGHT)
+            btn.setFixedSize(btn_width, CHART_BUTTON_HEIGHT)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             btn.setToolTip(chart['person_name'].title())
 
@@ -816,9 +967,10 @@ class ChartMemoryPanel:
                         QPushButton {{
                             background-color: {theme["secondary"]};
                             color: {theme["secondary_text"]};
-                            border: 2px solid #FFA726;
+                            border: 2px solid {desat_hex('#FFA726')};
                             border-radius: 4px;
-                            font-size: {scaled_area_px('sidebar')}px;
+                            font-family: 'Inter', 'Segoe UI', 'Arial', sans-serif;
+                            font-size: {mem_px}px;
                             font-weight: bold;
                             text-align: left;
                             padding: 0px 2px 0px 3px;
@@ -826,7 +978,7 @@ class ChartMemoryPanel:
                         }}
                         QPushButton:hover {{
                             background-color: {theme["secondary_light"]};
-                            border-color: #FFB74D;
+                            border-color: {desat_hex('#FFB74D')};
                         }}
                         QPushButton:pressed {{
                             background-color: {theme["secondary_dark"]};
@@ -839,14 +991,15 @@ class ChartMemoryPanel:
                             color: {theme["secondary_text"]};
                             border: 1px dashed {theme["secondary_light"]};
                             border-radius: 4px;
-                            font-size: {scaled_area_px('sidebar')}px;
+                            font-family: 'Inter', 'Segoe UI', 'Arial', sans-serif;
+                            font-size: {mem_px}px;
                             text-align: left;
                             padding: 0px 2px 0px 3px;
                             text-transform: none;
                         }}
                         QPushButton:hover {{
                             background-color: {theme["secondary_light"]};
-                            border: 1px dashed #FFA726;
+                            border: 1px dashed {desat_hex('#FFA726')};
                         }}
                         QPushButton:pressed {{
                             background-color: {theme["secondary"]};
@@ -862,7 +1015,8 @@ class ChartMemoryPanel:
                             color: {theme["secondary_text"]};
                             border: 2px solid {theme["primary"]};
                             border-radius: 4px;
-                            font-size: {scaled_area_px('sidebar')}px;
+                            font-family: 'Inter', 'Segoe UI', 'Arial', sans-serif;
+                            font-size: {mem_px}px;
                             font-weight: bold;
                             text-align: left;
                             padding: 0px 2px 0px 5px;
@@ -883,7 +1037,8 @@ class ChartMemoryPanel:
                             color: {theme["secondary_text"]};
                             border: 1px solid {theme["secondary_light"]};
                             border-radius: 4px;
-                            font-size: {scaled_area_px('sidebar')}px;
+                            font-family: 'Inter', 'Segoe UI', 'Arial', sans-serif;
+                            font-size: {mem_px}px;
                             text-align: left;
                             padding: 0px 2px 0px 5px;
                             text-transform: none;
@@ -990,8 +1145,9 @@ class ChartMemoryPanel:
     def _update_clear_button_style(self):
         """Update Clear button styling with 3D beveled square design."""
         from ui.qt_theme import STATUS
-        error_base = STATUS["error"]
-        # SPEC-THM-001 G07: white on red is correct on both themes; use literal.
+        # SPEC-SAT-001: mute the semantic error red with the saturation slider
+        # (no-op at 100). SPEC-THM-001 G07: white on red is correct on both themes.
+        error_base = desat_hex(STATUS["error"])
         self.clear_btn.setStyleSheet(self._get_3d_button_style(error_base, "#FFFFFF"))
 
     def _update_sort_button_style(self):
@@ -1059,6 +1215,30 @@ class ChartMemoryPanel:
             }}
         """)
 
+        chart = self.charts[index] if 0 <= index < len(self.charts) else None
+
+        # Favorite toggle (SPEC-FAV-001 S6). Lazy import + read-on-open
+        # keeps the panel's refresh/select paths free of favorites cost.
+        if chart and not chart.get('is_transit') and isinstance(chart.get('recipe'), dict):
+            from managers import favorites_manager
+            if favorites_manager.is_favorite(chart['recipe']):
+                fav_action = menu.addAction("★ Remove from Favorites")
+            else:
+                fav_action = menu.addAction("☆ Add to Favorites")
+            fav_action.triggered.connect(
+                lambda checked=False, c=chart: favorites_manager.toggle_favorite(c)
+            )
+            menu.addSeparator()
+
+        # Search Astrotheme for this person
+        if chart:
+            person_name = chart.get('person_name', '')
+            if person_name:
+                astrotheme_action = menu.addAction(f"Search Astrotheme: \"{person_name}\"")
+                astrotheme_action.triggered.connect(
+                    lambda: self._search_astrotheme(person_name)
+                )
+
         menu.addSeparator()
 
         remove_action = menu.addAction("Remove from memory")
@@ -1077,6 +1257,13 @@ class ChartMemoryPanel:
         self.remove_chart(index)
         if was_current and self.charts and 0 <= self.current_index < len(self.charts):
             self.select_chart(self.current_index)
+
+    def _search_astrotheme(self, person_name):
+        """Search Astrotheme for this person using the default browser."""
+        import urllib.parse
+        import webbrowser
+        query = urllib.parse.quote_plus(f"site:www.astrotheme.com {person_name}")
+        webbrowser.open(f"https://www.google.com/search?q={query}")
 
     def _cycle_sort_mode(self):
         """Cycle through sort modes: A→Z → Date → Added (load order)."""
@@ -1298,6 +1485,10 @@ class ChartMemoryPanel:
         if 0 <= self.current_index < len(self.charts):
             selected_chart_id = self.charts[self.current_index].get('id')
 
+        doomed = [c for c in self.charts if c.get('id') in self._selected_ids]
+        self._unstar_if_in_favorites_profile(doomed)
+        self._record_removal(doomed)
+
         surviving = [c for c in self.charts if c.get('id') not in self._selected_ids]
         self.charts[:] = surviving
         self._insertion_order[:] = [
@@ -1336,7 +1527,7 @@ class ChartMemoryPanel:
 
     def _update_select_button_active_style(self):
         self.select_btn.setStyleSheet(
-            self._get_3d_toolbutton_style("#4CAF50", "#FFFFFF"))
+            self._get_3d_toolbutton_style(desat_hex("#4CAF50"), "#FFFFFF"))
 
     def _update_delete_button_style(self):
         from ui.qt_theme import STATUS
@@ -1349,10 +1540,23 @@ class ChartMemoryPanel:
         if not self.charts:
             return  # Nothing to clear
 
+        # In the Favorites profile this also empties the star list, and that
+        # list is global — it is not a memory-only operation there, so the
+        # confirmation must not describe it as one.
+        extra = ""
+        try:
+            pm = getattr(self.gui, 'profile_manager', None)
+            if pm and pm.get_current_profile() == 'favorites':
+                extra = ("\n\nThis also removes every star, for all profiles. "
+                         "Your saved chart files are not touched.")
+        except Exception:
+            pass
+
         reply = QMessageBox.question(
             self.panel,
             "Clear All Charts",
-            f"Clear all {len(self.charts)} charts from memory?\n\nThis cannot be undone.",
+            f"Clear all {len(self.charts)} charts from memory?\n\n"
+            f"This cannot be undone.{extra}",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No
         )
@@ -1381,7 +1585,7 @@ class ChartMemoryPanel:
 
         folder_path = QFileDialog.getExistingDirectory(
             self.panel,
-            "Select Folder Containing CHTK Files",
+            "Select Folder Containing Chart Files",
             default_folder,
             QFileDialog.Option.ShowDirsOnly
         )
@@ -1429,7 +1633,7 @@ class ChartMemoryPanel:
         elif total == 0:
             QMessageBox.information(
                 self.panel, "No Charts Found",
-                f"No .chtk files found in:\n{folder_path}",
+                f"No .chtk or .toml files found in:\n{folder_path}",
                 QMessageBox.StandardButton.Ok
             )
 
@@ -1487,7 +1691,10 @@ class ChartMemoryPanel:
                 "reason": f"folder does not exist: {folder_path}",
             }
 
-        chtk_files = sorted(folder.glob("*.chtk"))
+        # SPEC-IMPORT-001 §6.1: load both .chtk and .toml charts from the folder.
+        chtk_files = sorted(
+            list(folder.glob("*.chtk")) + list(folder.glob("*.toml"))
+        )
         total = len(chtk_files)
         if total == 0:
             return {
@@ -1576,7 +1783,10 @@ class ChartMemoryPanel:
 
             for i, chtk_file in enumerate(chtk_files):
                 try:
-                    bd = BirthDataManager.create_birth_data_from_chtk(str(chtk_file))
+                    # SPEC-IMPORT-001 §6.1: dispatch by extension (.chtk/.toml).
+                    # canonicalize=False: a folder scan is a read path and must NOT
+                    # write [moment].jd back into JD-less .toml files (no user consent).
+                    bd = BirthDataManager.create_birth_data_from_file(str(chtk_file), canonicalize=False)
                     # SPEC-TZ-001 8a: console only (status bar would spam on bulk load)
                     BirthDataManager.report_tz_warnings(
                         BirthDataManager.validate_birth_data(bd),
@@ -1599,6 +1809,13 @@ class ChartMemoryPanel:
                         country=bd.get('country', ''),
                         gender=bd.get('gender', 'Unknown'),
                         time_change_flag=bd.get('time_change_flag', 0),
+                        # SPEC-IMPORT-001 §6.3: forward additive metadata (None
+                        # for CHTK -> conditionally omitted by make_recipe).
+                        rodden=bd.get('rodden'),
+                        tags=bd.get('tags'),
+                        notes=bd.get('notes'),
+                        julian_day=bd.get('julian_day'),
+                        dst_offset_hours=bd.get('dst_offset_hours'),
                     )
                     pre_len = len(self.charts)
                     idx = self.add_chart(

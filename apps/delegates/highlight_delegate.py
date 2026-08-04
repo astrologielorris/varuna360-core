@@ -8,7 +8,7 @@ from PySide6.QtGui import QBrush, QColor, QPalette, QPen, QPainterPath, QPolygon
 from PySide6.QtCore import Qt as QtCore_Qt, QPointF, QRectF
 
 # Import theme for dynamic color updates
-from ui.qt_theme import get_theme_colors, ACCENTS
+from ui.qt_theme import get_theme_colors, ACCENTS, desat_hex
 
 
 class KarakaHighlightDelegate(QStyledItemDelegate):
@@ -145,19 +145,19 @@ class DashaHighlightDelegate(QStyledItemDelegate):
             option.palette.setColor(QPalette.ColorRole.Text, QColor(theme["primary_text"]))
         elif self.selected_row is not None and row == self.selected_row:
             # User click-selection — green
-            painter.fillRect(option.rect, QBrush(QColor(ACCENTS["green"]["base"])))
+            painter.fillRect(option.rect, QBrush(QColor(desat_hex(ACCENTS["green"]["base"]))))
             option.palette.setColor(QPalette.ColorRole.Text, QColor("#FFFFFF"))
         elif row in self.karaka_rows:
             # Karaka match — gold
-            painter.fillRect(option.rect, QBrush(QColor(ACCENTS["gold"]["base"])))
+            painter.fillRect(option.rect, QBrush(QColor(desat_hex(ACCENTS["gold"]["base"]))))
             option.palette.setColor(QPalette.ColorRole.Text, QColor("#1A1A1A"))
         elif row in self.cusp_lord_rows:
             # Cusp lord match — cyan
-            painter.fillRect(option.rect, QBrush(QColor(ACCENTS["cyan"]["base"])))
+            painter.fillRect(option.rect, QBrush(QColor(desat_hex(ACCENTS["cyan"]["base"]))))
             option.palette.setColor(QPalette.ColorRole.Text, QColor("#1A1A1A"))
         elif row in self.whole_sign_rows:
             # Whole-sign lord match — orange
-            painter.fillRect(option.rect, QBrush(QColor(ACCENTS["orange"]["base"])))
+            painter.fillRect(option.rect, QBrush(QColor(desat_hex(ACCENTS["orange"]["base"]))))
             option.palette.setColor(QPalette.ColorRole.Text, QColor("#1A1A1A"))
         elif row in self.maturation_rows:
             # Maturation year — secondary_light
@@ -247,6 +247,12 @@ class AvasthaHighlightDelegate(QStyledItemDelegate):
     Each cell can be assigned a category: FRIEND, ENEMY, NEUTRAL, DUAL, SHAME, PROUD.
     Colors are semantic (green=friend, red=enemy, etc.) — semantic-meaning is the
     documented exception to the "use theme colors, not hardcoded values" rule.
+
+    Rev4 (SPEC-AVA-001 §12.5) adds the HORA_*/TRIM_* retinue-row categories: the
+    HORA row is colored by side (Aditya = warm/gold, Naga = blue), the TRIMSAMSA
+    row by being type (the five-force palette shared with
+    planetary_condition_controller._BEING_TYPE_COLORS). These live here as delegate
+    categories rather than inline hex (Rule 20).
     """
 
     # Semantic color map: category -> (dark_bg, dark_text, light_bg, light_text)
@@ -254,9 +260,33 @@ class AvasthaHighlightDelegate(QStyledItemDelegate):
         "FRIEND":  ("#1B3A1B", "#66BB6A", "#C8E6C9", "#2E7D32"),
         "ENEMY":   ("#3A1B1B", "#EF5350", "#FFCDD2", "#C62828"),
         "NEUTRAL": ("#1B1B3A", "#42A5F5", "#BBDEFB", "#1565C0"),
-        "DUAL":    ("#3A3A1B", "#FFD54F", "#FFF9C4", "#F9A825"),
-        "SHAME":   ("#3A1010", "#FF3B30", "#FFCDD2", "#B71C1C"),
+        # D-11: the light pair was byte-identical to HORA_ADITYA's AND had the
+        # weakest text contrast of any category (amber #F9A825 on near-white
+        # #FFF9C4). Deeper tint, deeper text — still amber, now legible.
+        "DUAL":    ("#3A3A1B", "#FFD54F", "#FFECB3", "#8A6100"),
+        # SPEC-AVA-002 D-11: SHAME used to share ENEMY's light background
+        # (#FFCDD2) and differ only in text hex, so in a light theme the trailing
+        # "!" was the ONLY thing telling a shame cell from a hostile one. Deeper
+        # red at the same hue — a value change, not a recolour, so it stays
+        # inside the "depth not hue" rule the rest of this work follows.
+        "SHAME":   ("#3A1010", "#FF3B30", "#EF9A9A", "#6D0000"),
         "PROUD":   ("#2A1B2A", "#CE93D8", "#E1BEE7", "#7B1FA2"),
+        # HORA row — by side.
+        "HORA_ADITYA": ("#4D4D10", "#FFD54F", "#FFF9C4", "#8B5E00"),
+        "HORA_NAGA":   ("#102E5C", "#80DEEA", "#E0F7FA", "#0D4D6E"),
+        # TRIMSAMSA row — by being type (five forces).
+        "TRIM_GANDHARVA": ("#5C1A1A", "#E57373", "#FFEBEE", "#B71C1C"),
+        # D-11, two defects in one row: the dark background was byte-identical
+        # to HORA_ADITYA's (a fourth collision, found by the no-shared-background
+        # test rather than by eye), and the light text #F57F17 on #FFFDE7 was
+        # near-invisible. Now a fierce burnt amber, distinct from both the olive
+        # HORA_ADITYA and the brown TRIM_YAKSHA.
+        "TRIM_RAKSHASA":  ("#6B2E0F", "#F0C75E", "#FFF3C4", "#7A4A00"),
+        "TRIM_RISHI":     ("#3D1A5C", "#CE93D8", "#F3E5F5", "#6A1B9A"),
+        "TRIM_YAKSHA":    ("#4D3818", "#D4A76A", "#FBE9E7", "#4E342E"),
+        # D-11: shared HORA_NAGA's dark background exactly. Milder than the
+        # SHAME collision (different rows, never adjacent) but still a lift.
+        "TRIM_APSARA":    ("#17406B", "#64B5F6", "#E3F2FD", "#1565C0"),
     }
 
     @staticmethod
@@ -296,8 +326,8 @@ class AvasthaHighlightDelegate(QStyledItemDelegate):
         colors = self.get_category_colors()
         if cat and cat in colors:
             bg_hex, text_hex = colors[cat]
-            painter.fillRect(fill_rect, QBrush(QColor(bg_hex)))
-            option.palette.setColor(QPalette.ColorRole.Text, QColor(text_hex))
+            painter.fillRect(fill_rect, QBrush(QColor(desat_hex(bg_hex))))
+            option.palette.setColor(QPalette.ColorRole.Text, QColor(desat_hex(text_hex)))
         else:
             painter.fillRect(fill_rect, QBrush(QColor(theme["secondary_dark"])))
             option.palette.setColor(QPalette.ColorRole.Text, QColor(theme["secondary_text"]))
@@ -367,8 +397,8 @@ class TajikaHighlightDelegate(QStyledItemDelegate):
         colors = self.get_category_colors()
         if cat and cat in colors:
             bg_hex, fg_hex = colors[cat]
-            painter.fillRect(rect, QBrush(QColor(bg_hex)))
-            shape_color = QColor(fg_hex)
+            painter.fillRect(rect, QBrush(QColor(desat_hex(bg_hex))))
+            shape_color = QColor(desat_hex(fg_hex))
         else:
             painter.fillRect(rect, QBrush(QColor(theme["secondary_dark"])))
             shape_color = QColor(theme["secondary_text"])

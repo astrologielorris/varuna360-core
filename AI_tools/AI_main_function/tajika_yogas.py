@@ -1,6 +1,5 @@
 # Copyright (C) 2026 Lorris Turpin / 360 Hearts in the Sky
 # Licensed under AGPL-3.0 — see LICENSE file for details.
-# Commercial exception: see NOTICE file.
 """
 Tajika Yoga Detection — All 16 Tajika Yogas
 =============================================
@@ -18,7 +17,7 @@ The 16 yogas are grouped by outcome:
   TRANSFER:   Nakta, Yamaya
   SPECIAL:    Gairi Kabula
 
-Reference: Ernst Wilhelm's Tajika PDFs in docs/tajika_prasna/.
+Reference: Ernst Wilhelm's Tajika aspect/orb tables.
 """
 
 import os
@@ -32,13 +31,12 @@ from AI_tools.AI_main_function.tajika import (
     TRADITIONAL_PLANETS,
     TAJIKA_PLANETS,
     TAJIKA_SHORT_NAMES,
-    effective_orb,
-    is_within_orb,
     calculate_tajika_strength,
-    determine_applying_separating,
-    classify_tajika_aspect,
     MAIN_ASPECT_ANGLES,
 )
+# NOTE: determine_applying_separating / is_within_orb / effective_orb /
+# classify_tajika_aspect were used by the old speed/exact-angle Itthasala rule.
+# The deg-in-sign rule (classify_pair, below) replaces them entirely.
 from AI_tools.AI_main_function.constants import (
     ADITYA_SIGNS,
     SIGN_RULERS,
@@ -113,15 +111,27 @@ def _is_combust(planet: str, chart) -> bool:
 
 
 def _is_retrograde(planet: str, chart) -> bool:
-    """Planet has negative speed (retrograde). Sun/Moon never retrograde."""
+    """Planet retrograde in the chart. Sun/Moon never retrograde.
+
+    Positional / state-based (spec section 3 item 2): read the chart planet
+    object's OWN stored speed via `retrograde()`. This is robust and does not
+    depend on the optional `bala_calculator` module or a valid `jd` - the yoga
+    `failing` flag must fire for retrograde participants regardless (the old
+    bala-speed path silently returned False whenever HAS_BALA was unavailable,
+    dropping every failing flag; codex P1). The bala path stays only as a legacy
+    fallback for dict charts without the object API.
+    """
     if planet in ("Sun", "Moon"):
         return False
+    try:
+        return bool(chart.rashi().planets()[planet].retrograde())
+    except Exception:
+        pass
     jd = _get_jd(chart)
     if jd is None or not HAS_BALA:
         return False
     try:
-        speed = get_planet_speed(planet, jd)
-        return speed < 0
+        return get_planet_speed(planet, jd) < 0
     except Exception:
         return False
 
@@ -227,6 +237,185 @@ def _next_sign_index(sign_idx: int) -> int:
 
 
 # ============================================================================
+# APPLYING/SEPARATING RULE (SPEC-VRS-001 section 3)
+# ============================================================================
+#
+# The original engine classified Itthasala/Isharapha from real ephemeris speeds
+# and the distance to the exact aspect angle. That was a mis-extraction: the
+# rule (per Ernst Wilhelm's Tajika/Varshaphala teaching) compares the
+# DEGREES-WITHIN-SIGN of the faster vs slower planet. A faster planet with fewer
+# degrees-in-sign than a slower one is APPLYING (Itthasala); more (by >= 1 deg)
+# is SEPARATING (Isharapha). "Faster" is the fixed speed order below, NOT
+# ephemeris velocity (retrograde planets keep their natural order and instead
+# get a `failing` flag). classify_pair is the single source of truth.
+
+# Fastest -> slowest. Static order. Never ephemeris speed.
+TAJIKA_SPEED_ORDER = ["Moon", "Mercury", "Venus", "Sun", "Mars", "Jupiter", "Saturn"]
+
+# Sign offsets (0-based, slow minus fast) that count as an aspecting position:
+# 1st/3rd/4th/5th/7th/9th/10th/11th. The remaining offsets are 2/12 (1, 11) and
+# 6/8 (5, 7) - non-aspecting. A pair in a non-aspecting position still FORMS the
+# yoga mechanically (its sign-aspect virupa is 0), it is only flagged
+# non-critical and is Nakta/Yamaya territory (spec section 3 item 1).
+ASPECTING_SIGN_OFFSETS = frozenset({0, 2, 3, 4, 6, 8, 9, 10})
+
+
+def _tajika_faster(p1: str, p2: str) -> tuple:
+    """(faster, slower) by the static speed order."""
+    return (p1, p2) if (TAJIKA_SPEED_ORDER.index(p1)
+                        < TAJIKA_SPEED_ORDER.index(p2)) else (p2, p1)
+
+
+def classify_pair(p1: str, sign1: int, deg1: float,
+                  p2: str, sign2: int, deg2: float):
+    """Classify the Tajika applying/separating relationship of two planets.
+
+    Pure function of sign index (0-11) and degrees-within-sign (0-30). Faster /
+    slower is resolved internally from TAJIKA_SPEED_ORDER, so argument order does
+    not matter. Frame-agnostic: both the sign OFFSET and the degrees-in-sign are
+    invariant across zodiac frames (spec section 2).
+
+    Returns None only when the pair is beyond combined orb (no yoga). Otherwise:
+        {"yoga": "Itthasala"|"Isharapha",
+         "subtype": "Purna"|"Vartamana"|"Bhavishyata",
+         "family": "applying"|"separating",
+         "fast": str, "slow": str,
+         "dist": float,          # deg-in-sign distance, or catching distance
+         "critical": bool,       # aspecting sign position (sign virupa > 0)
+         "sign_virupas": float,  # tajika strength at offset*30 (0 = non-critical)
+         "cross_sign": bool}     # the last-degree next-sign exception fired
+    """
+    fast, slow = _tajika_faster(p1, p2)
+    if fast == p1:
+        sf, df, ss, ds = sign1, deg1, sign2, deg2
+    else:
+        sf, df, ss, ds = sign2, deg2, sign1, deg1
+
+    offset = (ss - sf) % 12
+    sign_virupas = calculate_tajika_strength(offset * 30.0)
+    critical = offset in ASPECTING_SIGN_OFFSETS
+    avg_orb = (DEEPTAMSAS[fast] + DEEPTAMSAS[slow]) / 2.0
+    combined_orb = DEEPTAMSAS[fast] + DEEPTAMSAS[slow]
+
+    def _rec(yoga, subtype, family, dist, cross_sign=False, crit=None):
+        return {
+            "yoga": yoga, "subtype": subtype, "family": family,
+            "fast": fast, "slow": slow, "dist": round(dist, 4),
+            "critical": critical if crit is None else crit,
+            "sign_virupas": sign_virupas, "cross_sign": cross_sign,
+        }
+
+    # Last-degree cross-sign Itthasala (yogas 10 & 14): a fast
+    # planet in the last degree of its sign forms Itthasala with a planet in the
+    # NEXT sign, distance measured as the actual catching distance across the
+    # boundary. This overrides both the plain deg-in-sign arithmetic (which would
+    # read it as separating) and the sign gate (offset 1 is otherwise 2/12); the
+    # aspect completes as a conjunction once the fast planet ingresses, so it is
+    # treated as critical.
+    if df >= 29.0 and offset == 1:
+        dist = (30.0 - df) + ds
+        if dist <= 1.0:
+            return _rec("Itthasala", "Purna", "applying", dist, True, crit=True)
+        if dist <= avg_orb:
+            return _rec("Itthasala", "Vartamana", "applying", dist, True, crit=True)
+        if dist <= combined_orb:
+            return _rec("Itthasala", "Bhavishyata", "applying", dist, True, crit=True)
+        return None
+
+    # Normal deg-in-sign rule (classify_pair pseudocode).
+    if df <= ds or (df - ds) < 1.0:                 # applying, or up to <1 deg past
+        dist = abs(ds - df)
+        if dist <= 1.0:
+            return _rec("Itthasala", "Purna", "applying", dist)
+        # df > ds with dist > 1 cannot reach here: it fails the outer test and
+        # falls through to the separating branch (the guide's inner Isharapha
+        # arm is dead code - confirmed by adversarial review).
+        if dist <= avg_orb:
+            return _rec("Itthasala", "Vartamana", "applying", dist)
+        if dist <= combined_orb:
+            return _rec("Itthasala", "Bhavishyata", "applying", dist)
+        return None
+
+    # Separating by >= 1 deg -> Isharapha (event rooted in the past).
+    dist = df - ds
+    if dist <= avg_orb:
+        return _rec("Isharapha", "Vartamana", "separating", dist)
+    if dist <= combined_orb:
+        return _rec("Isharapha", "Bhavishyata", "separating", dist)
+    return None
+
+
+def _pair_positions(chart) -> dict:
+    """{planet: (sign_index, deg_in_sign)} for the 7 traditional planets present."""
+    pos = {}
+    for p in TRADITIONAL_PLANETS:
+        if has_planet(chart, p):
+            pos[p] = (_get_sign_index(p, chart),
+                      get_planet_in_sign_longitude(chart, p))
+    return pos
+
+
+def _classify_chart_pair(p1: str, p2: str, positions: dict):
+    """classify_pair for two planets given a precomputed positions map."""
+    if p1 not in positions or p2 not in positions:
+        return None
+    s1, d1 = positions[p1]
+    s2, d2 = positions[p2]
+    return classify_pair(p1, s1, d1, p2, s2, d2)
+
+
+def _in_itthasala(p1: str, p2: str, positions: dict) -> bool:
+    """True if the two planets form an Itthasala (applying) by the deg-in-sign rule.
+    Single source of truth for dependent detectors (Kambula, Dutthothadi)."""
+    r = _classify_chart_pair(p1, p2, positions)
+    return r is not None and r["yoga"] == "Itthasala"
+
+
+# Effect text keyed by Itthasala subtype.
+_ITHASALA_EFFECT = {
+    "Purna": "Event happening now. Most powerful Itthasala.",
+    "Vartamana": "Event manifesting now. Strong current Itthasala.",
+    "Bhavishyata": "Future event. Matures as the two planets close in.",
+}
+_ISHARAPHA_EFFECT = {
+    "Vartamana": "Recent-past event: continuation, closure, or resolution.",
+    "Bhavishyata": "Distant-past event: matures in the later of the two dasas.",
+}
+
+
+def _pair_yoga_record(chart, r: dict) -> dict:
+    """Build a yoga record from a classify_pair result, adding the retrograde
+    `failing` flag (positional detection: retrograde participants still FORM the
+    yoga but it "looks like it will happen and does not")."""
+    fast, slow = r["fast"], r["slow"]
+    failing = _is_retrograde(fast, chart) or _is_retrograde(slow, chart)
+    if r["yoga"] == "Itthasala":
+        name, category, verb = "Ithasala", "SUCCESS", "applying to"
+        effect = _ITHASALA_EFFECT.get(r["subtype"], "")
+    else:
+        name, category, verb = "Isharapha", "FAILURE", "separating from"
+        effect = _ISHARAPHA_EFFECT.get(r["subtype"], "")
+    crit = "" if r["critical"] else " [non-critical: 2/12 or 6/8]"
+    cross = " (last degree, next sign)" if r["cross_sign"] else ""
+    fail = " [FAILING: retrograde participant]" if failing else ""
+    if failing:
+        effect += " Retrograde participant: the yoga forms but tends to fall apart."
+    desc = (f"{fast} {verb} {slow}{cross} - {r['subtype']}, "
+            f"dist {r['dist']:.2f} deg-in-sign, "
+            f"sign aspect {r['sign_virupas']:.0f} VR{crit}{fail}")
+    return _yoga(
+        name, category, [fast, slow], desc, effect,
+        subtype=r["subtype"],
+        dist_in_sign=r["dist"],
+        critical=r["critical"],
+        cross_sign=r["cross_sign"],
+        failing=failing,
+        sign_virupas=r["sign_virupas"],
+        family=r["family"],
+    )
+
+
+# ============================================================================
 # YOGA RECORD BUILDER
 # ============================================================================
 
@@ -312,138 +501,43 @@ def _detect_induvara(chart, house_data: dict, **kw) -> list:
 
 # --- ASPECT-BASED YOGAS ---
 
-def _detect_ithasala(chart, tajika_data: dict, **kw) -> list:
+def _detect_ithasala(chart, tajika_data: dict = None, positions: dict = None,
+                     **kw) -> list:
+    """Itthasala (applying): faster planet has fewer degrees-in-sign than the
+    slower. Subtypes Purna (<=1 deg) / Vartamana (<= average
+    orb) / Bhavishyata (<= combined orb). Non-critical (2/12, 6/8) pairs still
+    form; retrograde participants are flagged `failing`, not dropped.
+
+    NOTE: the yoga name is kept as "Ithasala" (one t) for downstream / UI
+    compatibility; the rule and spec spell it "Itthasala".
     """
-    Ithasala: Applying aspects between two planets.
-    3 subtypes:
-      - Purna: within orb, distance_from_exact <= 1.0° (most powerful)
-      - Vartamana: within orb, distance_from_exact > 1.0° (current, manifesting)
-      - Bhavishyata: OUT of orb but faster planet applying toward exact aspect
-    """
+    if positions is None:
+        positions = _pair_positions(chart)
+    present = [p for p in TRADITIONAL_PLANETS if p in positions]
     yogas = []
-    aspects = tajika_data.get("aspects_within_orb", [])
-
-    # Purna and Vartamana: within orb + applying
-    for asp in aspects:
-        b1, b2 = asp["body1"], asp["body2"]
-        # Skip if involves Ascendant or outer planets
-        if b1 not in TRADITIONAL_PLANETS or b2 not in TRADITIONAL_PLANETS:
-            continue
-        if asp.get("applying_status") not in ("applying", "exact"):
-            continue
-
-        dist_exact = asp["distance_from_exact"]
-        if dist_exact <= 1.0 or asp.get("applying_status") == "exact":
-            subtype = "Purna"
-            effect = "Event happening NOW. Most powerful Ithasala."
-        else:
-            subtype = "Vartamana"
-            effect = "Event manifesting. Strong Ithasala currently active."
-
-        # Determine faster/slower for arrow display
-        speeds = tajika_data.get("speeds", {})
-        if _is_faster(b1, b2, speeds):
-            faster, slower = b1, b2
-        else:
-            faster, slower = b2, b1
-
-        yogas.append(_yoga(
-            "Ithasala", "SUCCESS", [faster, slower],
-            f"{faster} applying to {slower} — {asp['aspect']}, "
-            f"{asp['virupas']} VR ({dist_exact:.1f}° from exact)",
-            effect,
-            subtype=subtype,
-            aspect_record=asp,
-        ))
-
-    # Bhavishyata: out of orb but applying toward an exact aspect
-    positions = {}
-    for body in TRADITIONAL_PLANETS:
-        if has_planet(chart, body):
-            positions[body] = get_planet_decimal_degrees(chart, body)
-
-    in_orb_pairs = set()
-    for asp in aspects:
-        in_orb_pairs.add((asp["body1"], asp["body2"]))
-        in_orb_pairs.add((asp["body2"], asp["body1"]))
-
-    trad_with_pos = [p for p in TRADITIONAL_PLANETS if p in positions]
-    for i, b1 in enumerate(trad_with_pos):
-        for j in range(i + 1, len(trad_with_pos)):
-            b2 = trad_with_pos[j]
-            if (b1, b2) in in_orb_pairs:
-                continue
-
-            distance = (positions[b2] - positions[b1]) % 360
-
-            # Find nearest aspect angle
-            classified = classify_tajika_aspect(distance)
-            if classified is None:
-                continue
-
-            exact_angle = classified[2]
-            speeds = tajika_data.get("speeds", {})
-            status = determine_applying_separating(
-                b1, b2, distance, exact_angle,
-                speed1=speeds.get(b1), speed2=speeds.get(b2),
-            )
-            if status not in ("applying", "exact"):
-                continue
-
-            # Confirm they're truly out of orb
-            within, _, dist_exact, _ = is_within_orb(b1, b2, distance)
-            if within:
-                continue
-
-            eff_orb = effective_orb(b1, b2)
-            orb_excess = round(dist_exact - eff_orb, 1)
-
-            if _is_faster(b1, b2, speeds):
-                faster, slower = b1, b2
-            else:
-                faster, slower = b2, b1
-
-            virupas = calculate_tajika_strength(distance)
-            yogas.append(_yoga(
-                "Ithasala", "SUCCESS", [faster, slower],
-                f"{faster} applying toward {slower} — {classified[0]}, "
-                f"{virupas:.1f} VR (out of orb by {orb_excess:.1f}°, "
-                f"{dist_exact:.1f}° from exact)",
-                "Distant future event. Will manifest when planets reach orb.",
-                subtype="Bhavishyata",
-                orb_excess=orb_excess,
-            ))
-
+    for i, a in enumerate(present):
+        for b in present[i + 1:]:
+            r = _classify_chart_pair(a, b, positions)
+            if r is not None and r["yoga"] == "Itthasala":
+                yogas.append(_pair_yoga_record(chart, r))
     return yogas
 
 
-def _detect_isharapha(chart, tajika_data: dict, **kw) -> list:
-    """
-    Isharapha: Separating aspects — the event is past.
-    """
+def _detect_isharapha(chart, tajika_data: dict = None, positions: dict = None,
+                      **kw) -> list:
+    """Isharapha (separating): faster planet is >= 1 deg past the slower in
+    degrees-in-sign. In Varshaphala this is an event rooted
+    in the past (continuation/closure), not a plain failure. Vartamana = recent
+    past (<= average orb); Bhavishyata = distant past (<= combined orb)."""
+    if positions is None:
+        positions = _pair_positions(chart)
+    present = [p for p in TRADITIONAL_PLANETS if p in positions]
     yogas = []
-    aspects = tajika_data.get("aspects_within_orb", [])
-
-    for asp in aspects:
-        b1, b2 = asp["body1"], asp["body2"]
-        if b1 not in TRADITIONAL_PLANETS or b2 not in TRADITIONAL_PLANETS:
-            continue
-        if asp.get("applying_status") != "separating":
-            continue
-
-        speeds = tajika_data.get("speeds", {})
-        if _is_faster(b1, b2, speeds):
-            faster, slower = b1, b2
-        else:
-            faster, slower = b2, b1
-
-        yogas.append(_yoga(
-            "Isharapha", "FAILURE", [faster, slower],
-            f"{faster} separating from {slower} — {asp['aspect']}, "
-            f"{asp['virupas']} VR",
-            "Past event. Disappointment or missed opportunity.",
-            aspect_record=asp,
-        ))
+    for i, a in enumerate(present):
+        for b in present[i + 1:]:
+            r = _classify_chart_pair(a, b, positions)
+            if r is not None and r["yoga"] == "Isharapha":
+                yogas.append(_pair_yoga_record(chart, r))
     return yogas
 
 
@@ -646,7 +740,7 @@ def _detect_khallasara(suunya_yogas: list, **kw) -> list:
 # --- ENHANCEMENT YOGAS (depend on Ithasala) ---
 
 def _detect_kambula(chart, tajika_data: dict,
-                     ithasala_yogas: list, **kw) -> list:
+                     ithasala_yogas: list, positions: dict = None, **kw) -> list:
     """
     Kambula: Two planets in Ithasala + Moon in Ithasala with one or both.
     Moon amplifies the Ithasala, making it powerful.
@@ -655,7 +749,8 @@ def _detect_kambula(chart, tajika_data: dict,
     if not ithasala_yogas:
         return yogas
 
-    matrix = tajika_data.get("matrix", {})
+    if positions is None:
+        positions = _pair_positions(chart)
 
     for ith in ithasala_yogas:
         planets = ith["planets"]
@@ -667,12 +762,9 @@ def _detect_kambula(chart, tajika_data: dict,
         if "Moon" in (p1, p2):
             continue
 
-        # Check if Moon is in Ithasala (applying aspect) with either planet
+        # Check if Moon is in Ithasala with either planet (deg-in-sign rule)
         for target in (p1, p2):
-            moon_asp = matrix.get(("Moon", target))
-            if moon_asp is None:
-                continue
-            if moon_asp.get("applying_status") in ("applying", "exact"):
+            if _in_itthasala("Moon", target, positions):
                 yogas.append(_yoga(
                     "Kambula", "SUCCESS",
                     ["Moon", p1, p2],
@@ -687,7 +779,8 @@ def _detect_kambula(chart, tajika_data: dict,
 
 def _detect_dutthothadi(chart, tajika_data: dict,
                          ithasala_yogas: list, house_data: dict = None,
-                         bala_data: dict = None, **kw) -> list:
+                         bala_data: dict = None, positions: dict = None,
+                         **kw) -> list:
     """
     Dutthothadi: Weak Ithasala pair (both planets weak) but one of them
     also in Ithasala with a dignified planet — salvation through strength.
@@ -696,7 +789,8 @@ def _detect_dutthothadi(chart, tajika_data: dict,
     if not ithasala_yogas:
         return yogas
 
-    matrix = tajika_data.get("matrix", {})
+    if positions is None:
+        positions = _pair_positions(chart)
 
     for ith in ithasala_yogas:
         planets = ith["planets"]
@@ -709,15 +803,14 @@ def _detect_dutthothadi(chart, tajika_data: dict,
                 _is_weak(p2, chart, house_data, bala_data=bala_data)):
             continue
 
-        # One of them must be in applying aspect with a dignified planet
+        # One of them must be in Ithasala with a dignified planet (the rule)
         for weak_p in (p1, p2):
             for strong_p in TRADITIONAL_PLANETS:
                 if strong_p in (p1, p2):
                     continue
                 if not _is_dignified(strong_p, chart):
                     continue
-                asp = matrix.get((weak_p, strong_p))
-                if asp and asp.get("applying_status") in ("applying", "exact"):
+                if _in_itthasala(weak_p, strong_p, positions):
                     yogas.append(_yoga(
                         "Dutthothadi", "SUCCESS",
                         [p1, p2, strong_p],
@@ -986,12 +1079,14 @@ def detect_all_tajika_yogas(chart, tajika_data: dict) -> dict:
         }
     """
     house_data = get_planets_by_house(chart)
+    # Degrees-in-sign map, computed once and shared by every deg-in-sign detector.
+    positions = _pair_positions(chart)
 
     # Phase 1: Independent yogas
     ikkavala = _detect_ikkavala(chart, house_data)
     induvara = _detect_induvara(chart, house_data)
-    ithasala = _detect_ithasala(chart, tajika_data)
-    isharapha = _detect_isharapha(chart, tajika_data)
+    ithasala = _detect_ithasala(chart, tajika_data, positions=positions)
+    isharapha = _detect_isharapha(chart, tajika_data, positions=positions)
     nakta = _detect_nakta(chart, tajika_data)
     yamaya = _detect_yamaya(chart, tajika_data)
     suunya = _detect_suunya_marga(chart, tajika_data)
@@ -1008,10 +1103,11 @@ def detect_all_tajika_yogas(chart, tajika_data: dict) -> dict:
             pass
 
     khallasara = _detect_khallasara(suunya)
-    kambula = _detect_kambula(chart, tajika_data, ithasala)
+    kambula = _detect_kambula(chart, tajika_data, ithasala, positions=positions)
     dutthothadi = _detect_dutthothadi(chart, tajika_data, ithasala,
                                        house_data=house_data,
-                                       bala_data=bala_data)
+                                       bala_data=bala_data,
+                                       positions=positions)
 
     # Phase 3: Depends on all success yogas
     success_yogas = ikkavala + ithasala + kambula + kutha + tambeera + dutthothadi

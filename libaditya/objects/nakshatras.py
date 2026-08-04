@@ -16,7 +16,6 @@
 #    along with libaditya.  If not, see <https://www.gnu.org/licenses/>.
 
 import swisseph as swe
-from prettytable import PrettyTable
 
 from libaditya import constants as const
 
@@ -120,6 +119,18 @@ class Nakshatra:
             return self.base_longitude()
         if self.ayanamsa == 101:
             return self.base_longitude()
+        # SPEC-KUTA-AYA-001 3.3: sidereal-built charts at Vedanga 99/100 already carry
+        # solstice-frame longitudes (planets/cusps are shifted by vedanga_ecliptic_aval
+        # at construction), and that frame's origin IS the start of Ashvini — so the
+        # base longitude already equals the degrees-from-Ashvini. Re-running the Vedanga
+        # formulas here would double-shift (99: adds the offset again) or mix frames
+        # (100: equatorial algorithm against the rendered ecliptic frame; for cusps it
+        # would even transform the already-shifted longitude). One frame identity for
+        # display, offset readout, nakshatra labels and kuta (AC-9).
+        if self.ayanamsa in (99, 100) and (
+                self.context.sysflg == swe.FLG_SIDEREAL
+                or self.context.sysflg == (swe.FLG_SIDEREAL | swe.FLG_TOPOCTR)):
+            return self.base_longitude() % 360
         if self.ayanamsa == 98:
             return self.dhruva_gc_equatorial()
         if self.ayanamsa == 99:
@@ -228,6 +239,7 @@ class Nakshatras:
         return self.nakshatras[n]
 
     def __str__(self):
+        from prettytable import PrettyTable
         output = PrettyTable()
         output.field_names = [f"{self.occupant_type()}", "Nakshatra", "Percent Elapsed"]
         output.align[f"{self.occupant_type()}"] = "l"

@@ -1,6 +1,5 @@
 # Copyright (C) 2026 Lorris Turpin / 360 Hearts in the Sky
 # Licensed under AGPL-3.0 — see LICENSE file for details.
-# Commercial exception: see NOTICE file.
 """
 Shared Zodiac Wheel Renderer — Pure Functions Module
 
@@ -15,6 +14,7 @@ Items classes (ZodiacSectorItem, SectorDividerLine, etc.) remain in wheel_items.
 Geometry helpers come from visualizations/wheel_geometry.py.
 """
 import json
+import math
 from pathlib import Path
 
 from PySide6.QtCore import Qt
@@ -52,9 +52,11 @@ def load_zodiac_icon(zodiac_index, size, variation_settings, icon_cache):
     Returns:
         QPixmap or None
     """
+    from ui.qt_theme import desat_image, sat_key  # local: keep module import-light
+
     western_name = WESTERN_NAMES[zodiac_index]
     variation = variation_settings.get(western_name, 1)
-    cache_key = f"zodiac_{zodiac_index}_v{variation}_{size}"
+    cache_key = f"zodiac_{zodiac_index}_v{variation}_{size}{sat_key()}"
 
     if cache_key in icon_cache:
         return icon_cache[cache_key]
@@ -65,7 +67,7 @@ def load_zodiac_icon(zodiac_index, size, variation_settings, icon_cache):
         # Fallback to variation 1, which Core always ships for every sign
         # (the single default retained by the 2026-04-08 cleanup). A healthy
         # Core build will always hit this path when the selected variant is
-        # missing, so no further fallback is needed. The proprietary edition
+        # missing, so no further fallback is needed. The paid edition
         # may add more variants via an overlay path.
         icon_path = PROJECT_ROOT / f"img/sign/{western_name}1.webp"
     if not icon_path.exists():
@@ -82,6 +84,7 @@ def load_zodiac_icon(zodiac_index, size, variation_settings, icon_cache):
         Qt.AspectRatioMode.KeepAspectRatio,
         Qt.TransformationMode.SmoothTransformation
     )
+    qimage = desat_image(qimage)
     pixmap = QPixmap.fromImage(qimage)
     icon_cache[cache_key] = pixmap
     return pixmap
@@ -175,7 +178,8 @@ def draw_zodiac_icons(scene, cx, cy, radius, icon_size, rotation_offset,
 
 def draw_sign_names(scene, cx, cy, radius, rotation_offset,
                     aditya_mode, use_western_names, sign_language,
-                    display_settings, z_base=5):
+                    display_settings, z_base=5,
+                    cot_faces=None, cot_dpr=1.0, cot_tag=None):
     """Draw Aditya or Western sign names at sector centers.
 
     Args:
@@ -188,6 +192,13 @@ def draw_sign_names(scene, cx, cy, radius, rotation_offset,
         sign_language: "en", "fr", "es", "pt", "pt-PT", "de", "it", "ru", or "zh"
         display_settings: dict with sign_name sub-dict (font_size, font_color, etc.)
         z_base: Z-value
+        cot_faces: ``{sign_index: card}`` from ``sign_card_faces``, or None.
+            When given, each sector carries its lord's Cards of Truth index
+            beside the name (SPEC-COT-001 §4.10) and the NAME SHIFTS so the two
+            straddle the sector's centre line. When None — the default, and what
+            every other caller passes — nothing about this function changes.
+        cot_dpr: device pixel ratio for the suit pip raster.
+        cot_tag: UserRole tag written on the card items.
     """
     sign_settings = display_settings.get("sign_name", {})
     font_size = sign_settings.get("font_size", 26)
@@ -195,6 +206,16 @@ def draw_sign_names(scene, cx, cy, radius, rotation_offset,
     font_weight = sign_settings.get("font_weight", "bold")
     offset_x = sign_settings.get("offset_x", 0)
     offset_y = sign_settings.get("offset_y", 0)
+
+    faces = cot_faces or {}
+    if faces:
+        from apps.widgets.cot_index_item import CotPlaque, scale_for_name
+        cot_scale = scale_for_name(font_size)
+        cot_gap = max(8.0, font_size * 0.5)
+        # Tangential room in one sector at this radius. The card is dropped
+        # rather than allowed to cross a sector boundary, where it would sit
+        # against the wrong sign's colour and read as that sign's card.
+        arc = math.pi * radius / 6.0
 
     for i in range(12):
         center_angle = get_sector_center_angle(i, rotation_offset)
@@ -212,6 +233,52 @@ def draw_sign_names(scene, cx, cy, radius, rotation_offset,
         )
         item.setZValue(z_base)
         scene.addItem(item)
+
+        card = faces.get(i)
+        if card is None:
+            continue
+
+        plaque = CotPlaque(card, scale=cot_scale, dpr=cot_dpr)
+        name_rect = item.boundingRect()
+
+        # Split along the TANGENT, never along the screen axes. The sector is a
+        # curved band: the tangent is where the room is (a 30° arc), while the
+        # radial direction is the band's thickness and a long name plus a card
+        # would run straight out of it at 3 and 9 o'clock.
+        angle = math.radians(center_angle)
+        tx, ty = -math.sin(angle), -math.cos(angle)
+        # Orient toward reading order: the card sits to the RIGHT of the name
+        # where the tangent runs mostly across the screen, and BELOW it where
+        # the tangent runs mostly up and down. Chosen in screen space, not in
+        # zodiac order, because it is the eye that has to find it.
+        if abs(tx) >= abs(ty):
+            if tx < 0:
+                tx, ty = -tx, -ty
+        elif ty < 0:
+            tx, ty = -tx, -ty
+
+        # Half-extent of an axis-aligned box along the tangent — the box's
+        # support function. Using the width alone would under-measure the name
+        # wherever the tangent is vertical and the two would overlap.
+        half_name = (abs(name_rect.width() * tx)
+                     + abs(name_rect.height() * ty)) / 2.0
+        half_card = (abs(plaque.width * tx) + abs(plaque.height * ty)) / 2.0
+        total = 2 * half_name + cot_gap + 2 * half_card
+        if total > arc * 0.92:
+            continue
+
+        # The PAIR is centred where the lone name used to be, so turning the
+        # index on does not visibly move the ring of names off the sector
+        # centres — the name gives up half the pair's width, not its place.
+        name_cx = x - tx * (total / 2.0 - half_name)
+        name_cy = y - ty * (total / 2.0 - half_name)
+        item.setPos(name_cx - name_rect.width() / 2.0 + offset_x,
+                    name_cy - name_rect.height() / 2.0 + offset_y)
+
+        plaque.add_to(scene,
+                      x + tx * (total / 2.0 - half_card) + offset_x,
+                      y + ty * (total / 2.0 - half_card) + offset_y,
+                      tag=cot_tag, z=z_base)
 
 
 def draw_center_circle(scene, cx, cy, radius, z_base=2):

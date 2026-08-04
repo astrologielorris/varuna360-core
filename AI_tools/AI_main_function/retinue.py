@@ -1,6 +1,5 @@
 # Copyright (C) 2026 Lorris Turpin / 360 Hearts in the Sky
 # Licensed under AGPL-3.0 — see LICENSE file for details.
-# Commercial exception: see NOTICE file.
 """
 Hora & Trimsamsa Being Calculator — Aditya Retinue System
 ==========================================================
@@ -9,7 +8,7 @@ Determines which TWO beings each planet activates based on its degree:
   1. Hora Being: Aditya name (Sun Hora) or Naga name (Moon Hora)
   2. Trimsamsa Being: specific named being from the 5-5-8-7-5 division
 
-Based on Ernst Wilhelm's Aditya Course Class 118 and Srimad Bhagavatam 12.11.33-44.
+Based on Ernst Wilhelm's teaching and Srimad Bhagavatam 12.11.33-44.
 
 Usage:
     from AI_tools.AI_main_function.retinue import get_retinue, get_chart_retinue

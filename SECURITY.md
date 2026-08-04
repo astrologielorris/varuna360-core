@@ -26,7 +26,7 @@ In-scope:
 
 Out-of-scope:
 
-- The proprietary Varuna360 Pro edition (reported separately)
+- The Varuna360 Pro edition (reported separately)
 - Social engineering, physical attacks, or denial-of-service via
   resource exhaustion
 - Issues in third-party services linked from the project

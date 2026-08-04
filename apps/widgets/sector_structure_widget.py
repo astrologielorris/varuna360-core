@@ -6,7 +6,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont
 
 from ui.qt_theme import (
-    get_theme_colors, is_light_theme, scaled_area_font,
+    get_theme_colors, is_light_theme, scaled_area_font, scaled_area_px,
 )
 from core.aditya_data import get_being_description
 
@@ -76,7 +76,7 @@ class _CollapsibleSection(QFrame):
 
         self._arrow = QLabel("▶")
         self._arrow.setFixedWidth(20)
-        self._arrow.setStyleSheet(f"color: {p['text_tertiary']}; font-size: 12px;")
+        self._arrow.setStyleSheet(f"color: {p['text_tertiary']}; font-size: {scaled_area_px('table_headers')}px;")
         header.addWidget(self._arrow)
 
         title_label = QLabel(title)

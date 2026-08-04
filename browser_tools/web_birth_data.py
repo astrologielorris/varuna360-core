@@ -7,11 +7,11 @@ Moved to browser_tools/ for Lite-First access.
 import json
 import re
 import unicodedata
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 
-from core.time_utils import format_offset
+from core.time_utils import format_offset, resolve_total_offset
 
 
 # =============================================================================
@@ -69,7 +69,7 @@ def _load_tz_corrections() -> List[Dict]:
     if _tz_corrections_cache is not None:
         return _tz_corrections_cache
 
-    corrections_path = Path(__file__).parent.parent / "correction_tables" / "tz_corrections.json"
+    corrections_path = Path(__file__).parent.parent / "correction_tables" / "astrotheme_tz_corrections.json"
     if corrections_path.exists():
         try:
             with open(corrections_path, 'r') as f:
@@ -206,33 +206,27 @@ def get_timezone_for_coordinates(lat: float, lon: float, birth_date: datetime = 
         raise ValueError("birth_date is required for historical timezone accuracy")
     try:
         from timezonefinder import TimezoneFinder
-        from zoneinfo import ZoneInfo
 
         tf = TimezoneFinder()
         tz_name = tf.timezone_at(lat=lat, lng=lon)
 
         if tz_name:
-            tz = ZoneInfo(tz_name)
-            dt_with_tz = birth_date.replace(tzinfo=tz)
-            utc_offset = dt_with_tz.utcoffset()
-            dst_delta = dt_with_tz.dst()
+            # Canonical IANA-rules DST detection (SPEC-TZ-001,
+            # decompose-from-total): returned std + flag equals the pytz
+            # TOTAL offset at the birth instant. Replaces the old ZoneInfo
+            # dst() + 1h idiom, which picked the DST reading on fold-overlap
+            # instants; the resolver takes the standard-time reading.
+            # longitude gives city-accurate LMT for pre-standardization dates.
+            std_hours, dst_flag = resolve_total_offset(
+                tz_name, birth_date.year, birth_date.month, birth_date.day,
+                birth_date.hour, birth_date.minute, longitude=lon)
 
-            if utc_offset is not None:
-                # Deliberate change from subtracting dst_delta: std = total
-                # minus 1h when DST active (decompose-from-total rule,
-                # SPEC-TZ-001; differs for fractional-DST zones like Lord Howe).
-                dst_active = dst_delta is not None and dst_delta.total_seconds() > 0
-                if dst_active:
-                    standard_offset = utc_offset - timedelta(hours=1)
-                else:
-                    standard_offset = utc_offset
+            total_minutes = int(round(std_hours * 60))
+            sign = 1 if total_minutes >= 0 else -1
+            am = abs(total_minutes)
+            offset_str = format_offset(sign * (am // 60), sign * (am % 60))
 
-                total_sec = int(standard_offset.total_seconds())
-                sign = 1 if total_sec >= 0 else -1
-                a = abs(total_sec)
-                offset_str = format_offset(sign * (a // 3600), sign * ((a % 3600) // 60))
-
-                return {'offset': offset_str, 'dst_active': dst_active}
+            return {'offset': offset_str, 'dst_active': bool(dst_flag)}
 
     except ImportError:
         print("[WARN] timezonefinder not installed. Run: pip install timezonefinder")
@@ -599,10 +593,17 @@ def extract_birth_data(
     """Extract birth data from web sources.
 
     source="auto" chains: Wikidata -> DuckDuckGo.
+    source="dev_plugin" delegates to the external dev plugin if installed.
     """
     result = None
 
-    if source == "auto":
+    if source == "dev_plugin":
+        try:
+            if search_astrotheme:
+                result = search_astrotheme(name, visible, verbose)
+        except (ImportError, NameError):
+            return extract_birth_data(name, source="auto", verbose=verbose, visible=visible)
+    elif source == "auto":
         if verbose:
             print(f"[AUTO] Trying Wikidata...")
         result = search_wikidata(name, verbose)

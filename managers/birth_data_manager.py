@@ -1,6 +1,5 @@
 # Copyright (C) 2026 Lorris Turpin / 360 Hearts in the Sky
 # Licensed under AGPL-3.0 — see LICENSE file for details.
-# Commercial exception: see NOTICE file.
 """
 Birth Data Manager - Single Source of Truth for Birth Data
 
@@ -37,11 +36,76 @@ class BirthDataManager:
     """
 
     @staticmethod
+    def create_birth_data_from_file(
+        path: str, canonicalize: bool = True,
+    ) -> Dict[str, Any]:
+        """
+        Generic dispatcher: build canonical birth_data from any supported file.
+
+        Dispatch by file extension (SPEC-IMPORT-001 §3.2, §6.1).
+
+        Args:
+            path: Path to a .chtk or .toml chart file
+            canonicalize: when True (interactive default) and a .toml file has
+                no [moment].jd, the TOML reader writes the computed JD back to
+                the file (§4.3 Step 2). Pass False for read-only / batch paths
+                (e.g. index build) that must NEVER mutate user files. Ignored
+                for the .chtk branch (CHTK has no auto-canonicalize write-back).
+
+        Returns:
+            Canonical birth_data dict
+
+        Raises:
+            ValueError: if the extension is not a supported chart format
+        """
+        ext = Path(path).suffix.lower()
+        if ext == '.chtk':
+            return BirthDataManager.create_birth_data_from_chtk(path)
+        elif ext == '.toml':
+            return BirthDataManager.create_birth_data_from_toml(
+                path, canonicalize=canonicalize)
+        else:
+            raise ValueError(f"Unsupported chart format: {ext}")
+
+    @staticmethod
+    def create_birth_data_from_toml(
+        path: str, canonicalize: bool = True,
+    ) -> Dict[str, Any]:
+        """
+        Read a .toml (Open Astrology Chart) file and produce canonical birth_data.
+
+        The TOMLChartReader returns the spec §4.2 raw dict (flat lat/lon floats,
+        utc_offset_hours = BASE float, year/month/day/hour/minute/second ints,
+        gender str, rodden/tags/notes/julian_day/dst_offset_hours, _toml_extra).
+        _build_canonical consumes that documented interface directly.
+
+        Args:
+            path: Path to .toml file
+            canonicalize: forwarded to TOMLChartReader.read_toml_file. When
+                True (default) a missing [moment].jd is computed and written
+                back to the file; pass False for read-only / batch paths that
+                must not mutate user files (SPEC-IMPORT-001 §6.5 GATE).
+
+        Returns:
+            Canonical birth_data dict
+        """
+        # Lazy import: core.toml_chart is built in parallel (bead .2).
+        from core.toml_chart import TOMLChartReader
+
+        raw = TOMLChartReader().read_toml_file(path, canonicalize=canonicalize)
+        return BirthDataManager._build_canonical(
+            raw, chtk_path=path, source_format='toml')
+
+    @staticmethod
     def create_birth_data_from_chtk(chtk_path: str) -> Dict[str, Any]:
         """
-        Parse CHTK file and create canonical birth_data dictionary.
+        Parse a CHTK file and create the canonical birth_data dictionary.
 
-        This is the PRIMARY entry point for loading birth data.
+        This is the PRIMARY entry point for loading CHTK birth data. It reads
+        the file, normalizes CHTK-specific shapes (flatten the nested
+        coordinates dict, parse the inverted-sign timezone string into a
+        standard-sign BASE float), then delegates to the shared
+        _build_canonical() (SPEC-IMPORT-001 §3.2, §3.2.1).
 
         Args:
             chtk_path: Path to .chtk file
@@ -51,86 +115,178 @@ class BirthDataManager:
         """
         from core.chtk_reader import CHTKReader
 
-        reader = CHTKReader()
-        raw_data = reader.read_chtk_file(chtk_path)
+        reader_output = CHTKReader().read_chtk_file(chtk_path)
 
-        return BirthDataManager.create_from_raw_data(raw_data, chtk_path)
+        # --- CHTK-specific normalization (runs BEFORE _build_canonical) ---
+        # Normalize a COPY so the pristine reader output is preserved verbatim
+        # as raw_chtk_data (Appendix C: "original reader output"; 112 consumers
+        # historically saw the un-normalized CHTK dict with nested coordinates).
+        raw = dict(reader_output)
+        # 1. Flatten nested coordinates dict to flat lat/lon.
+        coords = raw.pop('coordinates', {})
+        raw['latitude'] = coords.get('latitude', 0.0)
+        raw['longitude'] = coords.get('longitude', 0.0)
+
+        # 2. Parse and invert the CHTK timezone string (CHTK uses opposite
+        #    sign) into a standard-sign BASE float. The original 'timezone'
+        #    string is left in raw so _build_canonical can preserve it verbatim
+        #    as chtk_timezone (lossless write-back) and resolve a pure IANA name
+        #    left in that field. The CHTKReader emits 'timezone'; the default
+        #    matches the previous create_from_raw_data behavior ('+00:00:00').
+        chtk_tz = raw.get('timezone', '+00:00:00')
+        raw['timezone'] = chtk_tz
+        raw['utc_offset_hours'] = BirthDataManager._parse_chtk_timezone(chtk_tz)
+        # NOTE: CHTK does not carry rodden/tags/notes/julian_day/
+        # dst_offset_hours. They are intentionally NOT injected; _build_canonical
+        # reads them with raw.get(...) which yields None for CHTK (absent),
+        # which is the correct canonical value. The None-safe DST fallback
+        # (Trap #1) lives in _build_canonical.
+
+        return BirthDataManager._build_canonical(
+            raw, chtk_path=chtk_path, source_format='chtk',
+            raw_chtk_data=reader_output)
 
     @staticmethod
-    def create_from_raw_data(raw_data: Dict, chtk_path: str = None) -> Dict[str, Any]:
+    def _build_canonical(raw: Dict, *, chtk_path: Optional[str],
+                         source_format: str,
+                         raw_chtk_data: Optional[Dict] = None) -> Dict[str, Any]:
         """
-        Create canonical birth_data from parsed CHTK data.
+        Shared canonicalization: both CHTK and TOML paths produce the same
+        output shape (SPEC-IMPORT-001 §3.2, Appendix C).
 
-        Args:
-            raw_data: Dict from CHTKReader.read_chtk_file()
-            chtk_path: Optional path to source file
+        Expects FLAT keys in raw: latitude, longitude, utc_offset_hours (BASE,
+        standard sign), year, month, day, hour, minute, second,
+        time_change_flag, name, gender, city, country. Optional: rodden, tags,
+        notes, julian_day, dst_offset_hours, _toml_extra, birth_place.
 
-        Returns:
-            Canonical birth_data dict
+        Handles:
+        - Resolve a pure IANA name left in a CHTK timezone field (CHTK only).
+        - Compute the DST-adjusted TOTAL offset [INVARIANT m14] using the float
+          dst_offset_hours when present-and-non-None, else time_change_flag.
+        - Compute UTC time via local_to_utc_total (CE and BCE safe).
+        - Detect the IANA timezone from coordinates.
+        - Compute the chtk_timezone string for CHTK write-back compatibility.
+        - Propagate rodden/tags/notes/julian_day/dst_offset_hours/_toml_extra.
+        - Assemble the canonical dict (raw_chtk_data and chtk_path key names
+          kept; 79+ consumers).
+
+        raw_chtk_data: the dict stored under the 'raw_chtk_data' key (Appendix
+        C: "original reader output"). Defaults to `raw` itself (correct for the
+        TOML path, whose raw IS the reader output). The CHTK path passes the
+        PRISTINE reader output here because its `raw` is a normalized copy
+        (coordinates flattened, timezone parsed), and consumers expect the
+        un-normalized reader shape under this key.
         """
-        # Extract location info
-        coords = raw_data.get('coordinates', {})
-        latitude = coords.get('latitude', 0)
-        longitude = coords.get('longitude', 0)
+        if raw_chtk_data is None:
+            raw_chtk_data = raw
+        latitude = raw.get('latitude', 0.0)
+        longitude = raw.get('longitude', 0.0)
 
-        # LOCAL time from CHTK (stored as-is in file).
-        # Read BEFORE timezone parsing: pure-IANA resolution below needs the
-        # birth year for historical rules (SPEC-TZ-001 ref_year rule).
-        local_year = raw_data.get('year', 1970)
-        local_month = raw_data.get('month', 1)
-        local_day = raw_data.get('day', 1)
-        local_hour = raw_data.get('hour', 12)
-        local_minute = raw_data.get('minute', 0)
-        local_second = raw_data.get('second', 0)
+        # LOCAL time. Read BEFORE timezone resolution: pure-IANA resolution
+        # below needs the birth year for historical rules (SPEC-TZ-001 ref_year).
+        local_year = raw.get('year', 1970)
+        local_month = raw.get('month', 1)
+        local_day = raw.get('day', 1)
+        local_hour = raw.get('hour', 12)
+        local_minute = raw.get('minute', 0)
+        local_second = raw.get('second', 0)
 
-        # Get raw timezone from CHTK (may be malformed)
-        chtk_tz = raw_data.get('timezone', '+00:00:00')
-        time_change_flag = raw_data.get('time_change_flag', 0)
+        time_change_flag = raw.get('time_change_flag', 0)
         tz_warnings: List[str] = []
 
-        # Parse and invert CHTK timezone (CHTK uses opposite sign)
-        utc_offset_hours = BirthDataManager._parse_chtk_timezone(chtk_tz)
+        # BASE offset, already standard-sign (CHTK path inverted it,
+        # TOML path supplies it directly).
+        utc_offset_hours = raw.get('utc_offset_hours', 0.0)
 
-        # Pure IANA name in the CHTK timezone field (malformed per CHTK spec):
+        # The original CHTK timezone string (only present on the CHTK path).
+        # TOML has no CHTK string -> None -> chtk_timezone is synthesized below.
+        is_chtk = source_format == 'chtk'
+        chtk_tz = raw.get('timezone') if is_chtk else None
+
+        # Pure IANA name in a CHTK timezone field (malformed per CHTK spec):
         # _parse_chtk_timezone returns 0.0 for it (no colon after last '/').
         # The == 0.0 guard confirms the parser took that branch; hybrid forms
         # like '+Europe/Lisbon:00:00' keep a colon in the last segment and are
         # excluded. Resolve with the birth year's historical rules. NO sign
         # inversion: an IANA name denotes the zone directly (CHTK inversion
         # applies only to offset strings). SPEC-TZ-001 8a, td-n0ug source (b).
-        _tz_clean = str(chtk_tz).strip() if chtk_tz else ''
-        _seg = _tz_clean.rsplit('/', 1)
-        if len(_seg) == 2 and ':' not in _seg[1] and utc_offset_hours == 0.0:
-            # Date-aware resolution (pm-20260610-106): resolve at the actual
-            # birth instant so negative-DST zones (Europe/Dublin) convert
-            # correctly in BOTH seasons, not just the Jan probe date.
-            try:
-                from core.time_utils import resolve_total_offset
-                _std, _ = resolve_total_offset(
-                    _tz_clean, local_year if local_year >= 1 else 1,
-                    local_month, local_day, local_hour, local_minute,
-                    longitude=longitude)
-                utc_offset_hours = _std
-            except Exception:
-                # Bad IANA name degrades to the old date-less path (which
-                # returns 0, 0 on failure), keeping the existing warning.
-                from core.time_utils import _parse_offset
-                _h, _m = _parse_offset(
-                    _tz_clean, ref_year=local_year if local_year >= 1 else 1)
-                utc_offset_hours = _h + _m / 60.0
-            tz_warnings.append(
-                f"Timezone: CHTK timezone field contains IANA name '{_tz_clean}' "
-                f"(malformed per CHTK spec); resolved standard offset "
-                f"{_fmt_dec(utc_offset_hours)} using year {local_year} rules")
+        # TOML never enters this branch (is_chtk is False there).
+        if is_chtk:
+            _tz_clean = str(chtk_tz).strip() if chtk_tz else ''
+            _seg = _tz_clean.rsplit('/', 1)
+            if len(_seg) == 2 and ':' not in _seg[1] and utc_offset_hours == 0.0:
+                # Date-aware resolution (pm-20260610-106): resolve at the
+                # actual birth instant so negative-DST zones (Europe/Dublin)
+                # convert correctly in BOTH seasons, not just the Jan probe.
+                try:
+                    from core.time_utils import resolve_total_offset
+                    _std, _ = resolve_total_offset(
+                        _tz_clean, local_year if local_year >= 1 else 1,
+                        local_month, local_day, local_hour, local_minute,
+                        longitude=longitude)
+                    utc_offset_hours = _std
+                except Exception:
+                    # Bad IANA name degrades to the old date-less path (which
+                    # returns 0, 0 on failure), keeping the existing warning.
+                    from core.time_utils import _parse_offset
+                    _h, _m = _parse_offset(
+                        _tz_clean, ref_year=local_year if local_year >= 1 else 1)
+                    utc_offset_hours = _h + _m / 60.0
+                tz_warnings.append(
+                    f"Timezone: CHTK timezone field contains IANA name "
+                    f"'{_tz_clean}' (malformed per CHTK spec); resolved "
+                    f"standard offset {_fmt_dec(utc_offset_hours)} using "
+                    f"year {local_year} rules")
 
-        # Apply DST/War Time offset (flag 1 = +1h DST, flag 2 = +2h War Time).
-        # INVARIANT (m14): from here on 'utc_offset_hours' is the TOTAL offset
-        # (standard + flag). All consumers expect TOTAL: panels subtract the
-        # flag for standard-offset display, _compute_chtk_timezone subtracts
-        # it for the CHTK field, chart builds take it as display metadata.
-        # Never re-add the flag downstream.
-        if time_change_flag in (1, 2):
-            utc_offset_hours += time_change_flag
+        # Detect IANA timezone from coordinates. Runs BEFORE the DST
+        # application so the -1 auto-flag resolution below can use it.
+        # Still exactly ONE TimezoneFinder use per chart (td-5w3c.1).
+        iana_timezone = BirthDataManager._detect_timezone(latitude, longitude)
+
+        # Apply DST/War Time as the TOTAL offset [INVARIANT m14]. Use the float
+        # dst_offset_hours when present-and-non-None (preserves non-1h DST like
+        # Lord Howe Island's 0.5h); fall back to the integer time_change_flag
+        # for CHTK charts where dst_offset_hours is None.
+        # Trap #1: NEVER use raw.get('dst_offset_hours', float(time_change_flag))
+        # (dict.get returns None, not the default, when the key is present with
+        # value None). Use an explicit `is None` check.
+        # CHTK semantics (preserved byte-for-byte from create_from_raw_data):
+        # only flags 1 (DST) and 2 (War Time) add an offset. The reader emits
+        # -1 meaning AUTO: resolve DST from IANA rules at load (Kala
+        # convention, td-5w3c.1); the integer fallback stays gated on (1, 2).
+        dst = raw.get('dst_offset_hours')
+        time_change_flag_raw = None
+        if dst is None and time_change_flag == -1:
+            # Kala AUTO flag: resolve the DST flag from IANA rules at the
+            # birth instant, then add float(flag) to the CHTK standard
+            # offset. The CHTK std field stays authoritative; the pytz TOTAL
+            # is never used outright (SPEC-TZ-001, decompose-from-total is
+            # inside resolve_auto_dst_flag's helper). Fail-loud branch (c),
+            # no coordinates so no IANA detection, lives here; branches (a)
+            # and (b) live in resolve_auto_dst_flag.
+            time_change_flag_raw = -1
+            if latitude == 0.0 and longitude == 0.0:
+                resolved_flag = 0
+                tz_warnings.append(
+                    "Timezone: DST flag -1 could not be auto-resolved: no "
+                    "coordinates to detect an IANA zone (chart may be 1h off)")
+            else:
+                from core.time_utils import resolve_auto_dst_flag
+                resolved_flag, _auto_warns = resolve_auto_dst_flag(
+                    iana_timezone, local_year, local_month, local_day,
+                    local_hour, local_minute, longitude=longitude)
+                tz_warnings.extend(_auto_warns)
+            # Normalize outward: consumers (recipes, panels, write-back)
+            # must only ever see a real flag (0/1), never the -1 sentinel.
+            time_change_flag = resolved_flag
+            dst = float(resolved_flag)
+        if dst is None:
+            dst = float(time_change_flag) if time_change_flag in (1, 2) else 0.0
+        # From here on 'utc_offset_hours' is the TOTAL offset (standard + DST).
+        # All consumers expect TOTAL: panels subtract the flag for standard-
+        # offset display, _compute_chtk_timezone subtracts it for the CHTK
+        # field, chart builds take it as display metadata. Never re-add it.
+        utc_offset_hours += dst
 
         # Convert to UTC (delegates to core.time_utils for both CE and BCE)
         from core.time_utils import local_to_utc_total
@@ -139,22 +295,43 @@ class BirthDataManager:
                                local_hour, local_minute, local_second,
                                utc_offset_hours))
 
-        # Detect IANA timezone from coordinates
-        iana_timezone = BirthDataManager._detect_timezone(latitude, longitude)
+        # chtk_timezone string for write-back. CHTK keeps its original string
+        # verbatim (lossless round-trip, byte-identical with the pre-refactor
+        # output). TOML synthesizes a CHTK-convention string from the standard
+        # BASE offset (= TOTAL minus the DST just added) with dst_flag=0 so
+        # _compute_chtk_timezone does not subtract the flag a second time.
+        if is_chtk:
+            chtk_timezone = chtk_tz
+        else:
+            chtk_timezone = BirthDataManager._compute_chtk_timezone(
+                utc_offset_hours - dst, 0)
 
-        # Build canonical structure
+        # city/country and synthesized display place. Prefer an explicit
+        # birth_place from raw (TOML synthesizes it), else build "City, Country".
+        city = raw.get('city', '')
+        country = raw.get('country', '')
+        birth_place = raw.get('birth_place')
+        if not birth_place:
+            if city and country and str(country).lower() not in (
+                    'unknown', '', 'na', 'n/a'):
+                birth_place = f"{city}, {country}"
+            else:
+                birth_place = city or ''
+
+        # Build canonical structure (Appendix C)
         birth_data = {
             # Identity
-            'name': raw_data.get('name', 'Unknown'),
-            'gender': raw_data.get('gender', 'Unknown'),
+            'name': raw.get('name', 'Unknown'),
+            'gender': raw.get('gender', 'Unknown'),
+            'birth_place': birth_place,
 
             # Location
-            'city': raw_data.get('city', ''),
-            'country': raw_data.get('country', ''),
+            'city': city,
+            'country': country,
             'latitude': latitude,
             'longitude': longitude,
 
-            # LOCAL time (what's in CHTK, what user sees)
+            # LOCAL time (what user sees)
             'local_year': local_year,
             'local_month': local_month,
             'local_day': local_day,
@@ -174,20 +351,67 @@ class BirthDataManager:
             'iana_timezone': iana_timezone,
             'utc_offset_hours': utc_offset_hours,
             'time_change_flag': time_change_flag,
-            'chtk_timezone': chtk_tz,  # Original format for saving
+            'chtk_timezone': chtk_timezone,  # CHTK-convention string for saving
             'tz_warnings': tz_warnings,  # SPEC-TZ-001 8a creation-path channel
 
-            # Raw CHTK data (for CHTK editor)
-            'raw_chtk_data': raw_data,
+            # Metadata (new, optional; None for CHTK)
+            'rodden': raw.get('rodden'),
+            'tags': raw.get('tags'),
+            'notes': raw.get('notes'),
+            'julian_day': raw.get('julian_day'),
+            'dst_offset_hours': raw.get('dst_offset_hours'),
 
-            # Source file
+            # Round-trip preservation (TOML only, None for CHTK)
+            '_toml_extra': raw.get('_toml_extra'),
+
+            # Source tracking (KEY NAMES KEPT for backward compat, 79+ consumers)
+            'source_format': source_format,
+            'raw_chtk_data': raw_chtk_data,  # original reader output (any format)
             'chtk_path': str(chtk_path) if chtk_path else None,
         }
 
-        # Log canonical birth data for DAI tracing
-        # This captures the result AFTER timezone conversion (critical audit point)
+        # HARD INVARIANT (td-5w3c.1): the raw-flag key is added ONLY when the
+        # -1 auto branch fired. Flag 0/1/2 charts keep their EXACT dict shape
+        # (byte-identical no-op for the ~6030 non-auto charts).
+        if time_change_flag_raw is not None:
+            birth_data['time_change_flag_raw'] = time_change_flag_raw
 
         return birth_data
+
+    @staticmethod
+    def create_from_raw_data(raw_data: Dict, chtk_path: str = None) -> Dict[str, Any]:
+        """
+        Build canonical birth_data from an ALREADY-PARSED CHTK raw dict.
+
+        DEPRECATED as a public entry: prefer create_birth_data_from_chtk(path)
+        / create_birth_data_from_file(path). Retained as a thin backward-compat
+        shim (SPEC-IMPORT-001 §6.4 item 4: create_from_raw_data is now an
+        internal detail of the CHTK path) for callers/tests that hold a raw
+        CHTK dict and have not yet been migrated. It performs the same CHTK
+        normalization as create_birth_data_from_chtk (flatten nested
+        coordinates, parse the inverted-sign timezone string) then delegates to
+        _build_canonical with source_format='chtk'.
+
+        Args:
+            raw_data: Dict from CHTKReader.read_chtk_file() (nested coordinates,
+                      CHTK-convention timezone string)
+            chtk_path: Optional path to source file
+
+        Returns:
+            Canonical birth_data dict
+        """
+        raw = dict(raw_data)  # copy: never mutate the caller's dict
+        coords = raw.pop('coordinates', {})
+        raw['latitude'] = coords.get('latitude', 0.0)
+        raw['longitude'] = coords.get('longitude', 0.0)
+        chtk_tz = raw.get('timezone', '+00:00:00')
+        raw['timezone'] = chtk_tz
+        raw['utc_offset_hours'] = BirthDataManager._parse_chtk_timezone(chtk_tz)
+        # Preserve the caller's original (un-normalized) dict under
+        # raw_chtk_data, matching the pre-refactor contract.
+        return BirthDataManager._build_canonical(
+            raw, chtk_path=chtk_path, source_format='chtk',
+            raw_chtk_data=raw_data)
 
     @staticmethod
     def _parse_chtk_timezone(tz_str: str) -> float:
@@ -282,14 +506,39 @@ class BirthDataManager:
             return "UTC"
 
     @staticmethod
-    def _compute_chtk_timezone(utc_offset_hours: float, dst_flag: int = 0) -> str:
-        """Compute CHTK-format timezone string (inverted sign, standard offset only)."""
-        base = utc_offset_hours - dst_flag if dst_flag in (1, 2) else utc_offset_hours
+    def _compute_chtk_timezone(utc_offset_hours: float, dst_flag: int = 0,
+                               dst_offset_hours: Optional[float] = None) -> str:
+        """Compute CHTK-format timezone string (inverted sign, standard offset
+        only).
+
+        Subtracts the DST/War Time amount from the supplied offset to recover
+        the standard BASE that CHTK stores. Prefer the float dst_offset_hours
+        when present-and-non-None (preserves non-1h DST like Lord Howe Island's
+        0.5h); fall back to the integer dst_flag otherwise.
+
+        Trap #1: an explicit `is None` check, never .get(..., float(dst_flag)),
+        because the caller may pass dst_offset_hours=None deliberately.
+
+        CALL-SITE CONTRACT: _build_canonical already subtracts the DST itself
+        and calls this with (BASE, 0) so nothing is subtracted a second time
+        (dst_flag=0 -> not in (1, 2) -> dst=0.0). Preserve that: passing the
+        TOTAL offset here requires passing the matching DST amount.
+        """
+        dst = dst_offset_hours
+        if dst is None:
+            dst = float(dst_flag) if dst_flag in (1, 2) else 0.0
+        else:
+            dst = float(dst)  # defensive against Decimal/str (tomllib: float)
+        base = utc_offset_hours - dst
         chtk = -base
-        h = int(chtk)
-        m = int(abs(chtk - h) * 60)
+        # BUG-5 (SPEC-IMPORT-002): round (not truncate) the sub-hour component so
+        # half/quarter-hour historical offsets (e.g. +05:30, +05:45) survive FP
+        # error (int(29.9999)->:29). Compute total minutes then divmod so a rounded
+        # :60 rolls into the hour instead of emitting an invalid ":60".
+        total_min = int(round(abs(chtk) * 60))
+        h, m = divmod(total_min, 60)
         sign = '+' if chtk >= 0 else '-'
-        return f"{sign}{abs(h):02d}:{m:02d}:00"
+        return f"{sign}{h:02d}:{m:02d}:00"
 
     @staticmethod
     def create_from_form_data(
@@ -362,8 +611,18 @@ class BirthDataManager:
                 f"chart assumed UTC+0 (SPEC-TZ-001 5f)")
 
         # INVARIANT (m14): TOTAL offset from here on (see create_from_raw_data).
-        if dst_flag in (1, 2):
-            utc_offset_hours += dst_flag
+        # Add the float DST amount when the form carries one
+        # (dst_offset_hours, preserves non-1h DST like Lord Howe Island's
+        # 0.5h); else fall back to the integer dst_flag, gated on (1, 2).
+        # Trap #1: explicit `is None` check, never .get(..., float(dst_flag)).
+        # `dst` is reused below so the chtk_timezone string subtracts the SAME
+        # amount that was added here (no integer/float mismatch).
+        dst = form_data.get('dst_offset_hours')
+        if dst is None:
+            dst = float(dst_flag) if dst_flag in (1, 2) else 0.0
+        else:
+            dst = float(dst)  # defensive against Decimal/str (tomllib: float)
+        utc_offset_hours += dst
 
         if not iana_tz:
             iana_tz = BirthDataManager._detect_timezone(latitude, longitude)
@@ -376,11 +635,22 @@ class BirthDataManager:
         else:
             gender = 'Unknown'
 
+        # Synthesize a display birth_place (Appendix C) consistent with the
+        # other two canonical producers.
+        _city = form_data.get('city', '')
+        _country = form_data.get('country', '')
+        if _city and _country and str(_country).lower() not in (
+                'unknown', '', 'na', 'n/a'):
+            birth_place = f"{_city}, {_country}"
+        else:
+            birth_place = _city or ''
+
         return {
             'name': form_data.get('name', 'Unknown'),
             'gender': gender,
-            'city': form_data.get('city', ''),
-            'country': form_data.get('country', ''),
+            'birth_place': birth_place,
+            'city': _city,
+            'country': _country,
             'latitude': latitude,
             'longitude': longitude,
             'local_year': local_year,
@@ -398,9 +668,25 @@ class BirthDataManager:
             'iana_timezone': iana_tz,
             'utc_offset_hours': utc_offset_hours,
             'time_change_flag': dst_flag,
-            'chtk_timezone': BirthDataManager._compute_chtk_timezone(utc_offset_hours, dst_flag),
+            # Pass the same float `dst` that was added above so the standard
+            # BASE is recovered exactly (preserves non-1h DST; no int/float
+            # mismatch with the += at the TOTAL-offset step).
+            'chtk_timezone': BirthDataManager._compute_chtk_timezone(
+                utc_offset_hours, dst_flag, dst_offset_hours=dst),
             'tz_warnings': tz_warnings,  # SPEC-TZ-001 8a creation-path channel
             'utc_input_mode': utc_input_mode,  # Check A skip for UTC-entered charts
+            # Metadata (SPEC-IMPORT-001 §6.4 item 5): pass through from the form
+            # if present (SPEC-IMPORT-002 will add the editing UI), else None,
+            # so editing a chart no longer silently drops these fields.
+            'rodden': form_data.get('rodden'),
+            'tags': form_data.get('tags'),
+            'notes': form_data.get('notes'),
+            'julian_day': form_data.get('julian_day'),
+            'dst_offset_hours': form_data.get('dst_offset_hours'),
+            '_toml_extra': form_data.get('_toml_extra'),
+            # Edited charts save back to CHTK by default; allow the caller to
+            # override when editing a TOML-sourced chart.
+            'source_format': form_data.get('source_format', 'chtk'),
             'raw_chtk_data': {},
             'chtk_path': str(chtk_path) if chtk_path else None,
         }

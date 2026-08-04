@@ -18,7 +18,29 @@ from core.house_systems import HOUSE_SYSTEM_CODES, get_house_system_code
 
 
 VALID_ADITYA_MODES = frozenset({"aditya", "tropical_classic", "sidereal"})
-VALID_VIEWS = frozenset({"south_indian", "north_indian", "wheel"})
+VALID_VIEWS = frozenset({"south_indian", "north_indian", "wheel", "body_graph",
+                         "cards_of_truth"})
+
+# SPEC-COT-001 INV-14 — the ONE style -> chart_stack index mapping.
+#
+# This dict used to be copy-pasted into core_gui_qt._on_chart_display_changed,
+# startup_state_manager.VIEW_INDEX and pro/remote_control.set_chart_view. Adding
+# the 5th view surfaced why that is dangerous: two of the copies fall back to
+# index 0 on an unknown key and one subscripts bare, so a style that is valid in
+# VALID_VIEWS but missing from a copy either KeyErrors or silently lands on
+# South Indian. Both are failures you only find at runtime. Consume this; never
+# re-declare it.
+VIEW_STACK_INDEX = {
+    "south_indian": 0,
+    "wheel": 1,
+    "north_indian": 2,
+    "body_graph": 3,
+    "cards_of_truth": 4,
+}
+VIEW_BY_STACK_INDEX = {index: style for style, index in VIEW_STACK_INDEX.items()}
+
+assert set(VIEW_STACK_INDEX) == set(VALID_VIEWS), \
+    "VIEW_STACK_INDEX and VALID_VIEWS must describe the same set of views"
 VALID_VARGAS = frozenset({1, 2, 3, 4, 7, 9, 10, 1010, 12, 16, 20, 24, 2424, 27, 30, 40, 45, 60})
 # SPEC-HSY-001: the 7 human keys the Settings UI can store. SE codes are
 # derived only at consumption via get_house_system_code().

@@ -1,6 +1,5 @@
 # Copyright (C) 2026 Lorris Turpin / 360 Hearts in the Sky
 # Licensed under AGPL-3.0 — see LICENSE file for details.
-# Commercial exception: see NOTICE file.
 """
 New Chart Sub-tab - Form for creating charts from scratch
 
@@ -1121,7 +1120,7 @@ class NewChartSubTab(QWidget):
                 lon=data.get('longitude'),
                 mode=mode,
                 name=data.get('name', ''),
-                ayanamsa=getattr(self.gui, 'chart_sidereal_ayanamsa_id', 1),
+                ayanamsa=getattr(self.gui, 'chart_sidereal_ayanamsa_id', 100),
                 utcoffset=_utcoffset,
                 hsys=_hsys,
             )
@@ -1142,7 +1141,33 @@ class NewChartSubTab(QWidget):
                 gender=data.get('gender', 'Unknown'),
                 time_change_flag=data.get('dst', 0),
                 house_system=self.gui.state.house_system if _has_state else 'campanus',
+                # SPEC-IMPORT-001 §6.3: user chart; forward additive metadata
+                # (None when the new-chart form did not supply it -> omitted).
+                rodden=bd.get('rodden'),
+                tags=bd.get('tags'),
+                notes=bd.get('notes'),
+                julian_day=bd.get('julian_day'),
+                dst_offset_hours=bd.get('dst_offset_hours'),
             )
+
+            # SPEC-PERSIST-001 INV-1: the New Chart form is a creation path
+            # like any other, and it wrote nothing — the chart lived in
+            # session.json alone. persist_birth_data is the shared road, so
+            # format, folder, collision handling and atomicity cannot drift
+            # from the Add Chart dialog's.
+            from managers.chart_creation_pipeline import persist_birth_data
+            file_path, _fmt, persist_error = persist_birth_data(
+                bd, name=data.get('name', ''), julian_day=jd)
+            data['chtk_path'] = file_path
+            if persist_error:
+                # INV-6 / td-u84e: the chart is fine, the file is not. Never
+                # abort the creation over it; say so and carry on. showMessage
+                # with a timeout is not enough — creating a chart fires
+                # several more status messages straight after this one, and
+                # each would replace it (td-rx09).
+                print(f"[NEW CHART] {persist_error}")
+                from ui.sticky_status import report_write_failure
+                report_write_failure(self, persist_error, data.get('name', ''))
 
             QApplication.processEvents()
             if self.gui and hasattr(self.gui, 'loading_manager'):
@@ -1166,7 +1191,10 @@ class NewChartSubTab(QWidget):
 
         chart_index = memory_panel.add_chart(
             recipe,
-            chtk_path=data.get('chtk_path', ''),
+            # INV-7: the real path, or None. It used to be '' — falsy but
+            # NOT None, so it slipped past `is not None` guards and
+            # serialised into session.json as an empty string.
+            chtk_path=data.get('chtk_path') or None,
             chart_obj=chart,
         )
 

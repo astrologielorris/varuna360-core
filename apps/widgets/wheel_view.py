@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 # Copyright (C) 2026 Lorris Turpin / 360 Hearts in the Sky
 # Licensed under AGPL-3.0 — see LICENSE file for details.
-# Commercial exception: see NOTICE file.
 """
 Wheel Chart View Widget
 Circular zodiac wheel using PySide6 QGraphicsView.
@@ -51,7 +50,7 @@ from .zodiac_renderer import (
 )
 
 # Import theme
-from ui.qt_theme import BG, SURFACE, TEXT_PRIMARY, get_theme_colors
+from ui.qt_theme import BG, SURFACE, TEXT_PRIMARY, get_theme_colors, scaled_area_font, desat_image, sat_key, desat_hex
 
 # Import geometry helpers (reuse from existing wheel)
 from visualizations.wheel_geometry import (
@@ -65,7 +64,16 @@ from visualizations.wheel_constants import (
     WHEEL_RADII, ADITYA_NAMES, ZODIAC_SYMBOLS, ZODIAC_NAMES,
     DISPLAY_PLANETS, get_element_color, get_aditya_name, get_zodiac_symbol
 )
-from core.aditya_mode import get_planet_display_name
+from core.aditya_mode import get_planet_display_name, displayed_sign_name
+
+# SPEC-COT-001 §4.10 — the in-chart card index. The setting, the memoised
+# spread and the plaque art are shared with the South Indian and North Indian
+# views; the sector split itself lives in zodiac_renderer.draw_sign_names.
+from apps.widgets.cot_index_item import CotIndexMixin
+
+#: UserRole tag on the wheel's card items, so a test or a later selective
+#: redraw can find them without pattern-matching on the rank text.
+TAG_COT_CARD = "wheel.cot_card"
 
 # Retinue data loaded lazily (defers AI_tools + libaditya.constants at startup, RPI-PERF-B)
 _retinue_module = None
@@ -76,6 +84,214 @@ def _get_retinue():
         from AI_tools.AI_main_function import retinue as _r
         _retinue_module = _r
     return _retinue_module
+
+
+# Collision-avoidance tuning for the planet band (SPEC-TRN-004 4.3).
+# Kept as module constants so the natal band and the full transit ring share
+# identical spread behavior.
+_BAND_CLUSTER_THRESHOLD = 12   # degrees; planets closer than this form a cluster
+_BAND_MIN_VISUAL_SEP = 10      # minimum visual separation in degrees after spreading
+
+
+def calculate_band_positions(planets, min_r, max_r, cx, cy, rotation_offset,
+                             cluster_threshold=_BAND_CLUSTER_THRESHOLD,
+                             min_visual_sep=_BAND_MIN_VISUAL_SEP):
+    """Place planets in an annular band with collision avoidance (radius-parameterized).
+
+    Pure function extracted verbatim from WheelView._calculate_planet_positions
+    (SPEC-TRN-004 4.3 refactor). The natal band calls it with
+    (r_center + 90, r_inner - 10); the full transit ring calls it with its own
+    zone bounds. Behavior for the natal bounds is byte-identical to the pre-refactor
+    method (proven by test/test_band_positions_regression.py).
+
+    Two-phase approach:
+      1. Cluster planets that are within cluster_threshold degrees of each other.
+      2. Spread clustered planets angularly + stack them by radius.
+
+    Args:
+        planets: list of dicts with "degrees" and "sign_index".
+        min_r, max_r: inner/outer bounds of the placement zone (px from center).
+        cx, cy: scene center.
+        rotation_offset: wheel rotation offset (Ascendant convention).
+        cluster_threshold, min_visual_sep: spread tuning (defaults = natal values).
+
+    Returns:
+        list of (planet_dict, (x, y, radius, label_offset)) tuples.
+    """
+    if not planets:
+        return []
+
+    # Sort by degree for clustering
+    planets_sorted = sorted(planets, key=lambda p: p["degrees"])
+
+    # Phase 1: Identify clusters (planets within cluster_threshold degrees)
+    CLUSTER_THRESHOLD = cluster_threshold
+    MIN_VISUAL_SEP = min_visual_sep
+
+    clusters = []
+    current_cluster = [planets_sorted[0]]
+
+    for i in range(1, len(planets_sorted)):
+        prev_deg = planets_sorted[i - 1]["degrees"]
+        curr_deg = planets_sorted[i]["degrees"]
+
+        # Handle wrap-around (e.g., 358° and 2°)
+        diff = curr_deg - prev_deg
+        if diff < 0:
+            diff += 360
+
+        if diff <= CLUSTER_THRESHOLD:
+            current_cluster.append(planets_sorted[i])
+        else:
+            clusters.append(current_cluster)
+            current_cluster = [planets_sorted[i]]
+
+    clusters.append(current_cluster)
+
+    # Also check wrap-around between last and first cluster
+    if len(clusters) > 1:
+        first_deg = clusters[0][0]["degrees"]
+        last_deg = clusters[-1][-1]["degrees"]
+        wrap_diff = (360 - last_deg) + first_deg
+        if wrap_diff <= CLUSTER_THRESHOLD:
+            # Merge first and last clusters
+            clusters[-1].extend(clusters[0])
+            clusters = clusters[1:]
+
+    # Phase 2: Calculate spread positions for each cluster
+    # Calculate base as CENTER of available zone
+    zone_center = (min_r + max_r) / 2
+    zone_range = (max_r - min_r) / 2  # Half the zone for +/- offsets
+
+    # Zig-zag order: alternate far-outer, far-inner, mid-outer, mid-inner, center
+    # Use 0.95 multiplier to really push to edges
+    radii = [
+        zone_center + zone_range * 0.95,   # Far outer (very close to sign ring)
+        zone_center - zone_range * 0.95,   # Far inner (very close to center)
+        zone_center + zone_range * 0.55,   # Mid outer
+        zone_center - zone_range * 0.55,   # Mid inner
+        zone_center,                        # Center of zone
+        zone_center + zone_range * 0.75,   # Upper-mid outer
+        zone_center - zone_range * 0.75,   # Lower-mid inner
+    ]
+    # Clamp to valid range (safety)
+    radii = [max(min_r, min(r, max_r)) for r in radii]
+    # Remove duplicates while preserving order
+    seen = set()
+    radii = [r for r in radii if not (r in seen or seen.add(r))]
+
+    planet_positions = []
+
+    for cluster in clusters:
+        if len(cluster) == 1:
+            # Single planet - place at natural position (center of zone)
+            planet = cluster[0]
+            visual_angle = get_planet_angle(planet["degrees"], rotation_offset)
+            x, y = polar_to_cartesian(cx, cy, zone_center, visual_angle)
+            planet_positions.append((planet, (x, y, zone_center, 0)))
+
+        else:
+            # Multiple planets - spread them out
+            # Sort cluster by original degree for consistent ordering
+            cluster_sorted = sorted(cluster, key=lambda p: p["degrees"])
+
+            # Check if cluster spans multiple signs
+            signs_in_cluster = set(p["sign_index"] for p in cluster)
+            spans_multiple_signs = len(signs_in_cluster) > 1
+
+            if spans_multiple_signs:
+                # SIGN-AWARE MODE: Spread within each sign, don't cross boundaries
+                # Group by sign and place each group within its sign
+                sign_groups = {}
+                for p in cluster_sorted:
+                    sign_idx = p["sign_index"]
+                    if sign_idx not in sign_groups:
+                        sign_groups[sign_idx] = []
+                    sign_groups[sign_idx].append(p)
+
+                # Process each sign group separately
+                radius_counter = 0
+                for sign_idx in sorted(sign_groups.keys()):
+                    sign_planets = sign_groups[sign_idx]
+                    n_in_sign = len(sign_planets)
+
+                    if n_in_sign == 1:
+                        # Single planet in this sign - place at natural position
+                        planet = sign_planets[0]
+                        visual_angle = get_planet_angle(planet["degrees"], rotation_offset)
+                        radius = radii[radius_counter % len(radii)]
+                        radius_counter += 1
+                        x, y = polar_to_cartesian(cx, cy, radius, visual_angle)
+                        planet_positions.append((planet, (x, y, radius, 0)))
+                    else:
+                        # Multiple planets in this sign - spread within sign bounds
+                        # Calculate average position within this sign group
+                        group_degs = [p["degrees"] for p in sign_planets]
+                        avg_deg = sum(group_degs) / len(group_degs)
+
+                        # Calculate spread needed
+                        total_spread = (n_in_sign - 1) * MIN_VISUAL_SEP
+                        start_offset = -total_spread / 2
+
+                        # Sign boundaries (keep 2° margin from edges)
+                        sign_start = sign_idx * 30 + 2
+                        sign_end = (sign_idx + 1) * 30 - 2
+
+                        # Sort by degree within sign group
+                        sign_planets_sorted = sorted(sign_planets, key=lambda p: p["degrees"])
+
+                        for i, planet in enumerate(sign_planets_sorted):
+                            # Calculate spread angle centered on group average
+                            spread_angle = avg_deg + start_offset + (i * MIN_VISUAL_SEP)
+
+                            # Clamp to sign boundaries
+                            spread_angle = max(sign_start, min(sign_end, spread_angle))
+
+                            visual_angle = get_planet_angle(spread_angle, rotation_offset)
+
+                            # Alternate radii for additional separation
+                            radius = radii[radius_counter % len(radii)]
+                            radius_counter += 1
+
+                            x, y = polar_to_cartesian(cx, cy, radius, visual_angle)
+                            planet_positions.append((planet, (x, y, radius, 0)))
+            else:
+                # SINGLE-SIGN MODE: Safe to spread angularly within the sign
+                # Calculate cluster center (average degree)
+                cluster_degs = [p["degrees"] for p in cluster]
+
+                # Handle wrap-around for average calculation
+                sin_sum = sum(math.sin(math.radians(d)) for d in cluster_degs)
+                cos_sum = sum(math.cos(math.radians(d)) for d in cluster_degs)
+                avg_deg = math.degrees(math.atan2(sin_sum, cos_sum)) % 360
+
+                # Calculate spread: total arc needed = (n-1) * MIN_VISUAL_SEP
+                n = len(cluster)
+                total_spread = (n - 1) * MIN_VISUAL_SEP
+                start_offset = -total_spread / 2
+
+                # Ensure spread stays within the sign (0-30° within sign)
+                sign_idx = cluster[0]["sign_index"]
+                sign_start = sign_idx * 30
+                sign_end = sign_start + 30
+
+                for i, planet in enumerate(cluster_sorted):
+                    # Calculate spread angle
+                    spread_angle = avg_deg + start_offset + (i * MIN_VISUAL_SEP)
+
+                    # Clamp to sign boundaries to prevent crossing
+                    spread_angle = max(sign_start + 1, min(sign_end - 1, spread_angle))
+
+                    visual_angle = get_planet_angle(spread_angle, rotation_offset)
+
+                    # Alternate radii for additional separation
+                    radius_idx = i % len(radii)
+                    radius = radii[radius_idx]
+
+                    x, y = polar_to_cartesian(cx, cy, radius, visual_angle)
+                    planet_positions.append((planet, (x, y, radius, 0)))
+
+    return planet_positions
 
 
 class WheelScene(QGraphicsScene):
@@ -92,7 +308,7 @@ class WheelScene(QGraphicsScene):
         self.setItemIndexMethod(QGraphicsScene.ItemIndexMethod.NoIndex)
 
 
-class WheelView(QGraphicsView):
+class WheelView(CotIndexMixin, QGraphicsView):
     """
     Circular zodiac wheel view.
 
@@ -103,6 +319,8 @@ class WheelView(QGraphicsView):
     - Zoom with mouse wheel, pan with drag
     - Click planets to show info dialog
     """
+
+    _cot_log_prefix = "[WHEEL]"
 
     # Aditya names (for house calculation)
     ADITYA_NAMES = [
@@ -124,6 +342,9 @@ class WheelView(QGraphicsView):
     _OUTER_RIM_PLANET_NAMES = frozenset({
         "Sun", "Moon", "Mars", "Mercury", "Jupiter",
         "Venus", "Saturn", "Rahu", "Ketu",
+        # Data-assembly must not discard the outer planets; the renderer filters
+        # them by show_outer_planets at draw time (SPEC-TRN-004 4.4).
+        "Uranus", "Neptune", "Pluto",
     })
 
     def __init__(self, parent=None):
@@ -155,6 +376,22 @@ class WheelView(QGraphicsView):
         self.min_zoom = 0.2
         self.max_zoom = 3.0
         self.zoom_step = 1.15
+        # Auto-fit tracking (SPEC-TRN-004 4.6): once the user manually zooms,
+        # configuration-change refits stop until they reset (Key_0). Cleared by
+        # every auto-fit; set by wheel/keyboard zoom.
+        self.user_zoomed = False
+        # Signature of the last drawn band configuration; a change triggers a
+        # refit (unless user_zoomed). Set in draw_wheel.
+        self._last_extent_config = None
+        # Measured symmetric half-extent (px from center) of the last draw,
+        # covering pies/Asc/ring. Scene rect and fit both use it so they agree
+        # (no phantom scrollbars). None until the first draw (analytic fallback).
+        self._current_extent = None
+
+        # SPEC-COT-001 §4.10 — caches + the live-update subscription for the
+        # in-chart card index. Before _chart exists, because the subscription
+        # can fire the moment it is registered.
+        self._cot_init()
 
         # Chart-first data (Issue 20)
         self._chart = None
@@ -166,8 +403,6 @@ class WheelView(QGraphicsView):
         self._wheel_house_display = "sign_based"  # SPEC-WHD-001
 
         self._has_chart = False
-        # Deprecated — kept for set_planets_data() compat until Issue 11
-        self.planets_data = None
         self.aditya_mode = "aditya"
         self.ayanamsa_offset = 0.0
         self.use_western_names = False
@@ -192,6 +427,13 @@ class WheelView(QGraphicsView):
         # Custom outer rim data (e.g., eclipse chart overlay)
         self.custom_outer_rim_data = None
         self.show_custom_outer_rim = False
+        # SPEC-VGO-001. The custom rim has two possible owners: an external
+        # one (comparison / dual chart, which sets it directly and expects
+        # to keep it) and the varga column. The arbiter only ever touches a
+        # rim it owns, so a varga selection can never steal the comparison
+        # panel's ring — the same widget class serves both.
+        self._rim_owner = None                  # None | "varga" | "external"
+        self._varga_rim_code = None
 
         # Show Retinue outer rings (Hora + Trimsamsa)
         self.show_retinue_rings = False
@@ -237,9 +479,11 @@ class WheelView(QGraphicsView):
         # Setup view
         self._setup_view()
 
-        # Set scene rect - must accommodate outer rims (retinue+transit extends to r_outer+500)
-        # Max extent from center: 1024 + 1272 = 2296, need padding beyond wheel_size/2
-        padding = 400  # Larger padding for retinue + outer rim features
+        # Set scene rect - must accommodate the worst-case full ring + retinue +
+        # element pies without relying on post-draw itemsBoundingRect() growth
+        # (SPEC-TRN-004 4.6). Worst extent ~1640 (full ring + retinue) plus pie
+        # disc/legend; padding 700 gives a drawable radius of 1724 from center.
+        padding = 700
         self.setSceneRect(-padding, -padding,
                          self.wheel_size + padding * 2,
                          self.wheel_size + padding * 2)
@@ -307,7 +551,7 @@ class WheelView(QGraphicsView):
         """
         Load planet image using Qt best practices for quality.
 
-        COPIED FROM SouthIndianView - exact same pattern for consistency.
+        Mirrors SouthIndianView - exact same pattern for consistency.
         Uses variation from settings.json.
         """
         from PySide6.QtGui import QImage, QPixmap
@@ -323,8 +567,9 @@ class WheelView(QGraphicsView):
         # Get selected variation for this planet
         variation = self.get_planet_variation(planet_name)
 
-        # Cache key includes variation
-        cache_key = f"{planet_name}_v{variation}_{size}"
+        # Cache key includes variation + saturation (SPEC-SAT-001 WI-4; sat_key
+        # is '' at 100 so keys stay byte-identical to today)
+        cache_key = f"{planet_name}_v{variation}_{size}{sat_key()}"
 
         if not hasattr(self, 'planet_icons'):
             self.planet_icons = {}
@@ -364,6 +609,9 @@ class WheelView(QGraphicsView):
                 Qt.TransformationMode.SmoothTransformation
             )
 
+            # Step 2b: Desaturate AFTER scale (SPEC-SAT-001 WI-4; no-op at 100)
+            qimage = desat_image(qimage)
+
             # Step 3: Convert to QPixmap
             pixmap = QPixmap.fromImage(qimage)
 
@@ -401,19 +649,114 @@ class WheelView(QGraphicsView):
         # Background color — live theme (SPEC-THM-001 G03)
         self.setBackgroundBrush(QBrush(QColor(get_theme_colors()["secondary_dark"])))
 
+    def _transit_rim_style(self):
+        """Read the transit/custom outer-ring style at draw time (SPEC-TRN-004 4.8).
+
+        No cached copy: every redraw picks up the current setting. Falls back to
+        the default on any error.
+        """
+        try:
+            from managers.settings_manager import get_settings
+            return get_settings().get_transit_rim_style()
+        except Exception:
+            return "full_wheel"
+
+    def _rim_active(self):
+        """True when a transit or custom outer overlay rim is currently drawn."""
+        transit = bool(self.show_transit_rim and self._transit_planets)
+        custom = bool(self.show_custom_outer_rim and
+                      (self._outer_rim_planets or self.custom_outer_rim_data))
+        return transit or custom
+
+    def _extent_config(self):
+        """Signature of the band configuration that drives extent (SPEC-TRN-004 4.6).
+
+        A change in this tuple between draws means the outermost radius changed,
+        so an auto-fit refit is warranted. Time-slider redraws keep the same
+        signature (planet positions do not change extent) and so do not refit.
+        """
+        rim = self._rim_active()
+        return (
+            bool(self.show_retinue_rings),
+            rim,
+            self._transit_rim_style() if rim else None,
+            bool(self.show_tropical_rim),
+        )
+
+    def _max_extent_radius(self):
+        """Outermost drawn radius (px from center) for the active configuration.
+
+        Single source of truth for scene fit and pie placement (SPEC-TRN-004 4.6).
+        Element pies are placed OUTSIDE this radius, so they are not included here.
+        The Ascendant marker allowance (+60) is folded into the full-ring cases.
+        """
+        ro = self.r_outer
+        retinue = bool(self.show_retinue_rings)
+        # Max of every active band's contribution so overlapping states (e.g.
+        # tropical rim + retinue) never underestimate. Bare wheel baseline:
+        # natal degree-ruler labels overhang r_outer + 51 (bounds ~+71).
+        candidates = [ro + 71]
+        if retinue:
+            # Hora + trimsamsa (+300) plus the trimsamsa degree ruler (~+330).
+            candidates.append(ro + 330)
+        if self.show_tropical_rim:
+            candidates.append(ro + 300)
+        if self._rim_active():
+            if self._transit_rim_style() == "full_wheel":
+                # Full ring band is 470 px wide (wheel_outer_ring._BAND_WIDTH) so
+                # full-size icons clear the inner edge and the ruler. Inner edge is
+                # r_outer (no retinue) or r_outer+300 (retinue); + 60 Asc allowance.
+                candidates.append((ro + 300 + 470 + 60) if retinue else (ro + 470 + 60))
+            else:
+                # Miniature rim + its outer-rim Ascendant marker. The Asc LABEL
+                # anchors at r_outer+320 (no retinue) / +520 (retinue) and its
+                # text bounds extend ~60 px farther, so cover those.
+                candidates.append((ro + 580) if retinue else (ro + 380))
+        return max(candidates)
+
+    # Smallest zoom the fit computation may return. Below the interactive
+    # min_zoom (0.2) so the worst-case configuration still fits small embedded
+    # viewports without clipping or scrollbars (Codex review, 4.6).
+    _FIT_ZOOM_FLOOR = 0.05
+
     def _compute_fit_zoom(self):
-        """Return zoom factor that fits the full wheel in the current viewport."""
+        """Return zoom factor that fits the active configuration in the viewport.
+
+        Fits 2 * the measured symmetric extent of the last draw (pies/Asc/ring
+        included) so the scene rect and the fit agree and no phantom scrollbars
+        appear (SPEC-TRN-004 4.6). Falls back to the analytic _max_extent_radius()
+        before the first draw sets _current_extent.
+        """
         vp = self.viewport().size()
         side = min(vp.width(), vp.height())
         if side < 100:
             return 0.45  # viewport not laid out yet — safe fallback
-        return max(self.min_zoom, min(self.max_zoom, side / self.wheel_size * 0.92))
+        extent = self._current_extent if self._current_extent else self._max_extent_radius()
+        extent_diameter = 2 * extent
+        return max(self._FIT_ZOOM_FLOOR,
+                   min(self.max_zoom, side / extent_diameter * 0.92))
+
+    def _refit_if_auto(self):
+        """Recompute and apply the fit zoom unless the user has manually zoomed.
+
+        Called on band-configuration changes (F5, transit/custom rim on/off,
+        style change) via draw_wheel's signature check (SPEC-TRN-004 4.6).
+        """
+        if self.user_zoomed:
+            return
+        if not self._fit_zoom_applied:
+            return  # first-show fit is still pending via _apply_fit_zoom
+        self.zoom_factor = self._compute_fit_zoom()
+        self.resetTransform()
+        self.scale(self.zoom_factor, self.zoom_factor)
+        self.centerOn(self.cx, self.cy)
 
     def _apply_fit_zoom(self):
         """Deferred auto-fit — runs after Qt event loop processes layout (viewport size valid)."""
         if self._fit_zoom_applied:
             return
         self._fit_zoom_applied = True
+        self.user_zoomed = False  # auto-fit clears manual-zoom lock
         self.zoom_factor = self._compute_fit_zoom()
         self.resetTransform()
         self.scale(self.zoom_factor, self.zoom_factor)
@@ -479,6 +822,7 @@ class WheelView(QGraphicsView):
         if new_zoom != self.zoom_factor:
             factor = new_zoom / self.zoom_factor
             self.zoom_factor = new_zoom
+            self.user_zoomed = True  # manual zoom locks out auto-refit (4.6)
             self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
             self.scale(factor, factor)
             self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorViewCenter)
@@ -490,6 +834,7 @@ class WheelView(QGraphicsView):
         new_zoom = min(self.zoom_factor * self.zoom_step, self.max_zoom)
         if new_zoom != self.zoom_factor:
             self.zoom_factor = new_zoom
+            self.user_zoomed = True
             self.resetTransform()
             self.scale(self.zoom_factor, self.zoom_factor)
 
@@ -498,11 +843,13 @@ class WheelView(QGraphicsView):
         new_zoom = max(self.zoom_factor / self.zoom_step, self.min_zoom)
         if new_zoom != self.zoom_factor:
             self.zoom_factor = new_zoom
+            self.user_zoomed = True
             self.resetTransform()
             self.scale(self.zoom_factor, self.zoom_factor)
 
     def reset_zoom(self):
-        """Reset zoom to fit the full wheel in the current viewport."""
+        """Reset zoom to fit the active configuration in the current viewport."""
+        self.user_zoomed = False  # explicit reset re-enables auto-refit (4.6)
         self.zoom_factor = self._compute_fit_zoom()
         self.resetTransform()
         self.scale(self.zoom_factor, self.zoom_factor)
@@ -579,19 +926,22 @@ class WheelView(QGraphicsView):
             self.viewport().setCursor(Qt.CursorShape.ArrowCursor)
         super().mouseReleaseEvent(event)
 
-    def set_planets_data(self, planets_data: dict):
-        """Deprecated — use update_from_chart(). Kept until Issue 11."""
-        self.planets_data = planets_data
-        self._has_chart = bool(planets_data)
-
     def update_from_chart(self, chart, varga_code=None, use_western_names=False, aditya_mode=None,
-                          house_system_code=None, **_kw):
-        """Render wheel from a libaditya Chart (primary entry point)."""
+                          house_system_code=None, ring_varga_code=None, **_kw):
+        """Render wheel from a libaditya Chart (primary entry point).
+
+        ``ring_varga_code`` (SPEC-VGO-001) draws a SECOND, divisional chart
+        as the outer rim while ``varga_code`` stays the main one. A kwarg
+        rather than a post-call setter so one redraw covers both.
+        """
         from libaditya.objects.context import Circle
         self._chart = chart
         self._varga_code = varga_code
         self._has_chart = True
-        self.planets_data = True
+        # SPEC-COT-001 §4.10: drop the memoised faces on EVERY update, not only
+        # when the object changed — identity caching alone would keep serving
+        # the old spread if a caller ever mutated a Chart in place.
+        self._cot_forget_faces()
         if aditya_mode is not None:
             self._aditya_mode = aditya_mode
         else:
@@ -603,24 +953,39 @@ class WheelView(QGraphicsView):
         source = chart.varga(varga_code) if varga_code and varga_code != 1 else chart.rashi()
         self._planets = source.planets()
         self._cusps = source.cusps()
+        self._varga_rim_code = ring_varga_code
+        self._arbitrate_rim()
         self.use_western_names = use_western_names
         self._calculate_rotation()
         self.draw_wheel()
 
-    def set_outer_rim_chart(self, chart, varga_code=None):
-        """Set outer rim from a Chart, storing Planet objects for mode-aware drawing."""
+    def set_outer_rim_chart(self, chart, varga_code=None, source_label="Overlay"):
+        """Set outer rim from a Chart, storing Planet objects for mode-aware drawing.
+
+        Args:
+            chart: the overlay Chart.
+            varga_code: optional divisional chart code.
+            source_label: tooltip prefix for the ring icons (SPEC-TRN-004 4.9),
+                e.g. "Eclipse", "Comparison"; defaults to "Overlay".
+        """
         source = chart.varga(varga_code) if varga_code and varga_code != 1 else chart.rashi()
         self._outer_rim_chart = chart
         self._outer_rim_planets = source.planets()
         self._outer_rim_cusps = source.cusps()
+        self._outer_rim_source_label = source_label
         self.custom_outer_rim_data = None
         self.show_custom_outer_rim = True
+        # Comparison / dual semantics: this caller DOES evict transit, and
+        # that is deliberate and shipped. The varga path (SPEC-VGO-001)
+        # deliberately does not — it goes through _arbitrate_rim instead,
+        # because transit outranks it (INV-4).
+        self._rim_owner = "external"
         self.show_transit_rim = False
         self._transit_planets = None
 
-    def update_outer_rim_from_chart(self, chart, varga_code=None):
+    def update_outer_rim_from_chart(self, chart, varga_code=None, source_label="Overlay"):
         """Legacy wrapper — delegates to set_outer_rim_chart."""
-        self.set_outer_rim_chart(chart, varga_code=varga_code)
+        self.set_outer_rim_chart(chart, varga_code=varga_code, source_label=source_label)
 
     def connect_gui(self, gui):
         """Wire up GUI signals for live transit refresh and mode changes."""
@@ -644,9 +1009,66 @@ class WheelView(QGraphicsView):
             self._transit_planets = None
             self._transit_cusps = None
             self.show_transit_rim = False
+        # SPEC-VGO-001 INV-4: transit outranks a varga rim, so a transit
+        # arriving suspends one and a transit leaving restores it. Doing
+        # this here rather than in the caller means the two independent
+        # producers cannot both believe they own the rim.
+        self._arbitrate_rim()
         if self._chart:
             self.draw_wheel()
             self.ensure_visible()
+
+    def set_ring_varga(self, varga_code):
+        """Draw ``varga_code`` as the outer rim, or clear it with None.
+
+        SPEC-VGO-001: the wheel's counterpart of the South Indian center
+        box. The natal wheel stays D-1 and the divisional chart is drawn
+        around it, through the rim renderer that already exists (INV-1) —
+        including its full-ring vs miniature style branch, so the varga
+        ring inherits whichever ring style the user chose (D-3).
+        """
+        if varga_code is None and self._varga_rim_code is None:
+            return
+        self._varga_rim_code = varga_code
+        self._arbitrate_rim()
+
+    def _arbitrate_rim(self):
+        """THE one decision about who owns the custom outer rim.
+
+        Draws nothing: it only sets the rim state that ``draw_wheel``'s
+        layer 15 reads, so callers keep their existing single redraw.
+        """
+        if self._rim_owner == "external":
+            return                      # comparison / dual owns it
+        transit_showing = bool(self.show_transit_rim and self._transit_planets)
+        wanted = (self._varga_rim_code is not None
+                  and not transit_showing
+                  and self._chart is not None)
+        if wanted:
+            try:
+                varga = self._chart.varga(self._varga_rim_code)
+            except Exception as e:
+                print(f"[WHEEL RIM] Could not build varga "
+                      f"{self._varga_rim_code}: {e}")
+                wanted = False
+        if wanted:
+            from core.varga_codes import (
+                from_libaditya_varga_code, varga_display_label,
+            )
+            self._outer_rim_chart = self._chart
+            self._outer_rim_planets = varga.planets()
+            self._outer_rim_cusps = varga.cusps()
+            self._outer_rim_source_label = "D-" + varga_display_label(
+                from_libaditya_varga_code(self._varga_rim_code))
+            self.custom_outer_rim_data = None
+            self.show_custom_outer_rim = True
+            self._rim_owner = "varga"
+        elif self._rim_owner == "varga":
+            self._outer_rim_chart = None
+            self._outer_rim_planets = None
+            self._outer_rim_cusps = None
+            self.show_custom_outer_rim = False
+            self._rim_owner = None
 
     def ensure_visible(self):
         """Force viewport refresh to ensure chart is visible.
@@ -694,7 +1116,7 @@ class WheelView(QGraphicsView):
                         False for Aditya names (Dhata, Aryama...)
         """
         self.use_western_names = use_western
-        # Note: Redraw will happen in set_planets_data() call
+        # Note: Redraw happens on the next update_from_chart() call
 
     def set_show_tropical_rim(self, show: bool):
         """
@@ -709,7 +1131,16 @@ class WheelView(QGraphicsView):
     def set_show_retinue_rings(self, show: bool):
         """
         Toggle Hora + Trimsamsa outer rings visibility.
-        Mutually exclusive with tropical/custom rims (but NOT transit).
+
+        Mutually exclusive with the tropical rim only (a fixed-radius dual-rim
+        mode). The transit rim AND the custom overlay rim (compatibility Person
+        B, eclipse/dual/comparison/predictive charts) coexist with retinue: both
+        render through _draw_outer_rim_planets, which shifts the rim outward to
+        r_outer+300 (full ring) / +310 (miniature) when retinue occupies the
+        inner band, and _max_extent_radius sizes the scene for that stack. Do
+        NOT clear show_custom_outer_rim here — that was a stale invariant from
+        the fixed-radius rim era and it silently dropped the overlay on F5
+        (td-df8y).
 
         Args:
             show: True to show retinue rings on wheel
@@ -717,7 +1148,6 @@ class WheelView(QGraphicsView):
         self.show_retinue_rings = show
         if show:
             self.show_tropical_rim = False
-            self.show_custom_outer_rim = False
         # Note: Caller should call draw_wheel() to redraw
 
     def set_cusp_glow_mode(self, mode: int):
@@ -750,28 +1180,27 @@ class WheelView(QGraphicsView):
             self._transit_planets = None
             self._transit_cusps = None
 
-    def set_outer_rim_data(self, planets_data: dict = None):
-        """
-        Set custom planetary data to display on the outer rim.
+    def clear_outer_rim(self):
+        """Clear any custom / Chart outer-rim overlay (eclipse ring, comparison ring).
 
-        This allows overlaying any chart (e.g., eclipse chart) on the wheel,
-        similar to transit display but with arbitrary data instead of "now".
+        Replaces the retired set_outer_rim_data(None). After the Personal Eclipse
+        retrofit (td-c9oz.6) every remaining caller of set_outer_rim_data only
+        CLEARED; its raw-decimal-degrees data path was the mode-blind overlay trap
+        (it placed planets at tropical angles regardless of zodiac mode, landing in
+        the wrong sector in Aditya/Sidereal — SPEC-ZOD-002). Removing that method
+        makes the trap unpickable: the only way to set an outer rim is now
+        set_outer_rim_chart(chart), which reads mode-aware Planet objects.
 
-        Args:
-            planets_data: Planet position dictionary (same format as update_from_chart),
-                         or None to disable custom outer rim
+        Caller should call draw_wheel() to redraw.
         """
-        self.custom_outer_rim_data = planets_data
-        self.show_custom_outer_rim = planets_data is not None
+        self.custom_outer_rim_data = None
+        self.show_custom_outer_rim = False
         self._outer_rim_planets = None
         self._outer_rim_cusps = None
-
-        # Disable transit rim when custom rim is active (they share the same visual space)
-        if self.show_custom_outer_rim:
-            self.show_transit_rim = False
-            self._transit_planets = None
-
-        # Note: Caller should call draw_wheel() to redraw
+        # Release ownership too: without this an external caller that sets
+        # then clears the rim leaves _rim_owner == "external" forever, and
+        # _arbitrate_rim would silently ignore every varga selection after.
+        self._rim_owner = None
 
     def set_ascendant_override(self, sign_index: int = None):
         """
@@ -875,8 +1304,12 @@ class WheelView(QGraphicsView):
         if self.show_retinue_rings:
             self._draw_hora_ring()
             self._draw_trimsamsa_ring()
-            transit_active = self.show_transit_rim and self._transit_planets
-            if not transit_active:
+            # Suppress the F6 trimsamsha degree ruler (r_outer+300..+325) when ANY
+            # outer overlay rim is active, not just transit: a custom overlay (the
+            # Compatibility Person-B rim, eclipse/dual/comparison/predictive)
+            # begins at r_outer+300 (full) / +310 (miniature) and would paint over
+            # the ruler. _rim_active() is transit-or-custom (Codex review, td-df8y).
+            if not self._rim_active():
                 self._draw_trimsamsha_degree_ruler()
 
         # Layer 13: Tropical outer rim (dual rim mode, mutually exclusive with retinue)
@@ -895,10 +1328,26 @@ class WheelView(QGraphicsView):
         if self._chart and self.show_element_pies:
             self._draw_element_pie()
 
-        # Expand scene rect to fit all drawn items (pie legends may extend beyond initial padding)
-        items_rect = self.scene.itemsBoundingRect().adjusted(-50, -50, 50, 50)
-        current_rect = self.sceneRect()
-        self.setSceneRect(current_rect.united(items_rect))
+        # Size the scene rect to the actual drawn content, symmetric around the
+        # wheel center so the wheel stays centered and the rect both shrinks and
+        # grows (SPEC-TRN-004 4.6; Codex review: a fixed worst-case rect that
+        # only grows produces phantom scrollbars when a smaller config is fit).
+        # Measuring itemsBoundingRect covers pies/Asc/ring without analytic pie
+        # math; fit uses this same half-extent so the two always agree.
+        b = self.scene.itemsBoundingRect()
+        margin = 40
+        half = max(abs(b.left() - self.cx), abs(b.right() - self.cx),
+                   abs(b.top() - self.cy), abs(b.bottom() - self.cy)) + margin
+        self._current_extent = half
+        self.setSceneRect(self.cx - half, self.cy - half, 2 * half, 2 * half)
+
+        # Refit when the band configuration changed since the last draw (F5,
+        # transit/custom rim on/off, style change), unless the user manually
+        # zoomed (SPEC-TRN-004 4.6). Same-config redraws (time slider) do not refit.
+        config = self._extent_config()
+        if config != self._last_extent_config:
+            self._last_extent_config = config
+            self._refit_if_auto()
 
         # Force viewport refresh to ensure chart displays immediately
         self.scene.update()
@@ -959,7 +1408,7 @@ class WheelView(QGraphicsView):
                     label_r = ruler_outer + 31  # was +12
                     lx, ly = polar_to_cartesian(self.cx, self.cy, label_r, visual_angle)
                     label = QGraphicsTextItem(str(deg_in_sign))
-                    label.setFont(QFont("Inter", 18))  # was 7, scaled
+                    label.setFont(scaled_area_font('chart_labels', family='Inter'))  # ruler 10°/20° tick
                     label.setDefaultTextColor(QColor("#888888"))
                     label.setPos(lx - label.boundingRect().width() / 2,
                                 ly - label.boundingRect().height() / 2)
@@ -981,14 +1430,27 @@ class WheelView(QGraphicsView):
             item = DegreeTickItem(x1, y1, x2, y2, tick_type)
             self.scene.addItem(item)
 
+    def _cot_repaint(self):
+        self.draw_wheel()
+
     def _draw_sign_names(self):
-        """Draw Aditya or Western sign names in the middle ring."""
+        """Draw Aditya or Western sign names in the middle ring.
+
+        With the Cards of Truth index on (SPEC-COT-001 §4.10), each name gives
+        up half the pair's width so its sign's card can sit beside it along the
+        sector's arc. The PAIR stays centred on the sector, so the ring of names
+        does not visibly drift when the setting is toggled.
+        """
         name_radius = (self.r_middle + self.r_inner) / 2 + 26
         _mode = self._aditya_mode
+        faces = self._cot_faces() if self._cot_enabled() else None
         draw_sign_names(self.scene, self.cx, self.cy, name_radius,
                         self.rotation_offset, _mode,
                         self.use_western_names, self.sign_language,
-                        self.display_settings)
+                        self.display_settings,
+                        cot_faces=faces,
+                        cot_dpr=self.devicePixelRatioF() or 1.0,
+                        cot_tag=TAG_COT_CARD)
 
     def _draw_center(self):
         """Draw the center circle."""
@@ -1155,192 +1617,21 @@ class WheelView(QGraphicsView):
 
     def _calculate_planet_positions(self, planets: list) -> list:
         """
-        Calculate planet positions with collision avoidance.
+        Calculate natal planet positions with collision avoidance.
 
-        Uses a two-phase approach:
-        1. Cluster planets that are within threshold degrees of each other
-        2. Spread clustered planets angularly + use radius stacking
+        Thin wrapper over the radius-parameterized pure helper
+        calculate_band_positions (SPEC-TRN-004 4.3). The natal band uses the
+        classic bounds (r_center + 90 .. r_inner - 10); the full transit ring
+        calls calculate_band_positions directly with its own zone bounds.
 
         Returns list of (planet_dict, (x, y, radius, label_offset)) tuples.
         """
-        if not planets:
-            return []
-
-        # Sort by degree for clustering
-        planets_sorted = sorted(planets, key=lambda p: p["degrees"])
-
-        # Phase 1: Identify clusters (planets within CLUSTER_THRESHOLD degrees)
-        CLUSTER_THRESHOLD = 12  # degrees - planets closer than this form a cluster
-        MIN_VISUAL_SEP = 10     # minimum visual separation in degrees after spreading
-
-        clusters = []
-        current_cluster = [planets_sorted[0]]
-
-        for i in range(1, len(planets_sorted)):
-            prev_deg = planets_sorted[i - 1]["degrees"]
-            curr_deg = planets_sorted[i]["degrees"]
-
-            # Handle wrap-around (e.g., 358° and 2°)
-            diff = curr_deg - prev_deg
-            if diff < 0:
-                diff += 360
-
-            if diff <= CLUSTER_THRESHOLD:
-                current_cluster.append(planets_sorted[i])
-            else:
-                clusters.append(current_cluster)
-                current_cluster = [planets_sorted[i]]
-
-        clusters.append(current_cluster)
-
-        # Also check wrap-around between last and first cluster
-        if len(clusters) > 1:
-            first_deg = clusters[0][0]["degrees"]
-            last_deg = clusters[-1][-1]["degrees"]
-            wrap_diff = (360 - last_deg) + first_deg
-            if wrap_diff <= CLUSTER_THRESHOLD:
-                # Merge first and last clusters
-                clusters[-1].extend(clusters[0])
-                clusters = clusters[1:]
-
-        # Phase 2: Calculate spread positions for each cluster
-        # Define the FULL available zone for planets - USE MAXIMUM SPACE
-        min_r = self.r_center + 90   # Keep clear of house numbers in center
-        max_r = self.r_inner - 10    # Very close to sign ring (use that outer space!)
-
-        # Calculate base as CENTER of available zone
-        zone_center = (min_r + max_r) / 2
-        zone_range = (max_r - min_r) / 2  # Half the zone for +/- offsets
-
-        # Zig-zag order: alternate far-outer, far-inner, mid-outer, mid-inner, center
-        # Use 0.95 multiplier to really push to edges
-        radii = [
-            zone_center + zone_range * 0.95,   # Far outer (very close to sign ring)
-            zone_center - zone_range * 0.95,   # Far inner (very close to center)
-            zone_center + zone_range * 0.55,   # Mid outer
-            zone_center - zone_range * 0.55,   # Mid inner
-            zone_center,                        # Center of zone
-            zone_center + zone_range * 0.75,   # Upper-mid outer
-            zone_center - zone_range * 0.75,   # Lower-mid inner
-        ]
-        # Clamp to valid range (safety)
-        radii = [max(min_r, min(r, max_r)) for r in radii]
-        # Remove duplicates while preserving order
-        seen = set()
-        radii = [r for r in radii if not (r in seen or seen.add(r))]
-
-        planet_positions = []
-
-        for cluster in clusters:
-            if len(cluster) == 1:
-                # Single planet - place at natural position (center of zone)
-                planet = cluster[0]
-                visual_angle = get_planet_angle(planet["degrees"], self.rotation_offset)
-                x, y = polar_to_cartesian(self.cx, self.cy, zone_center, visual_angle)
-                planet_positions.append((planet, (x, y, zone_center, 0)))
-
-            else:
-                # Multiple planets - spread them out
-                # Sort cluster by original degree for consistent ordering
-                cluster_sorted = sorted(cluster, key=lambda p: p["degrees"])
-
-                # Check if cluster spans multiple signs
-                signs_in_cluster = set(p["sign_index"] for p in cluster)
-                spans_multiple_signs = len(signs_in_cluster) > 1
-
-                if spans_multiple_signs:
-                    # SIGN-AWARE MODE: Spread within each sign, don't cross boundaries
-                    # Group by sign and place each group within its sign
-                    sign_groups = {}
-                    for p in cluster_sorted:
-                        sign_idx = p["sign_index"]
-                        if sign_idx not in sign_groups:
-                            sign_groups[sign_idx] = []
-                        sign_groups[sign_idx].append(p)
-
-                    # Process each sign group separately
-                    radius_counter = 0
-                    for sign_idx in sorted(sign_groups.keys()):
-                        sign_planets = sign_groups[sign_idx]
-                        n_in_sign = len(sign_planets)
-
-                        if n_in_sign == 1:
-                            # Single planet in this sign - place at natural position
-                            planet = sign_planets[0]
-                            visual_angle = get_planet_angle(planet["degrees"], self.rotation_offset)
-                            radius = radii[radius_counter % len(radii)]
-                            radius_counter += 1
-                            x, y = polar_to_cartesian(self.cx, self.cy, radius, visual_angle)
-                            planet_positions.append((planet, (x, y, radius, 0)))
-                        else:
-                            # Multiple planets in this sign - spread within sign bounds
-                            # Calculate average position within this sign group
-                            group_degs = [p["degrees"] for p in sign_planets]
-                            avg_deg = sum(group_degs) / len(group_degs)
-
-                            # Calculate spread needed
-                            total_spread = (n_in_sign - 1) * MIN_VISUAL_SEP
-                            start_offset = -total_spread / 2
-
-                            # Sign boundaries (keep 2° margin from edges)
-                            sign_start = sign_idx * 30 + 2
-                            sign_end = (sign_idx + 1) * 30 - 2
-
-                            # Sort by degree within sign group
-                            sign_planets_sorted = sorted(sign_planets, key=lambda p: p["degrees"])
-
-                            for i, planet in enumerate(sign_planets_sorted):
-                                # Calculate spread angle centered on group average
-                                spread_angle = avg_deg + start_offset + (i * MIN_VISUAL_SEP)
-
-                                # Clamp to sign boundaries
-                                spread_angle = max(sign_start, min(sign_end, spread_angle))
-
-                                visual_angle = get_planet_angle(spread_angle, self.rotation_offset)
-
-                                # Alternate radii for additional separation
-                                radius = radii[radius_counter % len(radii)]
-                                radius_counter += 1
-
-                                x, y = polar_to_cartesian(self.cx, self.cy, radius, visual_angle)
-                                planet_positions.append((planet, (x, y, radius, 0)))
-                else:
-                    # SINGLE-SIGN MODE: Safe to spread angularly within the sign
-                    # Calculate cluster center (average degree)
-                    cluster_degs = [p["degrees"] for p in cluster]
-
-                    # Handle wrap-around for average calculation
-                    sin_sum = sum(math.sin(math.radians(d)) for d in cluster_degs)
-                    cos_sum = sum(math.cos(math.radians(d)) for d in cluster_degs)
-                    avg_deg = math.degrees(math.atan2(sin_sum, cos_sum)) % 360
-
-                    # Calculate spread: total arc needed = (n-1) * MIN_VISUAL_SEP
-                    n = len(cluster)
-                    total_spread = (n - 1) * MIN_VISUAL_SEP
-                    start_offset = -total_spread / 2
-
-                    # Ensure spread stays within the sign (0-30° within sign)
-                    sign_idx = cluster[0]["sign_index"]
-                    sign_start = sign_idx * 30
-                    sign_end = sign_start + 30
-
-                    for i, planet in enumerate(cluster_sorted):
-                        # Calculate spread angle
-                        spread_angle = avg_deg + start_offset + (i * MIN_VISUAL_SEP)
-
-                        # Clamp to sign boundaries to prevent crossing
-                        spread_angle = max(sign_start + 1, min(sign_end - 1, spread_angle))
-
-                        visual_angle = get_planet_angle(spread_angle, self.rotation_offset)
-
-                        # Alternate radii for additional separation
-                        radius_idx = i % len(radii)
-                        radius = radii[radius_idx]
-
-                        x, y = polar_to_cartesian(self.cx, self.cy, radius, visual_angle)
-                        planet_positions.append((planet, (x, y, radius, 0)))
-
-        return planet_positions
+        return calculate_band_positions(
+            planets,
+            self.r_center + 90,   # Keep clear of house numbers in center
+            self.r_inner - 10,    # Very close to sign ring (use that outer space!)
+            self.cx, self.cy, self.rotation_offset,
+        )
 
     def _draw_planet_label(self, x: float, y: float, planet: dict, label_offset: float):
         """Draw degree label below a planet using display settings."""
@@ -1406,7 +1697,7 @@ class WheelView(QGraphicsView):
             sign_index = cusp.sign() - 1
 
             is_angle = house_num in ANGLE_HOUSES
-            color = "#FFD700" if is_angle else "#888888"
+            color = desat_hex("#FFD700") if is_angle else "#888888"
 
             # Start from the sign area (r_middle), above the planet ring
             start_r = self.r_middle
@@ -1468,8 +1759,8 @@ class WheelView(QGraphicsView):
 
             lx, ly = polar_to_cartesian(self.cx, self.cy, label_radius, visual_angle)
             label = QGraphicsTextItem(label_text)
-            label.setFont(QFont("Inter", 16))
-            label.setDefaultTextColor(QColor("#FFD700" if is_angle else "#AAAAAA"))
+            label.setFont(scaled_area_font('chart_labels', family='Inter'))
+            label.setDefaultTextColor(QColor(desat_hex("#FFD700") if is_angle else "#AAAAAA"))
             label.setPos(lx - label.boundingRect().width() / 2,
                         ly - label.boundingRect().height() / 2)
             label.setZValue(11)
@@ -1541,11 +1832,11 @@ class WheelView(QGraphicsView):
             label_text = f"C{house_num} {deg_in_sign}°"
 
             label = QGraphicsTextItem(label_text)
-            label.setFont(QFont("Inter", 16))
+            label.setFont(scaled_area_font('chart_labels', family='Inter'))
 
             # Angular houses (1,4,7,10) in gold, others in silver
             if house_num in [1, 4, 7, 10]:
-                label.setDefaultTextColor(QColor("#FFD700"))
+                label.setDefaultTextColor(QColor(desat_hex("#FFD700")))
             else:
                 label.setDefaultTextColor(QColor("#AAAAAA"))
 
@@ -1581,8 +1872,8 @@ class WheelView(QGraphicsView):
         Odd signs: 0-15° = Sun (Fire), 15-30° = Moon (Water)
         Even signs: 0-15° = Moon (Water), 15-30° = Sun (Fire)
         """
-        SUN_COLOR = "#E57373"   # Fire red
-        MOON_COLOR = "#1E4D8C"  # Water blue
+        SUN_COLOR = desat_hex("#E57373")   # Fire red
+        MOON_COLOR = desat_hex("#1E4D8C")  # Water blue
         _r = _get_retinue()
         aditya_name = self._get_aditya_for_sector(sign_index)
         sign_data = _r.ADITYA_RETINUE.get(aditya_name)
@@ -1599,8 +1890,8 @@ class WheelView(QGraphicsView):
         """Get the Trimsamsa (D30) element color for a planet at a given degree within its sign."""
         _r = _get_retinue()
         ELEMENT_BG = {
-            "Fire": "#E57373", "Earth": "#8B6340", "Air": "#F0C75E",
-            "Water": "#1E4D8C", "Ether": "#3D1A5C",
+            "Fire": desat_hex("#E57373"), "Earth": desat_hex("#8B6340"), "Air": desat_hex("#F0C75E"),
+            "Water": desat_hex("#1E4D8C"), "Ether": desat_hex("#3D1A5C"),
         }
         aditya_name = self._get_aditya_for_sector(sign_index)
         sign_data = _r.ADITYA_RETINUE.get(aditya_name)
@@ -1648,8 +1939,8 @@ class WheelView(QGraphicsView):
         hora_outer = self.r_outer + 130     # 130px wide
 
         # Hora colors — reuse rasi element colors: Fire = Sun, Water = Moon
-        SUN_BG, SUN_TEXT = "#E57373", "#1a1a1a"   # Fire red, dark text
-        MOON_BG, MOON_TEXT = "#1E4D8C", "#FFFFFF"  # Water blue, white text
+        SUN_BG, SUN_TEXT = desat_hex("#E57373"), "#1a1a1a"   # Fire red, dark text
+        MOON_BG, MOON_TEXT = desat_hex("#1E4D8C"), "#FFFFFF"  # Water blue, white text
 
         # Load Sun/Moon planet icons for sector labels
         sun_icon = self.load_planet_image("Sun", size=60)
@@ -1746,12 +2037,12 @@ class WheelView(QGraphicsView):
 
         # Element colors — matching rasi sectors; Earth darkened for flat fill; Ether = panel violet
         ELEMENT_BG = {
-            "Fire": "#E57373", "Earth": "#8B6340", "Air": "#F0C75E",
-            "Water": "#1E4D8C", "Ether": "#3D1A5C",
+            "Fire": desat_hex("#E57373"), "Earth": desat_hex("#8B6340"), "Air": desat_hex("#F0C75E"),
+            "Water": desat_hex("#1E4D8C"), "Ether": desat_hex("#3D1A5C"),
         }
         ELEMENT_TEXT = {
             "Fire": "#1a1a1a", "Earth": "#FFFFFF", "Air": "#1a1a1a",
-            "Water": "#FFFFFF", "Ether": "#CE93D8",
+            "Water": "#FFFFFF", "Ether": desat_hex("#CE93D8"),
         }
 
         # Background annulus
@@ -1887,7 +2178,11 @@ class WheelView(QGraphicsView):
 
     def _pie_position_right(self, rings_active=False):
         """Bottom-right diagonal position for pie chart."""
-        offset = (self.r_outer + 350) if rings_active else (self.r_outer + 80)
+        # Derive the pie offset from the outermost drawn band (SPEC-TRN-004 4.7)
+        # so the pie never overlaps the full ring / retinue in any configuration.
+        # rings_active is retained for signature stability; _max_extent_radius()
+        # already folds in retinue and the active rim style.
+        offset = self._max_extent_radius() + 30
         pie_r = 140
         diag = offset + pie_r + 30
         diag_xy = diag * 0.707
@@ -1895,7 +2190,11 @@ class WheelView(QGraphicsView):
 
     def _pie_position_top_right(self, rings_active=False):
         """Top-right diagonal position for pie chart."""
-        offset = (self.r_outer + 350) if rings_active else (self.r_outer + 80)
+        # Derive the pie offset from the outermost drawn band (SPEC-TRN-004 4.7)
+        # so the pie never overlaps the full ring / retinue in any configuration.
+        # rings_active is retained for signature stability; _max_extent_radius()
+        # already folds in retinue and the active rim style.
+        offset = self._max_extent_radius() + 30
         pie_r = 140
         diag = offset + pie_r + 30
         diag_xy = diag * 0.707
@@ -1903,7 +2202,11 @@ class WheelView(QGraphicsView):
 
     def _pie_position_left(self, rings_active=False):
         """Bottom-left diagonal position for pie chart (mirrored)."""
-        offset = (self.r_outer + 350) if rings_active else (self.r_outer + 80)
+        # Derive the pie offset from the outermost drawn band (SPEC-TRN-004 4.7)
+        # so the pie never overlaps the full ring / retinue in any configuration.
+        # rings_active is retained for signature stability; _max_extent_radius()
+        # already folds in retinue and the active rim style.
+        offset = self._max_extent_radius() + 30
         pie_r = 140
         diag = offset + pie_r + 30
         diag_xy = diag * 0.707
@@ -1957,7 +2260,7 @@ class WheelView(QGraphicsView):
                 ly = pie_cy - label_r * math.sin(angle_rad)
 
                 label = QGraphicsTextItem(f"{percent:.0f}%")
-                label.setFont(QFont("Inter", 16, QFont.Weight.Bold))
+                label.setFont(scaled_area_font('chart_labels', family='Inter', bold=True))
                 label.setDefaultTextColor(QColor("#FFFFFF"))
                 br = label.boundingRect()
                 label.setPos(lx - br.width() / 2, ly - br.height() / 2)
@@ -1967,8 +2270,8 @@ class WheelView(QGraphicsView):
             current_angle += span
 
         # Build legend items first to measure widths (needed for left alignment)
-        legend_font_title = QFont("Inter", 14, QFont.Weight.Bold)
-        legend_font = QFont("Inter", 13)
+        legend_font_title = scaled_area_font('panel_titles', family='Inter', bold=True)
+        legend_font = scaled_area_font('info_text', family='Inter')
         line_h = 28
         gap = 20  # gap between pie edge and legend
 
@@ -2343,7 +2646,7 @@ class WheelView(QGraphicsView):
 
         self._draw_outer_rim_ascendant(
             planets_data=positions,
-            color="#4A90D9"
+            color=desat_hex("#4A90D9")
         )
 
     def _draw_custom_outer_rim(self):
@@ -2369,14 +2672,14 @@ class WheelView(QGraphicsView):
         self._draw_outer_rim_planets(
             planets_data=positions,
             base_z=17,
-            line_color="#FF8C00",
-            label_color="#FF8C00",
-            tooltip_prefix="Overlay"
+            line_color=desat_hex("#FF8C00"),
+            label_color=desat_hex("#FF8C00"),
+            tooltip_prefix=getattr(self, "_outer_rim_source_label", "Overlay")
         )
 
         self._draw_outer_rim_ascendant(
             planets_data=positions,
-            color="#FF8C00",
+            color=desat_hex("#FF8C00"),
             cusp_source=self._outer_rim_cusps
         )
 
@@ -2406,7 +2709,26 @@ class WheelView(QGraphicsView):
         else:
             return
 
-        # Outer rim radii — shift when retinue rings are underneath
+        # Mode-aware Ascendant sign name (SPEC-TRN-004 4.5): no hardcoded Aditya
+        # names. asc_degrees is already in the chart's zodiac frame, so the sign
+        # ordinal maps directly through the display-name source of truth.
+        asc_sign_index = int(asc_degrees / 30) % 12
+        asc_sign_name = displayed_sign_name(
+            asc_sign_index, self._aditya_mode,
+            self.use_western_names, self.sign_language,
+        )
+
+        # Full ring: mirror the natal wheel's Ascendant + cusps (glow + F9 cusp
+        # glow lines + mode-aware label), NO miniature triangle marker. The full
+        # ring derives from the wheel, not the miniature (D12 + user requirement).
+        if self._transit_rim_style() == "full_wheel":
+            from .wheel_outer_ring import draw_ring_cusps_and_ascendant
+            draw_ring_cusps_and_ascendant(
+                self, cusps=cusps, asc_sign_name=asc_sign_name,
+            )
+            return
+
+        # Miniature rim: legacy glow + triangle marker + label.
         if self.show_retinue_rings:
             outer_rim_middle = self.r_outer + 405
             outer_rim_edge = self.r_outer + 520
@@ -2434,7 +2756,8 @@ class WheelView(QGraphicsView):
             ascendant_degrees=asc_degrees,
             rotation_offset=self.rotation_offset,
             color=color,
-            size=28
+            size=28,
+            sign_name=asc_sign_name,
         )
         self.scene.addItem(marker)
 
@@ -2445,7 +2768,8 @@ class WheelView(QGraphicsView):
             radius=outer_rim_edge,
             ascendant_degrees=asc_degrees,
             rotation_offset=self.rotation_offset,
-            color=color
+            color=color,
+            sign_name=asc_sign_name,
         )
         self.scene.addItem(label)
 
@@ -2470,6 +2794,17 @@ class WheelView(QGraphicsView):
             label_color: Color for degree labels
             tooltip_prefix: Prefix for tooltip text (e.g., "Transit", "Eclipse")
         """
+        # SPEC-TRN-004 dispatch: the full-fidelity ring is a separate renderer
+        # derived from the natal routines (D12); the miniature path below is
+        # unchanged and selected only when the setting says so.
+        if self._transit_rim_style() == "full_wheel":
+            from .wheel_outer_ring import draw_full_outer_ring
+            draw_full_outer_ring(self, planets_data, base_z,
+                                 line_color=line_color,
+                                 label_color=label_color,
+                                 tooltip_prefix=tooltip_prefix)
+            return
+
         from PySide6.QtWidgets import QGraphicsPixmapItem
 
         # Outer rim dimensions — shift outward when retinue rings occupy the first band
@@ -2601,7 +2936,7 @@ class WheelView(QGraphicsView):
                 label_text = f"{degrees}°{minutes:02d}'"
 
             label = QGraphicsTextItem(label_text)
-            label.setFont(QFont("Inter", 14))
+            label.setFont(scaled_area_font('chart_labels', family='Inter'))
             label.setDefaultTextColor(QColor(label_color))
             label.setPos(label_x - label.boundingRect().width() / 2,
                         label_y - label.boundingRect().height() / 2)
@@ -2722,13 +3057,24 @@ class WheelView(QGraphicsView):
 
         return positions
 
+    def clear_icon_cache(self):
+        """Drop cached planet pixmaps so they are rebuilt at the current UI
+        saturation (SPEC-SAT-001 WI-4). Called by the saturation-change handler
+        before the theme fan-out re-renders."""
+        if hasattr(self, 'planet_icons'):
+            self.planet_icons.clear()
+
     def clear_chart(self):
         """Clear the wheel display."""
         self._has_chart = False
-        self.planets_data = None
         self._chart = None
         self._planets = None
         self._cusps = None
+        # The memoised spread holds the Chart strongly. Dropping `_chart` alone
+        # would leave the whole object graph alive until the NEXT chart loads —
+        # which, for a view kept around between charts, is exactly the window a
+        # "clear" is supposed to close.
+        self._cot_forget_faces()
         self._varga_code = None
         self._transit_planets = None
         self._transit_cusps = None
@@ -2738,6 +3084,8 @@ class WheelView(QGraphicsView):
         self._outer_rim_chart = None
         self.custom_outer_rim_data = None
         self.show_custom_outer_rim = False
+        self._rim_owner = None
+        self._varga_rim_code = None
         self.rotation_offset = 0.0
         self._retinue_sectors = {}
         self._house_number_items = {}

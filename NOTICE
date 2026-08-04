@@ -1,36 +1,60 @@
-# Varuna360 — Licensing Notice
+# Varuna360 Licensing Notice
 
-## Open Core Licensing Model
+## The whole project is AGPL-3.0
 
-This software uses an open core licensing model with two components:
-
-### 1. Varuna360 Core (AGPL-3.0)
-
-The core application — chart rendering, calculation engine, panels,
-widgets, managers, and tools — is licensed under the GNU Affero
-General Public License version 3.0.
+Varuna360 is free software. Every part of the application is licensed
+under the GNU Affero General Public License version 3.0: the chart
+rendering, the calculation engine, the panels, the widgets, the
+managers, the command line tools, and the Pro edition alike.
 
 See the LICENSE file for the full text.
 
 You may use, modify, and redistribute this code under the AGPL-3.0
-terms. If you distribute modified versions, you must also make your
-source code available under AGPL-3.0.
+terms. If you distribute modified versions, or run them over a network
+as a service, you must make your source code available under AGPL-3.0.
 
-### 2. Varuna360 Pro (Proprietary)
+### Varuna360 Core and Varuna360 Pro
 
-The AI interpretation tools (AI_tools/) are proprietary software
-distributed as compiled binary modules. These are NOT covered by
-the AGPL-3.0 license. All rights reserved.
+Core and Pro are two editions of the same AGPL-3.0 program, not two
+licensing regimes.
 
-Varuna360 Pro requires a subscription: https://360heartsinthesky.com
+**Varuna360 Core** is published as source on GitHub and is free to
+clone, build, and run.
 
-### Commercial Exception
+**Varuna360 Pro** is the larger paid edition: more screens, more
+research tooling, more calculation surfaces. Pro is not proprietary
+software and it is not distributed as closed binaries. Pro subscribers
+receive the corresponding source of the Pro edition under AGPL-3.0,
+exactly as the license requires.
 
-Lorris Turpin, as sole copyright holder of both the Core and Pro
-codebases, grants himself a perpetual commercial license to use
-AGPL-3.0 Core code in proprietary derivative works (Varuna360 Pro).
-This exception applies exclusively to Lorris Turpin and
-360 Hearts in the Sky.
+The subscription pays for the work, the packaging, the updates, and
+the support. It does not buy a different license.
+
+Varuna360 Pro subscriptions: https://360heartsinthesky.com
+
+### What is not distributed
+
+The private authoring material behind the project is not part of the
+licensed software and is not shipped with it: design specifications,
+implementation plans, research notes, course material, and unpublished
+astrological writing. None of that is program source code, so
+withholding it takes nothing away from the AGPL-3.0 rights granted
+over the software itself.
+
+### Reserved rights of the copyright holder
+
+Lorris Turpin is the sole copyright holder of the Varuna360 codebase,
+excluding the third-party components listed below. As sole copyright
+holder he retains the right to license his own code to third parties
+under other terms, including commercial terms, in addition to the
+AGPL-3.0 grant made here.
+
+This reservation changes nothing for anyone who receives the software:
+the copy you have is AGPL-3.0 and stays AGPL-3.0.
+
+Contributions from third parties remain under AGPL-3.0 and are not
+covered by this reservation unless separately agreed with the
+contributor.
 
 ## Third-Party Components
 

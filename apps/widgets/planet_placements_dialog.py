@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 # Copyright (C) 2026 Lorris Turpin / 360 Hearts in the Sky
 # Licensed under AGPL-3.0 — see LICENSE file for details.
-# Commercial exception: see NOTICE file.
 """
 Planet Placements Dialog
 Shows all planetary positions, nakshatras, and current Vimshottari dasha.
@@ -40,7 +39,7 @@ class PlanetPlacementsDialog(QDialog):
     def __init__(self, parent=None, aditya_mode="aditya",
                  chart_data=None, person_name="Unknown", use_western_names=False,
                  chart=None, nakshatra_ayanamsa_id=100,
-                 current_dasha_chain=None, cot_planet_order="vedic"):
+                 current_dasha_chain=None, cot_planet_order="solar_system"):
         super().__init__(parent)
         self._chart = chart
         self.aditya_mode = aditya_mode
@@ -234,7 +233,10 @@ class PlanetPlacementsDialog(QDialog):
         layout.addWidget(self.dasha_group)
 
         # === CARDS OF TRUTH ===
-        order_label = "vedic" if self._cot_order == "vedic" else "solar system"
+        # ONE label table (SPEC-COT-001 D-15), so this dialog can never name
+        # the order differently from the chart views or the Settings combo.
+        from apps.widgets.cot_index_item import ORDER_LABELS
+        order_label = ORDER_LABELS.get(self._cot_order, self._cot_order).lower()
         cot_group = QGroupBox(f"Cards of Truth ({order_label} order)")
         cot_layout = QVBoxLayout(cot_group)
 
@@ -294,6 +296,11 @@ class PlanetPlacementsDialog(QDialog):
         month = tj.usrmonth()
         day = tj.usrday()
         hour_frac = tj.usrhour()
+        # SPEC-CAL-001: DISPLAY-ONLY. This birth-date label feeds no civil->JD
+        # path, so it follows display.calendar_convention. usrX fields are
+        # astronomical (Julian pre-1582); re-express for rendering only.
+        from core.time_utils import display_civil_date
+        year, month, day = display_civil_date(year, month, day)
         hour_int = int(hour_frac)
         minute_int = int((hour_frac - hour_int) * 60)
 
@@ -418,7 +425,9 @@ class PlanetPlacementsDialog(QDialog):
             return
 
         from libaditya.cards.cards_constants import planet_order
-        order = planet_order.get(self._cot_order, planet_order["vedic"])
+        # SPEC-COT-001 D-5: solar_system is the Kala-verified order, so it is
+        # also the right fallback for an unrecognised value.
+        order = planet_order.get(self._cot_order, planet_order["solar_system"])
 
         self.cot_table.setRowCount(len(order))
 
@@ -484,7 +493,14 @@ class PlanetPlacementsDialog(QDialog):
         lines.append(self.dasha_label.text())
 
         lines.append("")
-        lines.append(f"Cards of Truth ({self._cot_order} order):")
+        # The same label the group box shows. Copied text that said "vedic"
+        # while the panel above it said "Week Day" would read as two different
+        # settings — and it is the copied text that leaves the app.
+        from apps.widgets.cot_index_item import ORDER_LABELS
+        lines.append(
+            f"Cards of Truth "
+            f"({ORDER_LABELS.get(self._cot_order, self._cot_order).lower()} "
+            f"order):")
         lines.append(f"{'Position':<12} {'Card':<8} {'Planets'}")
         lines.append("-" * 50)
         for row in range(self.cot_table.rowCount()):

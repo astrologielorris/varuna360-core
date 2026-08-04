@@ -1,6 +1,5 @@
 # Copyright (C) 2026 Lorris Turpin / 360 Hearts in the Sky
 # Licensed under AGPL-3.0 — see LICENSE file for details.
-# Commercial exception: see NOTICE file.
 """
 Birth Chart Calculator — formatting utilities and libaditya bridge dispatch.
 
@@ -410,7 +409,7 @@ def get_planetary_summary(data):
 
     return summary
 
-def get_first_new_moon_after_ingress(year, ingress_degree=300, latitude=None, longitude=None, timezone='UTC'):
+def get_first_new_moon_after_ingress(year, ingress_degree=300, latitude=None, longitude=None, timezone='UTC', mode='aditya'):
     """
     Calculate the first new moon (Sun-Moon conjunction) after Sun enters a specific degree.
 
@@ -427,6 +426,8 @@ def get_first_new_moon_after_ingress(year, ingress_degree=300, latitude=None, lo
         latitude (float): Observer's latitude (optional, for reference)
         longitude (float): Observer's longitude (optional, for reference)
         timezone (str): IANA timezone for output (default 'UTC')
+        mode (str): zodiac mode for the displayed positions
+            ("aditya" | "tropical_classic" | "sidereal", default "aditya")
 
     Returns:
         dict: {
@@ -525,7 +526,7 @@ def get_first_new_moon_after_ingress(year, ingress_degree=300, latitude=None, lo
     second = int(second_frac)
 
     from core.chart_factory import build_chart_from_params
-    _nm_chart = build_chart_from_params(jd=newmoon_jd, lat=0.0, lon=0.0, mode='zodiac', ayanamsa=98)
+    _nm_chart = build_chart_from_params(jd=newmoon_jd, lat=0.0, lon=0.0, mode=mode, ayanamsa=98)
     _nm_planets = _nm_chart.rashi().planets()
     sun_position_display = _nm_planets['Sun'].ecliptic_longitude()
     moon_position_display = _nm_planets['Moon'].ecliptic_longitude()
@@ -550,7 +551,7 @@ def get_first_new_moon_after_ingress(year, ingress_degree=300, latitude=None, lo
         'ingress_degree': ingress_degree
     }
 
-def get_chinese_new_year(year, latitude=None, longitude=None, timezone='UTC'):
+def get_chinese_new_year(year, latitude=None, longitude=None, timezone='UTC', mode='aditya'):
     """
     Calculate the exact moment of the Chinese New Year for a given Gregorian year.
 
@@ -566,7 +567,7 @@ def get_chinese_new_year(year, latitude=None, longitude=None, timezone='UTC'):
     Returns:
         Same as get_first_new_moon_after_ingress()
     """
-    return get_first_new_moon_after_ingress(year, 300, latitude, longitude, timezone)
+    return get_first_new_moon_after_ingress(year, 300, latitude, longitude, timezone, mode=mode)
 
 def get_chinese_new_year_equatorial(year, latitude=None, longitude=None, timezone='UTC'):
     """

@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 # Copyright (C) 2026 Lorris Turpin / 360 Hearts in the Sky
 # Licensed under AGPL-3.0 — see LICENSE file for details.
-# Commercial exception: see NOTICE file.
 """
 Info Panels (Karakas + Strength + Aspects)
 Right-side stacked panels showing karaka assignments, planetary strengths, and aspects
@@ -9,19 +8,59 @@ Right-side stacked panels showing karaka assignments, planetary strengths, and a
 Extracted from core_gui_qt.py for modularity
 """
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QListWidget, QTableWidget,
-    QTableWidgetItem, QHeaderView, QStackedWidget, QPushButton, QTextEdit,
-    QTextBrowser
+    QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QListWidget,
+    QTableWidget, QTableWidgetItem, QHeaderView, QStackedWidget, QPushButton,
+    QTextEdit, QTextBrowser
 )
 from PySide6.QtCore import Qt, QObject, QEvent, QSize
 from PySide6.QtGui import QIcon
 
 # Import centralized theme
 from ui.qt_theme import (
+    elevation_color, elevation_divider, DIVIDER_ALPHA_MATRIX,
     BG, SURFACE, TEXT_PRIMARY, FONT_MONO,
     ACCENTS, get_header_style, get_panel_style, get_frame_style,
     get_theme_colors, scaled_px, scaled_area_px
 )
+
+def avastha_compact_table_style():
+    """Avastha-specific table style (SPEC-AVA-001 rev3 display fix).
+
+    Differs from the shared aspects style by ZERO horizontal item padding and
+    1px header-section padding: 5-char dignity diagonals ("MK105"/"EX120" =
+    36px at the default 11px tables font) sit right at the ~44px stretch
+    column's edge and elide with the normal 2px padding.
+
+    Called by BOTH the construction site and core_gui_qt._refresh_panel_styles
+    so a live theme/font switch cannot drift from boot (one string, one source).
+    """
+    theme = get_theme_colors()
+    return f"""
+        QTableWidget {{
+            background-color: {theme["secondary_dark"]};
+            border: none;
+            font-size: {scaled_area_px('tables')}px;
+            gridline-color: {elevation_divider(DIVIDER_ALPHA_MATRIX)};
+        }}
+        QTableWidget::item {{
+            background-color: transparent;
+            padding: 2px 0px;
+        }}
+        QTableWidget::item:selected {{
+            background-color: {theme["primary"]};
+            color: {theme["primary_text"]};
+        }}
+        QHeaderView::section {{
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 {elevation_color(2)}, stop:1 {elevation_color(1)});
+            color: {theme["secondary_text"]};
+            border: 1px solid {theme["secondary_light"]};
+            padding: 2px 1px;
+            font-size: {scaled_area_px('table_headers')}px;
+            font-weight: bold;
+        }}
+    """ + _THIN_SCROLLBAR_CSS
+
 
 # Import highlight delegates
 from apps.delegates import KarakaHighlightDelegate, StrengthHighlightDelegate, AspectHighlightDelegate, AvasthaHighlightDelegate, TajikaHighlightDelegate, RetinueColorDelegate
@@ -32,8 +71,32 @@ from apps.widgets.info_panel_dialog import open_panel_dialog
 # SPEC-SET-002 Phase 5: persist sub-panel tab selections (respects lock)
 from managers.settings_manager import get_settings
 
-# Panel width constant
-INFO_PANEL_WIDTH = 380  # Increased for table format with 3 columns
+# Panel width (set dynamically at runtime by create_right_panels)
+INFO_PANEL_WIDTH = 380
+
+
+def info_panel_width():
+    """Panel width scaled to screen resolution, minimum 380px."""
+    screen = QApplication.primaryScreen()
+    if screen is None:
+        return 380
+    w = screen.availableGeometry().width()
+    return max(380, min(480, int(w * 0.15)))
+
+_THIN_SCROLLBAR_CSS = """
+    QScrollBar:vertical {
+        width: 4px;
+        background: transparent;
+    }
+    QScrollBar::handle:vertical {
+        background: rgba(128, 128, 128, 0.4);
+        border-radius: 2px;
+        min-height: 20px;
+    }
+    QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+        height: 0px;
+    }
+"""
 
 
 class _PanelDoubleClickFilter(QObject):
@@ -61,9 +124,86 @@ def _bind_panel_popup(widget, callback):
     widget._panel_popup_filter = event_filter
 
 
+def _on_avastha_retinue_click(gui, row, col):
+    """Open the retinue being description for a clicked SIGN/HORA/TRIMSAMSA cell.
+
+    SPEC-AVA-001 §12.5 / D10: reuse the existing SectorInfoDialog description
+    surface. Only the three retinue rows are actionable; matrix/TOTAL/POS/NEG
+    clicks are ignored. All resolution lives in the controller.
+    """
+    ctrl = getattr(gui, 'avastha_controller', None)
+    if ctrl is not None and hasattr(ctrl, 'open_retinue_dialog'):
+        ctrl.open_retinue_dialog(row, col)
+
+
+def _table_row_height(area_id='tables', padding=8, min_h=18):
+    """Row height = effective font pixel size + padding, with a floor."""
+    return max(min_h, scaled_area_px(area_id) + padding)
+
+
+def _column_header_height():
+    """Height for table column headers, scaled to table_headers font size."""
+    return max(20, scaled_area_px('table_headers') + 8)
+
+
+def _stack_min_height(visible_rows, area_id='tables', padding=8,
+                      min_h=18, header_h=32):
+    """Minimum height = header + (visible_rows * row_height)."""
+    row_h = _table_row_height(area_id, padding, min_h)
+    return header_h + (visible_rows * row_h)
+
+
 def _avastha_row_height():
     """Row height for the Avastha table, scaled to table font size."""
     return max(18, scaled_area_px('tables') + 8)
+
+
+def relayout_info_panels(gui):
+    """Recalculate all structural dimensions after font/scale change."""
+    tables = [
+        (gui.karakas_table, 'tables', 19, 28, 5),
+        (gui.hora_table, 'tables', 11, 20, 6),
+        (gui.trimsamsa_table, 'tables', 11, 20, 6),
+        (gui.strength_table, 'tables', 19, 28, 5),
+        (gui.elements_table, 'tables', 44, 50, 4),
+        (gui.modality_table, 'tables', 64, 70, 3),
+        (gui.dignities_table, 'tables', 13, 22, 8),
+        (gui.aspects_table, 'tables', 15, 24, 5),
+        (gui.avastha_table, 'tables', 8, 18, 7),
+        (gui.tajika_matrix_table, 'tables', 11, 20, 6),
+        (gui.tajika_rel_table, 'tables', 13, 22, 5),
+    ]
+
+    col_hdr_h = _column_header_height()
+    for table, area, pad, min_h, min_vis in tables:
+        if table is not None:
+            row_h = _table_row_height(area, pad, min_h)
+            table.verticalHeader().setDefaultSectionSize(row_h)
+            table.horizontalHeader().setFixedHeight(col_hdr_h)
+            table.setMinimumHeight(min_vis * row_h)
+            table.updateGeometry()
+
+    base_min = max(80, scaled_area_px('tables') * 8)
+    for widget_name in ['shame_display', 'tajika_placeholder',
+                        'exchange_display', 'nabhasa_display']:
+        widget = getattr(gui, widget_name, None)
+        if widget is not None:
+            widget.setMinimumHeight(base_min)
+
+    if hasattr(gui, 'house_graph_bars') and gui.house_graph_bars is not None:
+        gui.house_graph_bars.updateGeometry()
+        gui.house_graph_bars.update()
+
+    for stack in [gui.karakas_stack, gui.strength_elements_stack,
+                  gui.aspects_stack]:
+        if stack is not None:
+            stack.updateGeometry()
+
+    header_h = max(28, scaled_area_px('panel_titles') + 8)
+    for header in [gui.karakas_header, gui.strength_header,
+                   gui.aspects_header]:
+        if header is not None:
+            header.setFixedHeight(header_h)
 
 
 def create_right_panels(gui):
@@ -76,6 +216,9 @@ def create_right_panels(gui):
     Returns:
         QWidget: The combined panel widget
     """
+    global INFO_PANEL_WIDTH
+    INFO_PANEL_WIDTH = info_panel_width()
+
     # Get theme colors for dynamic theming
     theme = get_theme_colors()
 
@@ -84,7 +227,7 @@ def create_right_panels(gui):
     panel.setStyleSheet(get_panel_style())
 
     layout = QVBoxLayout(panel)
-    layout.setSpacing(5)
+    layout.setSpacing(2)
     layout.setContentsMargins(5, 5, 5, 5)
 
     # === KARAKAS / HORA / TRIMSAMSA PANEL (with inline tabs) ===
@@ -97,7 +240,7 @@ def create_right_panels(gui):
 
     # Header with inline tab buttons (theme-aware colors)
     karakas_header = QWidget()
-    karakas_header.setFixedHeight(32)
+    karakas_header.setFixedHeight(max(28, scaled_area_px('panel_titles') + 8))
     gui.karakas_header = karakas_header
     karakas_header.setStyleSheet(f"""
         QWidget {{
@@ -208,25 +351,26 @@ def create_right_panels(gui):
 
     # === STACKED WIDGET for Karakas/Hora/Trimsamsa ===
     gui.karakas_stack = QStackedWidget()
-    gui.karakas_stack.setMinimumHeight(220)
+    gui.karakas_stack.setMinimumHeight(_stack_min_height(5, 'tables', 19, 28))
 
     # --- Shared table style ---
     _table_style = f"""
         QTableWidget {{
             background-color: {theme["secondary_dark"]};
             border: none; font-size: {scaled_area_px('tables')}px;
-            gridline-color: {theme["secondary_light"]};
+            gridline-color: {elevation_divider(DIVIDER_ALPHA_MATRIX)};
         }}
         QTableWidget::item {{ background-color: transparent; padding: 3px; }}
         QTableWidget::item:selected {{
             background-color: {theme["primary"]}; color: {theme["primary_text"]};
         }}
         QHeaderView::section {{
-            background-color: {theme["secondary"]}; color: {theme["secondary_text"]};
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 {elevation_color(2)}, stop:1 {elevation_color(1)}); color: {theme["secondary_text"]};
             border: 1px solid {theme["secondary_light"]};
             padding: 4px; font-size: {scaled_area_px('table_headers')}px; font-weight: bold;
         }}
-    """
+    """ + _THIN_SCROLLBAR_CSS
 
     # Retinue table style — NO ::item rules so setBackground() works.
     # Qt's stylesheet engine takes total ownership of item painting when
@@ -236,30 +380,31 @@ def create_right_panels(gui):
         QTableWidget {{
             background-color: {theme["secondary_dark"]};
             border: none; font-size: {scaled_area_px('tables')}px;
-            gridline-color: {theme["secondary_light"]};
+            gridline-color: {elevation_divider(DIVIDER_ALPHA_MATRIX)};
         }}
         QHeaderView::section {{
-            background-color: {theme["secondary"]}; color: {theme["secondary_text"]};
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 {elevation_color(2)}, stop:1 {elevation_color(1)}); color: {theme["secondary_text"]};
             border: 1px solid {theme["secondary_light"]};
             padding: 4px; font-size: {scaled_area_px('table_headers')}px; font-weight: bold;
         }}
-    """
+    """ + _THIN_SCROLLBAR_CSS
 
     # --- Page 0: Karakas Table (existing, unchanged) ---
     gui.karakas_table = QTableWidget()
     gui.karakas_table.setColumnCount(3)
     gui.karakas_table.setRowCount(7)
     gui.karakas_table.setHorizontalHeaderLabels(["Karaka", "Planet", "Cusp Lord"])
-    gui.karakas_table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+    gui.karakas_table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
     gui.karakas_table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
     gui.karakas_table.verticalHeader().setVisible(False)
     gui.karakas_table.setShowGrid(True)
     gui.karakas_table.setStyleSheet(_table_style)
-    gui.karakas_table.setMinimumSize(INFO_PANEL_WIDTH - 20, 240)
+    gui.karakas_table.setMinimumSize(INFO_PANEL_WIDTH - 20, _stack_min_height(5, 'tables', 19, 28))
     gui.karakas_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
     gui.karakas_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
     gui.karakas_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-    gui.karakas_table.verticalHeader().setDefaultSectionSize(30)
+    gui.karakas_table.verticalHeader().setDefaultSectionSize(_table_row_height('tables', 19, 28))
 
     gui.karakas_delegate = KarakaHighlightDelegate(parent=gui.karakas_table)
     gui.karakas_table.setItemDelegate(gui.karakas_delegate)
@@ -290,11 +435,11 @@ def create_right_panels(gui):
     gui.hora_table.verticalHeader().setVisible(False)
     gui.hora_table.setShowGrid(True)
     gui.hora_table.setStyleSheet(_retinue_table_style)
-    gui.hora_table.setMinimumSize(INFO_PANEL_WIDTH - 20, 240)
+    gui.hora_table.setMinimumSize(INFO_PANEL_WIDTH - 20, _stack_min_height(6, 'tables', 11, 20))
     gui.hora_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
     gui.hora_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
     gui.hora_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-    gui.hora_table.verticalHeader().setDefaultSectionSize(22)
+    gui.hora_table.verticalHeader().setDefaultSectionSize(_table_row_height('tables', 11, 20))
 
     gui.hora_delegate = RetinueColorDelegate(parent=gui.hora_table)
     gui.hora_table.setItemDelegate(gui.hora_delegate)
@@ -312,12 +457,12 @@ def create_right_panels(gui):
     gui.trimsamsa_table.verticalHeader().setVisible(False)
     gui.trimsamsa_table.setShowGrid(True)
     gui.trimsamsa_table.setStyleSheet(_retinue_table_style)
-    gui.trimsamsa_table.setMinimumSize(INFO_PANEL_WIDTH - 20, 240)
+    gui.trimsamsa_table.setMinimumSize(INFO_PANEL_WIDTH - 20, _stack_min_height(6, 'tables', 11, 20))
     gui.trimsamsa_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
     gui.trimsamsa_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
     gui.trimsamsa_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
     gui.trimsamsa_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
-    gui.trimsamsa_table.verticalHeader().setDefaultSectionSize(22)
+    gui.trimsamsa_table.verticalHeader().setDefaultSectionSize(_table_row_height('tables', 11, 20))
 
     gui.trimsamsa_delegate = RetinueColorDelegate(parent=gui.trimsamsa_table)
     gui.trimsamsa_table.setItemDelegate(gui.trimsamsa_delegate)
@@ -331,7 +476,7 @@ def create_right_panels(gui):
     # View 0: House Graph (default)
     from apps.widgets.panel_controllers.house_graph_controller import _HouseBarWidget
     gui.house_graph_bars = _HouseBarWidget(gui_ref=gui)
-    gui.house_graph_bars.setMinimumSize(INFO_PANEL_WIDTH - 20, 240)
+    gui.house_graph_bars.setMinimumSize(INFO_PANEL_WIDTH - 20, _stack_min_height(8, 'tables', 4, 16))
     gui.condition_inner_stack.addWidget(gui.house_graph_bars)  # View 0
 
     # View 1: Planetary Condition compact (behind arrow)
@@ -412,8 +557,8 @@ def create_right_panels(gui):
     gui._toggle_enriched = _toggle_enriched
 
     # Add small vertical space below
-    karakas_layout.addSpacing(5)
-    layout.addWidget(karakas_frame, stretch=3)
+    karakas_layout.addSpacing(2)
+    layout.addWidget(karakas_frame, stretch=1)
 
     # === STRENGTH / ELEMENTS PANEL (with inline tabs) ===
     strength_frame = QWidget()
@@ -425,7 +570,7 @@ def create_right_panels(gui):
 
     # Header with inline tab buttons (theme-aware colors)
     strength_header = QWidget()
-    strength_header.setFixedHeight(32)
+    strength_header.setFixedHeight(max(28, scaled_area_px('panel_titles') + 8))
     gui.strength_header = strength_header
     strength_header.setStyleSheet(f"""
         QWidget {{
@@ -551,19 +696,20 @@ def create_right_panels(gui):
 
     # === STACKED WIDGET for Strength/Elements tables ===
     gui.strength_elements_stack = QStackedWidget()
-    gui.strength_elements_stack.setMinimumHeight(200)
+    gui.strength_elements_stack.setMinimumHeight(_stack_min_height(5, 'tables', 19, 28))
 
     # --- Page 0: Strength Table ---
     gui.strength_table = QTableWidget()
-    gui.strength_table.setColumnCount(4)
+    gui.strength_table.setColumnCount(5)
     gui.strength_table.setRowCount(7)
-    gui.strength_table.setHorizontalHeaderLabels(["Planet", "Digbala", "Uccha", "Chesta"])
+    gui.strength_table.setHorizontalHeaderLabels(["Planet", "Digbala", "Uccha", "Chesta", "DUC Bala"])
     # Tooltips on column headers explaining the Sanskrit terms
-    for col, tip in [(1, "Direction"), (2, "Energy"), (3, "Confidence")]:
+    for col, tip in [(1, "Direction"), (2, "Energy"), (3, "Confidence"),
+                     (4, "Combined strength: (Digbala + Uccha + Chesta) / 3")]:
         item = gui.strength_table.horizontalHeaderItem(col)
         if item:
             item.setToolTip(tip)
-    gui.strength_table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+    gui.strength_table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
     gui.strength_table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
     gui.strength_table.verticalHeader().setVisible(False)
     gui.strength_table.setShowGrid(True)
@@ -572,7 +718,7 @@ def create_right_panels(gui):
             background-color: {theme["secondary_dark"]};
             border: none;
             font-size: {scaled_area_px('tables')}px;
-            gridline-color: {theme["secondary_light"]};
+            gridline-color: {elevation_divider(DIVIDER_ALPHA_MATRIX)};
         }}
         QTableWidget::item {{
             background-color: transparent;
@@ -583,22 +729,23 @@ def create_right_panels(gui):
             color: {theme["primary_text"]};
         }}
         QHeaderView::section {{
-            background-color: {theme["secondary"]};
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 {elevation_color(2)}, stop:1 {elevation_color(1)});
             color: {theme["secondary_text"]};
             border: 1px solid {theme["secondary_light"]};
             padding: 4px;
             font-size: {scaled_area_px('table_headers')}px;
             font-weight: bold;
         }}
-    """
+    """ + _THIN_SCROLLBAR_CSS
     gui.strength_table.setStyleSheet(table_style)
     gui.strength_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-    gui.strength_table.verticalHeader().setDefaultSectionSize(30)
+    gui.strength_table.verticalHeader().setDefaultSectionSize(_table_row_height('tables', 19, 28))
 
     # Apply highlight delegate for high-strength planets
     gui.strength_delegate = StrengthHighlightDelegate(parent=gui.strength_table)
     gui.strength_table.setItemDelegate(gui.strength_delegate)
-    gui.strength_table.setMinimumSize(INFO_PANEL_WIDTH - 20, 220)
+    gui.strength_table.setMinimumSize(INFO_PANEL_WIDTH - 20, _stack_min_height(5, 'tables', 19, 28))
 
     _bind_panel_popup(gui.strength_table, lambda: open_panel_dialog(gui, "strength"))
     gui.strength_elements_stack.addWidget(gui.strength_table)  # Index 0
@@ -608,7 +755,7 @@ def create_right_panels(gui):
     gui.elements_table.setColumnCount(3)
     gui.elements_table.setRowCount(4)  # Fire, Earth, Air, Water
     gui.elements_table.setHorizontalHeaderLabels(["Element", "%", "Planets"])
-    gui.elements_table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+    gui.elements_table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
     gui.elements_table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
     gui.elements_table.verticalHeader().setVisible(False)
     gui.elements_table.setShowGrid(True)
@@ -616,8 +763,8 @@ def create_right_panels(gui):
     gui.elements_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
     gui.elements_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
     gui.elements_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
-    gui.elements_table.verticalHeader().setDefaultSectionSize(55)  # Taller rows for planet lists
-    gui.elements_table.setMinimumSize(INFO_PANEL_WIDTH - 20, 220)
+    gui.elements_table.verticalHeader().setDefaultSectionSize(_table_row_height('tables', 44, 50))
+    gui.elements_table.setMinimumSize(INFO_PANEL_WIDTH - 20, _stack_min_height(4, 'tables', 44, 50))
     gui.elements_delegate = StrengthHighlightDelegate(parent=gui.elements_table)
     gui.elements_table.setItemDelegate(gui.elements_delegate)
 
@@ -629,7 +776,7 @@ def create_right_panels(gui):
     gui.modality_table.setColumnCount(3)
     gui.modality_table.setRowCount(3)  # Moveable, Fixed, Dual
     gui.modality_table.setHorizontalHeaderLabels(["Modality", "%", "Planets"])
-    gui.modality_table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+    gui.modality_table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
     gui.modality_table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
     gui.modality_table.verticalHeader().setVisible(False)
     gui.modality_table.setShowGrid(True)
@@ -637,8 +784,8 @@ def create_right_panels(gui):
     gui.modality_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
     gui.modality_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
     gui.modality_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
-    gui.modality_table.verticalHeader().setDefaultSectionSize(75)  # Taller rows for planet lists + descriptions
-    gui.modality_table.setMinimumSize(INFO_PANEL_WIDTH - 20, 220)
+    gui.modality_table.verticalHeader().setDefaultSectionSize(_table_row_height('tables', 64, 70))
+    gui.modality_table.setMinimumSize(INFO_PANEL_WIDTH - 20, _stack_min_height(3, 'tables', 64, 70))
     gui.modality_delegate = StrengthHighlightDelegate(parent=gui.modality_table)
     gui.modality_table.setItemDelegate(gui.modality_delegate)
 
@@ -656,8 +803,8 @@ def create_right_panels(gui):
     gui.dignities_table.setShowGrid(True)
     gui.dignities_table.setStyleSheet(table_style)
     gui.dignities_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-    gui.dignities_table.verticalHeader().setDefaultSectionSize(24)
-    gui.dignities_table.setMinimumSize(INFO_PANEL_WIDTH - 20, 220)
+    gui.dignities_table.verticalHeader().setDefaultSectionSize(_table_row_height('tables', 13, 22))
+    gui.dignities_table.setMinimumSize(INFO_PANEL_WIDTH - 20, _stack_min_height(8, 'tables', 13, 22))
     from apps.widgets.panel_controllers.dignities_controller import DignityColorDelegate
     gui.dignities_table.setItemDelegate(DignityColorDelegate(parent=gui.dignities_table))
 
@@ -712,10 +859,10 @@ def create_right_panels(gui):
     def _toggle_strength_language():
         gui._strength_english_mode = not gui._strength_english_mode
         if gui._strength_english_mode:
-            gui.strength_table.setHorizontalHeaderLabels(["Planet", "Direction", "Energy", "Confidence"])
+            gui.strength_table.setHorizontalHeaderLabels(["Planet", "Direction", "Energy", "Confidence", "DUC Bala"])
             gui.strength_lang_btn.setToolTip("Switch to Sanskrit terms (Digbala / Uccha / Chesta)")
         else:
-            gui.strength_table.setHorizontalHeaderLabels(["Planet", "Digbala", "Uccha", "Chesta"])
+            gui.strength_table.setHorizontalHeaderLabels(["Planet", "Digbala", "Uccha", "Chesta", "DUC Bala"])
             gui.strength_lang_btn.setToolTip("Switch to English terms (Direction / Energy / Confidence)")
         for col, (sanskrit, english) in enumerate(
             [("Digbala", "Direction"), ("Uccha Bala", "Energy"), ("Chesta Bala", "Confidence")], start=1
@@ -723,6 +870,11 @@ def create_right_panels(gui):
             item = gui.strength_table.horizontalHeaderItem(col)
             if item:
                 item.setToolTip(english if not gui._strength_english_mode else sanskrit)
+        # DUC Bala is a proper name (Dig-Uccha-Chesta), same in both languages.
+        # setHorizontalHeaderLabels rebuilt the header items, so re-apply its tooltip.
+        duc_item = gui.strength_table.horizontalHeaderItem(4)
+        if duc_item:
+            duc_item.setToolTip("Combined strength: (Digbala + Uccha + Chesta) / 3")
 
     def _toggle_modality_yoga():
         ctrl = getattr(gui, "modality_controller", None)
@@ -771,8 +923,8 @@ def create_right_panels(gui):
     gui.switch_to_dignities_tab = switch_to_dignities
 
     # Add small vertical space below
-    strength_layout.addSpacing(5)
-    layout.addWidget(strength_frame, stretch=2)
+    strength_layout.addSpacing(2)
+    layout.addWidget(strength_frame, stretch=1)
 
     # === ASPECTS / AVASTHA / SHAME PANEL (with inline tabs) ===
     aspects_frame = QWidget()
@@ -784,7 +936,7 @@ def create_right_panels(gui):
 
     # Header with inline tab buttons (same pattern as Strength panel)
     aspects_header = QWidget()
-    aspects_header.setFixedHeight(32)
+    aspects_header.setFixedHeight(max(28, scaled_area_px('panel_titles') + 8))
     gui.aspects_header = aspects_header
     aspects_header.setStyleSheet(f"""
         QWidget {{
@@ -826,6 +978,8 @@ def create_right_panels(gui):
     gui.avastha_tab_btn = QPushButton("Avastha")
     gui.avastha_tab_btn.setStyleSheet(tab_inactive_style)
     gui.avastha_tab_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+    gui.avastha_tab_btn.setToolTip(
+        "Avastha — click again to refine by strength: Duc / Dig / Uccha / Chesta")
     aspects_header_layout.addWidget(gui.avastha_tab_btn)
 
     # Separator
@@ -850,13 +1004,30 @@ def create_right_panels(gui):
     gui.exchange_tab_btn.setCursor(Qt.CursorShape.PointingHandCursor)
     aspects_header_layout.addWidget(gui.exchange_tab_btn)
 
+    # Separator + "Nabhasa" tab — the 4th TAJIKA-row tab, to the right of the
+    # Tajika "Yogas" (annual) tab, filling the empty space on that row. Hidden in
+    # Vedic mode (which keeps its four tabs uncramped). The Nabhasa panel itself is
+    # a natal calculation (aspects_stack Index 7); it is placed on the Tajika row
+    # only because that row had the spare width. Distinct from the Tajika "Yogas"
+    # feature (annual yogas, Index 5) which is untouched.
+    gui._asp_sep4 = QLabel("|")
+    gui._asp_sep4.setStyleSheet(f"QLabel {{ color: {theme['primary_text']}; font-size: {scaled_area_px('panel_titles')}px; background: transparent; opacity: 0.5; }}")
+    aspects_header_layout.addWidget(gui._asp_sep4)
+    gui.nabhasa_tab_btn = QPushButton("Nabhasa")
+    gui.nabhasa_tab_btn.setStyleSheet(tab_inactive_style)
+    gui.nabhasa_tab_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+    aspects_header_layout.addWidget(gui.nabhasa_tab_btn)
+    # Vedic is the default mode -> the Nabhasa tab starts hidden (Tajika-only).
+    gui._asp_sep4.setVisible(False)
+    gui.nabhasa_tab_btn.setVisible(False)
+
     aspects_header_layout.addWidget(gui.aspects_mode_btn)
     aspects_header_layout.addStretch()
     aspects_layout.addWidget(aspects_header)
 
     # === STACKED WIDGET for Aspects/Avastha/Shame ===
     gui.aspects_stack = QStackedWidget()
-    gui.aspects_stack.setMinimumHeight(200)
+    gui.aspects_stack.setMinimumHeight(_stack_min_height(5, 'tables', 15, 24))
 
     # Common table style for aspects section
     aspects_table_style = f"""
@@ -864,7 +1035,7 @@ def create_right_panels(gui):
             background-color: {theme["secondary_dark"]};
             border: none;
             font-size: {scaled_area_px('tables')}px;
-            gridline-color: {theme["secondary_light"]};
+            gridline-color: {elevation_divider(DIVIDER_ALPHA_MATRIX)};
         }}
         QTableWidget::item {{
             background-color: transparent;
@@ -875,14 +1046,15 @@ def create_right_panels(gui):
             color: {theme["primary_text"]};
         }}
         QHeaderView::section {{
-            background-color: {theme["secondary"]};
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 {elevation_color(2)}, stop:1 {elevation_color(1)});
             color: {theme["secondary_text"]};
             border: 1px solid {theme["secondary_light"]};
             padding: 2px;
             font-size: {scaled_area_px('table_headers')}px;
             font-weight: bold;
         }}
-    """
+    """ + _THIN_SCROLLBAR_CSS
 
     # --- Page 0: Aspects Table (existing 7x9 matrix, unchanged) ---
     gui.aspects_table = QTableWidget()
@@ -890,46 +1062,75 @@ def create_right_panels(gui):
     gui.aspects_table.setRowCount(7)
     gui.aspects_table.setHorizontalHeaderLabels(["Su", "Mo", "Ma", "Me", "Ju", "Ve", "Sa", "Ra", "Ke"])
     gui.aspects_table.setVerticalHeaderLabels(["☉Su", "☽Mo", "♂Ma*", "☿Me", "♃Ju*", "♀Ve", "♄Sa*"])
-    gui.aspects_table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+    gui.aspects_table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
     gui.aspects_table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
     gui.aspects_table.verticalHeader().setVisible(True)
     gui.aspects_table.setShowGrid(True)
     gui.aspects_table.setStyleSheet(aspects_table_style)
     for col in range(9):
         gui.aspects_table.horizontalHeader().setSectionResizeMode(col, QHeaderView.ResizeMode.Stretch)
-    gui.aspects_table.verticalHeader().setDefaultSectionSize(26)
+    gui.aspects_table.verticalHeader().setDefaultSectionSize(_table_row_height('tables', 15, 24))
     gui.aspects_table.verticalHeader().setMinimumWidth(45)
 
     gui.aspects_delegate = AspectHighlightDelegate(parent=gui.aspects_table)
     gui.aspects_table.setItemDelegate(gui.aspects_delegate)
-    gui.aspects_table.setMinimumSize(INFO_PANEL_WIDTH - 20, 200)
+    gui.aspects_table.setMinimumSize(INFO_PANEL_WIDTH - 20, _stack_min_height(5, 'tables', 15, 24))
 
     _bind_panel_popup(gui.aspects_table, lambda: open_panel_dialog(gui, "aspects"))
     gui.aspects_stack.addWidget(gui.aspects_table)  # Index 0
 
-    # --- Page 1: Avastha Table (7x7 + TOTALS row + SIGN row) ---
+    # --- Page 1: Avastha Table (7x7 + TOTAL/POS/NEG/SIGN/HORA/TRIMSAMSA rows) ---
+    # SPEC-AVA-001 §12.2 (rev4): 13 rows — matrix 0-6, TOTAL 7, POS 8, NEG 9,
+    # SIGN 10, HORA 11, TRIMSAMSA 12.
     gui.avastha_table = QTableWidget()
     gui.avastha_table.setColumnCount(7)
-    gui.avastha_table.setRowCount(9)  # 7 planets + TOTALS + SIGN
+    gui.avastha_table.setRowCount(13)  # 7 planets + TOTAL/POS/NEG + SIGN/HORA/TRIMSAMSA
     gui.avastha_table.setHorizontalHeaderLabels(["Su", "Mo", "Ma", "Me", "Ju", "Ve", "Sa"])
-    gui.avastha_table.setVerticalHeaderLabels(["☉Su", "☽Mo", "♂Ma*", "☿Me", "♃Ju*", "♀Ve", "♄Sa*", "TOTAL", "SIGN"])
-    gui.avastha_table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+    gui.avastha_table.setVerticalHeaderLabels(
+        ["☉Su", "☽Mo", "♂Ma*", "☿Me", "♃Ju*", "♀Ve", "♄Sa*",
+         "TOTAL", "POS", "NEG", "SIGN", "HORA", "TRIM"])
+    gui.avastha_table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
     gui.avastha_table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
     gui.avastha_table.verticalHeader().setVisible(True)
     gui.avastha_table.setShowGrid(True)
-    gui.avastha_table.setStyleSheet(aspects_table_style)
+    gui.avastha_table.setStyleSheet(avastha_compact_table_style())
     for col in range(7):
         gui.avastha_table.horizontalHeader().setSectionResizeMode(col, QHeaderView.ResizeMode.Stretch)
     _av_rh = _avastha_row_height()
     gui.avastha_table.verticalHeader().setDefaultSectionSize(_av_rh)
-    gui.avastha_table.verticalHeader().setMinimumWidth(45)
+    # 40 not 45 (rev3 display fix): "TOTAL" needs 37px + 1px padding; every px
+    # saved here widens the 7 stretch columns for the dignity diagonals.
+    gui.avastha_table.verticalHeader().setMinimumWidth(40)
 
     gui.avastha_delegate = AvasthaHighlightDelegate(parent=gui.avastha_table)
     gui.avastha_table.setItemDelegate(gui.avastha_delegate)
-    gui.avastha_table.setMinimumSize(INFO_PANEL_WIDTH - 20, 9 * _av_rh + _av_rh + 10)
+    # 13 rows (rev4): size the table to lay out every row (matrix + TOTAL/POS/NEG
+    # + SIGN/HORA/TRIMSAMSA); the info panel's own scroll area handles overflow so
+    # the retinue rows are not stranded below an internal table scrollbar.
+    gui.avastha_table.setMinimumSize(INFO_PANEL_WIDTH - 20, _stack_min_height(13, 'tables', 8, 18))
 
     _bind_panel_popup(gui.avastha_table, lambda: open_panel_dialog(gui, "aspects"))
-    gui.aspects_stack.addWidget(gui.avastha_table)  # Index 1
+    # SPEC-AVA-001 §12.5: a single click on a SIGN / HORA / TRIMSAMSA cell opens
+    # the being's Theme/Healthy/Afflicted description (the existing SectorInfoDialog
+    # surface, SPEC-PLANET-PROFILE-001). Delegated to the controller so no business
+    # logic lands here (Rule 4).
+    gui.avastha_table.cellClicked.connect(
+        lambda r, c: _on_avastha_retinue_click(gui, r, c))
+    # Wrap table + legend so the dignity multipliers stay explained on screen
+    # (SPEC-AVA-001 rev3: the fixed EX=60/MK=45/OH=30 values are no longer shown).
+    # The stack page stays Index 1; switch_to_avastha addresses it by index only.
+    _avastha_page = QWidget()
+    _avastha_page_layout = QVBoxLayout(_avastha_page)
+    _avastha_page_layout.setContentsMargins(0, 0, 0, 0)
+    _avastha_page_layout.setSpacing(2)
+    _avastha_page_layout.addWidget(gui.avastha_table)
+    gui.avastha_legend = QLabel(
+        "Diagonal: own strength × dignity (EX ×2, MK ×1.75, OH ×1.5). "
+        "Avastha base 60, refined views use the bala.")
+    gui.avastha_legend.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    gui.avastha_legend.setWordWrap(True)
+    _avastha_page_layout.addWidget(gui.avastha_legend)
+    gui.aspects_stack.addWidget(_avastha_page)  # Index 1
 
     # --- Page 2: Shame Display (rich HTML) ---
     gui.shame_display = QTextEdit()
@@ -943,7 +1144,7 @@ def create_right_panels(gui):
             font-family: monospace;
         }}
     """)
-    gui.shame_display.setMinimumSize(INFO_PANEL_WIDTH - 20, 200)
+    gui.shame_display.setMinimumSize(INFO_PANEL_WIDTH - 20, max(80, scaled_area_px('tables') * 8))
 
     _bind_panel_popup(gui.shame_display, lambda: open_panel_dialog(gui, "aspects"))
     gui.aspects_stack.addWidget(gui.shame_display)  # Index 2
@@ -952,22 +1153,24 @@ def create_right_panels(gui):
     gui.tajika_matrix_table = QTableWidget()
     gui.tajika_matrix_table.setColumnCount(11)
     gui.tajika_matrix_table.setRowCount(11)
-    tajika_headers = ["Lg", "Su", "Mo", "Ma", "Me", "Ju", "Ve", "Sa", "Ur", "Ne", "Pl"]
-    gui.tajika_matrix_table.setHorizontalHeaderLabels(tajika_headers)
-    gui.tajika_matrix_table.setVerticalHeaderLabels(tajika_headers)
-    gui.tajika_matrix_table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+    # Shared header list derived from the engine body order (td-n3h3.13);
+    # never keep a local copy that can drift from the matrix lookups.
+    from apps.widgets.tajika_grid_widget import TAJIKA_HEADERS
+    gui.tajika_matrix_table.setHorizontalHeaderLabels(TAJIKA_HEADERS)
+    gui.tajika_matrix_table.setVerticalHeaderLabels(TAJIKA_HEADERS)
+    gui.tajika_matrix_table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
     gui.tajika_matrix_table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
     gui.tajika_matrix_table.verticalHeader().setVisible(True)
     gui.tajika_matrix_table.setShowGrid(True)
     gui.tajika_matrix_table.setStyleSheet(aspects_table_style)
     for col in range(11):
         gui.tajika_matrix_table.horizontalHeader().setSectionResizeMode(col, QHeaderView.ResizeMode.Stretch)
-    gui.tajika_matrix_table.verticalHeader().setDefaultSectionSize(22)
+    gui.tajika_matrix_table.verticalHeader().setDefaultSectionSize(_table_row_height('tables', 11, 20))
     gui.tajika_matrix_table.verticalHeader().setMinimumWidth(30)
 
     gui.tajika_delegate = TajikaHighlightDelegate(parent=gui.tajika_matrix_table)
     gui.tajika_matrix_table.setItemDelegate(gui.tajika_delegate)
-    gui.tajika_matrix_table.setMinimumSize(INFO_PANEL_WIDTH - 20, 200)
+    gui.tajika_matrix_table.setMinimumSize(INFO_PANEL_WIDTH - 20, _stack_min_height(6, 'tables', 11, 20))
 
     _bind_panel_popup(gui.tajika_matrix_table, lambda: open_panel_dialog(gui, "aspects"))
     gui.aspects_stack.addWidget(gui.tajika_matrix_table)  # Index 3
@@ -985,11 +1188,11 @@ def create_right_panels(gui):
     gui.tajika_rel_table.setColumnWidth(0, 28)
     for col in range(1, 5):
         gui.tajika_rel_table.horizontalHeader().setSectionResizeMode(col, QHeaderView.ResizeMode.Stretch)
-    gui.tajika_rel_table.verticalHeader().setDefaultSectionSize(24)
+    gui.tajika_rel_table.verticalHeader().setDefaultSectionSize(_table_row_height('tables', 13, 22))
 
     gui.tajika_rel_delegate = TajikaHighlightDelegate(parent=gui.tajika_rel_table)
     gui.tajika_rel_table.setItemDelegate(gui.tajika_rel_delegate)
-    gui.tajika_rel_table.setMinimumSize(INFO_PANEL_WIDTH - 20, 200)
+    gui.tajika_rel_table.setMinimumSize(INFO_PANEL_WIDTH - 20, _stack_min_height(5, 'tables', 13, 22))
 
     # No ZoomableContainer — this table needs native scrolling
     gui.aspects_stack.addWidget(gui.tajika_rel_table)  # Index 4
@@ -1014,34 +1217,36 @@ def create_right_panels(gui):
             </p>
         </div>
     """)
-    gui.tajika_placeholder.setMinimumSize(INFO_PANEL_WIDTH - 20, 200)
+    gui.tajika_placeholder.setMinimumSize(INFO_PANEL_WIDTH - 20, max(80, scaled_area_px('tables') * 8))
 
     # No ZoomableContainer — QTextEdit has native scrolling
     gui.aspects_stack.addWidget(gui.tajika_placeholder)  # Index 5
 
-    # --- Page 6: Exchange (Parivartana) yoga display (Vedic only) ---
-    gui.exchange_display = QTextBrowser()
-    gui.exchange_display.setStyleSheet(f"""
-        QTextBrowser {{
-            background-color: {theme["secondary_dark"]};
-            color: {theme["secondary_text"]};
-            border: none;
-            font-size: {scaled_area_px('tables')}px;
-            font-family: monospace;
-        }}
-    """)
-    gui.exchange_display.setMinimumSize(INFO_PANEL_WIDTH - 20, 200)
-    gui.exchange_display.setOpenLinks(False)  # anchorClicked still fires for our yoga: scheme
+    # --- Page 6: Exchange (Parivartana) + Final-Dispositor panel (Vedic only) ---
+    # Real Qt card-stack widget (Solar-Dawn), replacing the old QTextBrowser. The
+    # attr name `exchange_display` and the aspects_stack index 6 are preserved so
+    # every existing call site (clear loop, switch_to_exchange, font-scale/theme
+    # fan-out) keeps working (hardening H10). The widget self-themes via
+    # refresh_theme(); it must NOT receive a QTextBrowser stylesheet (H2).
+    from apps.widgets.parivartana_widget import ParivartanaWidget
+    gui.exchange_display = ParivartanaWidget()
+    gui.exchange_display.setMinimumSize(INFO_PANEL_WIDTH - 20, max(80, scaled_area_px('tables') * 8))
 
-    def _on_exchange_link(url):
-        ctrl = getattr(gui, "interchange_controller", None)
-        if ctrl:
-            ctrl.handle_link_click(url)
-
-    gui.exchange_display.anchorClicked.connect(_on_exchange_link)
-
+    # Double-click pop-out: _bind_panel_popup filters the widget AND its
+    # viewport() if present; ParivartanaWidget.viewport() returns its inner
+    # QScrollArea viewport so the gesture still fires over the cards (H7).
     _bind_panel_popup(gui.exchange_display, lambda: open_panel_dialog(gui, "aspects"))
     gui.aspects_stack.addWidget(gui.exchange_display)  # Index 6
+
+    # --- Page 7: Nabhasa Yogas panel (Vedic only) ---
+    # APPEND-ONLY: Index 0-6 above are load-bearing (switch_to_* setCurrentIndex,
+    # startup restore, font/theme fan-out). The widget self-themes via
+    # refresh_theme() (H2); it must NOT receive a QTextBrowser stylesheet.
+    from apps.widgets.nabhasa_widget import NabhasaWidget
+    gui.nabhasa_display = NabhasaWidget()
+    gui.nabhasa_display.setMinimumSize(INFO_PANEL_WIDTH - 20, max(80, scaled_area_px('tables') * 8))
+    _bind_panel_popup(gui.nabhasa_display, lambda: open_panel_dialog(gui, "aspects"))
+    gui.aspects_stack.addWidget(gui.nabhasa_display)  # Index 7
 
     aspects_layout.addWidget(gui.aspects_stack)
 
@@ -1049,8 +1254,13 @@ def create_right_panels(gui):
 
     # Helper to set tab button active/inactive styling
     def _set_tab_styles(active_idx):
-        """Set tab button styles: active_idx 0=first, 1=second, 2=third, 3=fourth."""
-        btns = [gui.aspects_tab_btn, gui.avastha_tab_btn, gui.shame_tab_btn, gui.exchange_tab_btn]
+        """Set tab button styles by row position (0-based). The two modes reuse the
+        first three physical buttons; the 4th position differs:
+          Vedic:  0=Aspects 1=Avastha 2=Shame 3=Exch
+          Tajika: 0=Aspects Table 1=Relations 2=Yogas 3=Nabhasa
+        """
+        fourth = gui.nabhasa_tab_btn if gui._aspects_mode == "tajika" else gui.exchange_tab_btn
+        btns = [gui.aspects_tab_btn, gui.avastha_tab_btn, gui.shame_tab_btn, fourth]
         for i, btn in enumerate(btns):
             btn.setStyleSheet(gui._tab_active_style if i == active_idx else gui._tab_inactive_style)
 
@@ -1064,6 +1274,8 @@ def create_right_panels(gui):
             gui.shame_controller.set_visible(False)
         if hasattr(gui, 'interchange_controller'):
             gui.interchange_controller.set_visible(False)
+        if hasattr(gui, 'nabhasa_controller'):
+            gui.nabhasa_controller.set_visible(False)
 
     def switch_to_avastha():
         gui.aspects_stack.setCurrentIndex(1)
@@ -1075,6 +1287,8 @@ def create_right_panels(gui):
             gui.shame_controller.set_visible(False)
         if hasattr(gui, 'interchange_controller'):
             gui.interchange_controller.set_visible(False)
+        if hasattr(gui, 'nabhasa_controller'):
+            gui.nabhasa_controller.set_visible(False)
 
     def switch_to_shame():
         gui.aspects_stack.setCurrentIndex(2)
@@ -1086,6 +1300,8 @@ def create_right_panels(gui):
             gui.shame_controller.set_visible(True)
         if hasattr(gui, 'interchange_controller'):
             gui.interchange_controller.set_visible(False)
+        if hasattr(gui, 'nabhasa_controller'):
+            gui.nabhasa_controller.set_visible(False)
 
     def switch_to_exchange():
         gui.aspects_stack.setCurrentIndex(6)
@@ -1097,6 +1313,22 @@ def create_right_panels(gui):
         gui._ensure_controller('interchange')
         if hasattr(gui, 'interchange_controller'):
             gui.interchange_controller.set_visible(True)
+        if hasattr(gui, 'nabhasa_controller'):
+            gui.nabhasa_controller.set_visible(False)
+
+    def switch_to_nabhasa():
+        # 4th tab of the Tajika row (row position 3). Shows the natal Nabhasa panel.
+        gui.aspects_stack.setCurrentIndex(7)
+        _set_tab_styles(3)
+        if hasattr(gui, 'avastha_controller'):
+            gui.avastha_controller.set_visible(False)
+        if hasattr(gui, 'shame_controller'):
+            gui.shame_controller.set_visible(False)
+        if hasattr(gui, 'interchange_controller'):
+            gui.interchange_controller.set_visible(False)
+        gui._ensure_controller('nabhasa')
+        if hasattr(gui, 'nabhasa_controller'):
+            gui.nabhasa_controller.set_visible(True)
 
     # Tajika tab switches (indices 3-5)
     def switch_to_tajika_matrix():
@@ -1109,6 +1341,8 @@ def create_right_panels(gui):
             gui.shame_controller.set_visible(False)
         if hasattr(gui, 'interchange_controller'):
             gui.interchange_controller.set_visible(False)
+        if hasattr(gui, 'nabhasa_controller'):
+            gui.nabhasa_controller.set_visible(False)
 
     def switch_to_tajika_relationships():
         gui.aspects_stack.setCurrentIndex(4)
@@ -1120,6 +1354,8 @@ def create_right_panels(gui):
             gui.shame_controller.set_visible(False)
         if hasattr(gui, 'interchange_controller'):
             gui.interchange_controller.set_visible(False)
+        if hasattr(gui, 'nabhasa_controller'):
+            gui.nabhasa_controller.set_visible(False)
 
     def switch_to_tajika_placeholder():
         gui.aspects_stack.setCurrentIndex(5)
@@ -1131,6 +1367,8 @@ def create_right_panels(gui):
             gui.shame_controller.set_visible(False)
         if hasattr(gui, 'interchange_controller'):
             gui.interchange_controller.set_visible(False)
+        if hasattr(gui, 'nabhasa_controller'):
+            gui.nabhasa_controller.set_visible(False)
 
     # Mode-aware tab button handlers
     def on_tab1_click():
@@ -1142,7 +1380,20 @@ def create_right_panels(gui):
 
     def on_tab2_click():
         if gui._aspects_mode == "vedic":
-            switch_to_avastha()
+            # SPEC-AVA-001: if the Avastha panel is ALREADY showing (stack index
+            # 1), clicking the tab cycles the refined views instead of re-selecting
+            # it. Otherwise select it at whatever view is active. Tajika branch
+            # (Relations) is untouched.
+            already_avastha = (gui.aspects_stack.currentIndex() == 1
+                               and hasattr(gui, 'avastha_controller'))
+            if already_avastha:
+                gui.avastha_controller.cycle_view()
+                gui.avastha_controller.refresh_view()   # single refresh (pre-mortem #6)
+                gui.avastha_tab_btn.setText(gui.avastha_controller.view_label())
+            else:
+                switch_to_avastha()
+                if hasattr(gui, 'avastha_controller'):
+                    gui.avastha_tab_btn.setText(gui.avastha_controller.view_label())
         else:
             switch_to_tajika_relationships()
         get_settings().persist_runtime_change("ui.panel.aspects_tab", 1)
@@ -1159,10 +1410,18 @@ def create_right_panels(gui):
             switch_to_exchange()
             get_settings().persist_runtime_change("ui.panel.aspects_tab", 3)
 
+    def on_tab_nabhasa():
+        # Nabhasa is the 4th Tajika-row tab (row position 3); Vedic mode never
+        # shows this button.
+        if gui._aspects_mode == "tajika":
+            switch_to_nabhasa()
+            get_settings().persist_runtime_change("ui.panel.aspects_tab", 3)
+
     gui.aspects_tab_btn.clicked.connect(on_tab1_click)
     gui.avastha_tab_btn.clicked.connect(on_tab2_click)
     gui.shame_tab_btn.clicked.connect(on_tab3_click)
     gui.exchange_tab_btn.clicked.connect(on_tab4_click)
+    gui.nabhasa_tab_btn.clicked.connect(on_tab_nabhasa)
 
     # Toggle between Vedic and Tajika modes
     def toggle_aspects_mode():
@@ -1170,17 +1429,33 @@ def create_right_panels(gui):
             gui._aspects_mode = "tajika"
             gui.aspects_tab_btn.setText("Aspects T")
             gui.avastha_tab_btn.setText("Relations")
+            # SPEC-AVA-001: the refine-cycle only exists in Vedic; in Tajika this
+            # button just selects Relations, so drop the misleading cycle tooltip.
+            gui.avastha_tab_btn.setToolTip("Tajika planetary relationships")
             gui.shame_tab_btn.setText("Yogas")
             gui.exchange_tab_btn.setVisible(False)
             gui._asp_sep3.setVisible(False)
+            # Tajika row: reveal the 4th "Nabhasa" tab (Vedic hides it).
+            gui.nabhasa_tab_btn.setVisible(True)
+            gui._asp_sep4.setVisible(True)
             switch_to_tajika_matrix()
         else:
             gui._aspects_mode = "vedic"
             gui.aspects_tab_btn.setText("Aspects V")
-            gui.avastha_tab_btn.setText("Avastha")
+            # SPEC-AVA-001: restore the avastha button label to the session's
+            # active refined view (Duc/Dig/...), not a hardcoded "Avastha".
+            if hasattr(gui, 'avastha_controller'):
+                gui.avastha_tab_btn.setText(gui.avastha_controller.view_label())
+            else:
+                gui.avastha_tab_btn.setText("Avastha")
+            gui.avastha_tab_btn.setToolTip(
+                "Avastha — click again to refine by strength: Duc / Dig / Uccha / Chesta")
             gui.shame_tab_btn.setText("Shame")
             gui.exchange_tab_btn.setVisible(True)
             gui._asp_sep3.setVisible(True)
+            # Vedic row keeps four tabs; the Nabhasa tab is Tajika-only.
+            gui.nabhasa_tab_btn.setVisible(False)
+            gui._asp_sep4.setVisible(False)
             switch_to_aspects()
         # Toggling mode jumps to the first tab of the new mode.
         get_settings().persist_runtime_change("ui.panel.aspects_mode", gui._aspects_mode)
@@ -1193,20 +1468,50 @@ def create_right_panels(gui):
     gui.switch_to_avastha_tab = switch_to_avastha
     gui.switch_to_shame_tab = switch_to_shame
     gui.switch_to_exchange_tab = switch_to_exchange
+    gui.switch_to_nabhasa_tab = switch_to_nabhasa
     gui.switch_to_tajika_matrix_tab = switch_to_tajika_matrix
     gui.switch_to_tajika_relationships_tab = switch_to_tajika_relationships
     gui.switch_to_tajika_yogas_tab = switch_to_tajika_placeholder
 
     # Add small spacing below
-    aspects_layout.addSpacing(5)
-    layout.addWidget(aspects_frame, stretch=2)
+    aspects_layout.addSpacing(2)
+    layout.addWidget(aspects_frame, stretch=1)
+
+    # === COLUMN HEADER HEIGHTS (compact, font-scaled) ===
+    col_hdr_h = _column_header_height()
+    for tbl in [gui.karakas_table, gui.hora_table, gui.trimsamsa_table,
+                gui.strength_table, gui.elements_table, gui.modality_table,
+                gui.dignities_table, gui.aspects_table, gui.avastha_table,
+                gui.tajika_matrix_table, gui.tajika_rel_table]:
+        if tbl is not None:
+            tbl.horizontalHeader().setFixedHeight(col_hdr_h)
 
     # === DOUBLE-CLICK FULLSCREEN POPUP (also on headers + frame backgrounds) ===
+    # No sub-tab argument here on purpose: open_panel_dialog resolves the live
+    # sub-tab itself (SPEC-AVA-002 §4.1), so the six call sites cannot drift out
+    # of step with each other or with a newly added tab.
     karakas_frame.mouseDoubleClickEvent = lambda e: open_panel_dialog(gui, "karakas")
     karakas_header.mouseDoubleClickEvent = lambda e: open_panel_dialog(gui, "karakas")
     strength_frame.mouseDoubleClickEvent = lambda e: open_panel_dialog(gui, "strength")
     strength_header.mouseDoubleClickEvent = lambda e: open_panel_dialog(gui, "strength")
     aspects_frame.mouseDoubleClickEvent = lambda e: open_panel_dialog(gui, "aspects")
     aspects_header.mouseDoubleClickEvent = lambda e: open_panel_dialog(gui, "aspects")
+
+    # The gesture was undiscoverable — no tooltip, no cursor change, nothing
+    # (SPEC-AVA-002 §4.2 / D-1). Headers get a pointing hand so they read as
+    # clickable, and say what the expanded view is worth opening for.
+    _EXPAND_HINTS = (
+        (karakas_header, "Double-click to expand — the full page adds the "
+                         "enriched karakas and the planetary condition"),
+        (strength_header, "Double-click to expand — the full page shows every "
+                          "strength table side by side"),
+        (aspects_header, "Double-click to expand — the full Avastha table adds "
+                         "each planet's CAST totals (what it sends out) beside "
+                         "the received totals it already shows"),
+    )
+    for _hdr, _tip in _EXPAND_HINTS:
+        if _hdr is not None:
+            _hdr.setToolTip(_tip)
+            _hdr.setCursor(Qt.CursorShape.PointingHandCursor)
 
     return panel

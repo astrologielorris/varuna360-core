@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 # Copyright (C) 2026 Lorris Turpin / 360 Hearts in the Sky
 # Licensed under AGPL-3.0 — see LICENSE file for details.
-# Commercial exception: see NOTICE file.
 """
 ChartGUI - PySide6 Version
 Core orchestration layer (Lite foundation). Pro extends via ProChartGUI.
@@ -78,7 +77,7 @@ PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 # Import theme functions for styling (must be after sys.path modification)
-from ui.qt_theme import get_tab_bar_style, get_theme_colors, get_menu_bar_style, scaled_px, scaled_area_px
+from ui.qt_theme import get_tab_bar_style, get_theme_colors, get_menu_bar_style, scaled_px, scaled_area_px, desat_hex, desat_qss
 
 from core.chtk_reader import CHTKReader
 
@@ -96,8 +95,12 @@ VARGA_NAMES = {
 
 # Import modular widgets
 from apps.widgets.chart_view import SouthIndianView, PlanetClickSignal, SignClickSignal
+from apps.widgets.south_indian_vector_view import (
+    create_south_indian_view, sync_all_south_indian_hosts)
 from apps.widgets.wheel_view import WheelView
 from apps.widgets.north_indian_view import NorthIndianView
+from apps.widgets.body_aspect_dual_widget import BodyAspectDualWidget
+from apps.widgets.cards_of_truth_view import CardsOfTruthView
 from apps.widgets.planet_dialog import PlanetInfoDialog
 from apps.widgets.sector_dialog import SectorInfoDialog
 from apps.widgets.sign_variation_dialog import SignVariationDialog
@@ -118,7 +121,7 @@ from managers.loading_manager import LoadingManager
 # Import panel factory functions
 from apps.panels.vedanga_panel import create_vedanga_panel
 from apps.panels.vimshottari_panel import create_vimshottari_panel
-from apps.panels.info_panels import create_right_panels
+from apps.panels.info_panels import create_right_panels, relayout_info_panels
 from apps.panels.sign_selector_column import create_sign_selector_column
 from apps.panels.varga_column import create_varga_column
 # NOTE: find_chart_panel import deferred to _create_find_chart_widget() - builds large index
@@ -238,7 +241,7 @@ class ChartGUI(QMainWindow):
         # Chart zodiac type: "tropical" (default) or "sidereal"
         self.chart_zodiac = "tropical"
         # Ayanamsa ID for sidereal chart display (tied to dasha ayanamsa selection)
-        self.chart_sidereal_ayanamsa_id = 1  # Lahiri default
+        self.chart_sidereal_ayanamsa_id = 100  # Vedanga Jyotisha default (SPEC-KUTA-AYA-001)
         # Cached ayanamsa offset in degrees (computed from birth JD)
         self.chart_ayanamsa_offset = 0.0
 
@@ -298,6 +301,16 @@ class ChartGUI(QMainWindow):
                 warnings.warn(
                     f"Unrecognized house_system {_sm_hsys!r} in settings, keeping 'campanus'"
                 )
+
+        # SPEC-CAL-001: refresh the title-bar date when the calendar-display
+        # convention changes (Settings > Historical dates). DISPLAY-ONLY: the
+        # title re-reads display.calendar_convention via display_civil_date; no
+        # chart recompute. Subscribed once here so it works in Pro and Lite.
+        try:
+            _sm.on_changed("display.calendar_convention",
+                           lambda _k, _v: self._update_title())
+        except Exception:
+            pass
 
         # Sync chart_zodiac with the effective zodiac mode
         if self.state.aditya_mode == "sidereal":
@@ -365,7 +378,7 @@ class ChartGUI(QMainWindow):
             AspectsController, AvasthaController, ShameController,
             TajikaMatrixController, TajikaRelationshipsController,
             TajikaYogasController, DignitiesController,
-            InterchangeController,
+            InterchangeController, NabhasaController,
         )
         self.elements_controller = ElementsController(self)
         self.elements_controller.connect_to_state(self.state)
@@ -391,6 +404,7 @@ class ChartGUI(QMainWindow):
             'avastha': AvasthaController,
             'shame': ShameController,
             'interchange': InterchangeController,
+            'nabhasa': NabhasaController,
             'tajika_matrix': TajikaMatrixController,
             'tajika_relationships': TajikaRelationshipsController,
             'tajika_yogas': TajikaYogasController,
@@ -465,6 +479,16 @@ class ChartGUI(QMainWindow):
         chart_layout.addWidget(self.vedanga_panel)
 
         # Column 2: Slim Varga Column (between Vedanga and Chart)
+        # SPEC-VGC-001 D-7: restore the persisted center-varga preference
+        # BEFORE the column is built, so the toggle is created already
+        # checked rather than needing a second sync (an unchecked button
+        # over a true flag is the desync INV-4 forbids).
+        try:
+            from managers.settings_manager import get_settings
+            self.varga_in_center = bool(
+                get_settings().get("display.varga_in_center", False))
+        except Exception:
+            self.varga_in_center = False
         _is_implemented = lambda n: n in VARGA_NAMES
         _get_name = lambda n: VARGA_NAMES.get(n, f"D-{n}")
         self.varga_column = create_varga_column(self, _is_implemented, _get_name)
@@ -475,18 +499,18 @@ class ChartGUI(QMainWindow):
         self.chart_stack = QStackedWidget()
         self.chart_stack.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
-        # South Indian View (index 0)
-        self.chart_view = SouthIndianView()
+        # South Indian View (index 0) — host widget owning BOTH the classic
+        # and vector SI themes (SPEC-SIC-002 §4.1); the stack index follows
+        # display.south_indian_style via sync_style().
+        self.chart_view = create_south_indian_view()
         # Connect planet click signal to show dialog
         self.chart_view.planet_click_signal.clicked.connect(self._show_planet_dialog)
         # Connect sign click signal to show variation dialog
         self.chart_view.sign_click_signal.clicked.connect(self._show_sign_variation_dialog)
-        # Load initial background from settings
-        from managers.settings_manager import get_settings
-        settings = get_settings()
-        current_theme = self._load_theme_preference()
-        initial_bg = "stone_01" if current_theme.startswith('light_') else "stone_06"
-        self.chart_view.set_background(initial_bg)
+        # Theme-locked chart background at boot (td-iqjb.8 Wave H: via the shared
+        # helper so boot and switch pick the SAME stone -- was an inline literal).
+        from ui.qt_theme import themed_chart_background
+        self.chart_view.set_background(themed_chart_background())
         self.chart_stack.addWidget(self.chart_view)
 
         # Wheel View (index 1)
@@ -503,6 +527,24 @@ class ChartGUI(QMainWindow):
         self.north_indian_view.planet_click_signal.clicked.connect(self._show_planet_dialog)
         self.north_indian_view.sign_click_signal.clicked.connect(self._show_sign_variation_dialog)
         self.chart_stack.addWidget(self.north_indian_view)
+
+        # Body Graph View (index 3) — SPEC-BODY-001 body graph wrapped by
+        # SPEC-BODY-002's BodyAspectDualWidget: adds a Shift+F2-toggleable rashi
+        # aspect South Indian panel with cross-view hover sync. The dual widget is
+        # a drop-in proxy for the body view (identical planet-click contract and
+        # update_from_chart surface), so `self.body_graph_view` keeps its name and
+        # every existing call site works unchanged.
+        self.body_graph_view = BodyAspectDualWidget(self)
+        self.body_graph_view.planet_click_signal.clicked.connect(self._show_planet_dialog)
+        self.chart_stack.addWidget(self.body_graph_view)
+
+        # Cards of Truth View (index 4) — SPEC-COT-001. Always natal (INV-15):
+        # the spread binds to chart.rashi(), so _apply_current_varga hands it
+        # the unmodified chart and no varga code.
+        self.cards_of_truth_view = CardsOfTruthView(self)
+        self.cards_of_truth_view.planet_click_signal.clicked.connect(self._show_planet_dialog)
+        self.chart_stack.addWidget(self.cards_of_truth_view)
+
         self._set_sign_language(self.sign_language)
 
         # Default to South Indian view (state.chart_view_style is the source of truth)
@@ -599,6 +641,52 @@ class ChartGUI(QMainWindow):
         # Status bar
         self.statusBar().showMessage("South Indian Chart - Ready (PySide6)")
 
+        # SPEC-FSV-001 WI-2: the position-ORDER control lives here now — one
+        # always-visible home on all five chart pages, replacing the four
+        # in-canvas copies. Permanent widgets sit right and are immune to
+        # transient showMessage() text (ui/sticky_status.py).
+        from apps.widgets.status_chrome import (
+            StatusFullscreenButton, StatusOrderButton)
+        self.status_order_button = StatusOrderButton()
+        self.statusBar().addPermanentWidget(self.status_order_button)
+
+        # SPEC-FSV-001 WI-3/WI-4: fullscreen the current chart page. The manager
+        # owns the reparent/fit/restore (Rule 4); the status-bar glyph (right of
+        # ORDER) and the QAction("F") in the View menu are the two entry points.
+        from managers.view_float_manager import ViewFloatManager
+        self.view_float_manager = ViewFloatManager(self)
+        # Duck-typed resolution attr (like the on_page_shown protocol): the
+        # manager walks tab_widget.currentWidget().fullscreen_target(). The Chart
+        # tab's descriptor is defined on ChartGUI; bind it onto the tab so tabs
+        # WITHOUT a chart surface (Edit/Find/Settings...) simply have no attr and
+        # F no-ops there instead of lifting the (hidden) chart stack.
+        self.chart_tab.fullscreen_target = self._chart_fullscreen_target
+        self.status_fullscreen_button = StatusFullscreenButton(
+            self.view_float_manager.toggle_fullscreen)
+        self.statusBar().addPermanentWidget(self.status_fullscreen_button)
+        # A width-only spacer to the RIGHT of the controls: sized by
+        # _align_status_controls() so the ORDER pill + fullscreen glyph line up
+        # with the chart view's right edge, not the far window edge (they sit
+        # over the chart, not over the side panels). Plain QWidget = transparent,
+        # paints nothing. SPEC-FSV-001 alignment refinement.
+        from PySide6.QtWidgets import QWidget as _QWidget
+        self._status_controls_spacer = _QWidget()
+        self.statusBar().addPermanentWidget(self._status_controls_spacer)
+        # Fullscreen is session-only and page-scoped: leaving the Chart tab (or
+        # quitting) drops back to the windowed layout rather than stranding a
+        # detached stack in a top-level window.
+        def _on_tab_changed(_i):
+            self.view_float_manager.exit_fullscreen()
+            # Returning to the Chart tab does not resize the window, so realign
+            # the status controls once the stack is visible again.
+            from PySide6.QtCore import QTimer as _QTimer
+            _QTimer.singleShot(0, self._align_status_controls)
+        self.tab_widget.currentChanged.connect(_on_tab_changed)
+        from PySide6.QtWidgets import QApplication as _QApp
+        _app = _QApp.instance()
+        if _app is not None:
+            _app.aboutToQuit.connect(self.view_float_manager.exit_fullscreen)
+
         # === SESSION MANAGER (Phase 4) ===
         # Phase 4 W4: ProfileStore wraps the file I/O; SessionManager keeps
         # the auto-save QTimer + restore dialog + business logic.
@@ -609,7 +697,17 @@ class ChartGUI(QMainWindow):
 
         # === PROFILE MANAGER ===
         from managers.profile_manager import ProfileManager
-        self.profile_manager = ProfileManager(self, profiles_dir=self.user_data_dir / "profiles")
+        # SPEC-SES-001 INV-2: use the profiles dir the SessionManager preflight
+        # actually settled on, NOT self.user_data_dir. When the configured
+        # folder is read-only (macOS TCC denial, a synced folder, a bad
+        # permission), the preflight above has already relocated to a writable
+        # fallback. Passing the original path here would point ProfileManager
+        # at the dead folder and its mkdir would raise during __init__, i.e.
+        # the app would crash at startup on exactly the case the relocation
+        # exists to survive.
+        self.profile_manager = ProfileManager(
+            self, profiles_dir=self.session_manager.profiles_dir
+        )
         current_profile_id = self.profile_manager.get_current_profile()
 
         # Sync SessionManager with current profile (CRITICAL for loading correct session)
@@ -731,7 +829,7 @@ class ChartGUI(QMainWindow):
         self._settings_progress_bar.setFixedWidth(300)
         self._settings_progress_bar.setRange(0, 0)  # Indeterminate mode
         self._settings_progress_bar.setTextVisible(False)
-        self._settings_progress_bar.setStyleSheet("""
+        self._settings_progress_bar.setStyleSheet(desat_qss("""
             QProgressBar {
                 border: 1px solid #555;
                 border-radius: 5px;
@@ -742,7 +840,7 @@ class ChartGUI(QMainWindow):
                 background-color: #D4AF37;
                 border-radius: 4px;
             }
-        """)
+        """))
         self._settings_progress_bar.hide()
         placeholder_layout.addWidget(self._settings_progress_bar, alignment=Qt.AlignmentFlag.AlignCenter)
 
@@ -831,11 +929,26 @@ class ChartGUI(QMainWindow):
     def _create_settings_tab(self, current_theme):
         """Factory: return a SettingsTab instance. Override in Pro for extended settings."""
         from ui.settings_tab import SettingsTab
-        return SettingsTab(current_theme=current_theme)
+        tab = SettingsTab(current_theme=current_theme)
+        # SPEC-SES-001 §4.4 — wire the save-health banner. Done here rather
+        # than inside SettingsTab because this is where the SessionManager is
+        # reachable; the tab itself stays GUI-agnostic.
+        from ui.session_health_banner import SessionHealthBanner
+        SessionHealthBanner.attach_all(tab, getattr(self, 'session_manager', None))
+        return tab
 
     def has_transit_tab(self):
         """Capability query: does this edition have a Transit tab? Override in Pro."""
         return False
+
+    def ai_image_extractor(self):
+        """Capability query: a callable(bytes, media_type) -> birth-data dict,
+        or None when this edition has no AI image reading. Override in Pro.
+
+        Returning None is what removes the Add Chart dialog's paste-a-screenshot
+        affordance from Core/Lite entirely — the dialog is shared, the capability
+        is not, and Core never imports pro."""
+        return None
 
     def _add_feature_tabs(self):
         """Add feature tabs between Find Chart and Settings. Override in Pro."""
@@ -881,6 +994,9 @@ class ChartGUI(QMainWindow):
                     # Font scale change (Core feature — always connected)
                     if hasattr(self.settings_tab, 'scale_changed'):
                         self.settings_tab.scale_changed.connect(self._on_scale_changed)
+                    # Global color saturation (SPEC-SAT-001 WI-6)
+                    if hasattr(self.settings_tab, 'saturation_changed'):
+                        self.settings_tab.saturation_changed.connect(self._on_saturation_changed)
                     if hasattr(self.settings_tab, 'sign_language_changed'):
                         self.settings_tab.sign_language_changed.connect(self._set_sign_language)
                     if hasattr(self.settings_tab, 'chart_display_changed'):
@@ -1080,10 +1196,11 @@ class ChartGUI(QMainWindow):
 
         file_menu.addSeparator()
 
-        # Save As CHTK action
-        save_as_action = QAction("&Save As CHTK...", self)
+        # Save As action — writes .chtk OR .toml by the chosen extension
+        # (SPEC-IMPORT-001: this is the GUI CHTK<->TOML conversion path).
+        save_as_action = QAction("&Save Chart As... (.chtk / .toml)", self)
         save_as_action.setShortcut(QKeySequence.StandardKey.SaveAs)
-        save_as_action.setStatusTip("Save current chart as CHTK file")
+        save_as_action.setStatusTip("Save/convert the current chart as .chtk or .toml (choose the extension in the dialog)")
         save_as_action.triggered.connect(self._save_as_chtk)
         file_menu.addAction(save_as_action)
 
@@ -1155,6 +1272,21 @@ class ChartGUI(QMainWindow):
 
         view_menu.addSeparator()
 
+        # Fullscreen the current chart page (SPEC-FSV-001 WI-3). Plain "F", a
+        # WindowShortcut — safe now that WI-1 freed the key from the Cards of
+        # Truth family toggle (which moved to "C"). Esc/F also exit from inside
+        # the fullscreen container (handled there). Menu label toggles nothing;
+        # the manager is idempotent and toggles by state.
+        fullscreen_action = QAction("&Fullscreen View", self)
+        fullscreen_action.setShortcut(QKeySequence("F"))
+        # Holding F would otherwise autorepeat enter->exit->enter (codex M-5).
+        fullscreen_action.setAutoRepeat(False)
+        fullscreen_action.setStatusTip(
+            "Fullscreen the current tab's chart view (F to exit)")
+        fullscreen_action.triggered.connect(
+            lambda: self.view_float_manager.toggle_fullscreen())
+        view_menu.addAction(fullscreen_action)
+
         # Planet Placements action
         placements_action = QAction("&Planet Placements...", self)
         placements_action.setShortcut(QKeySequence("Ctrl+P"))
@@ -1192,7 +1324,7 @@ class ChartGUI(QMainWindow):
         # Cycle Chart View action (F2)
         self.cycle_view_action = QAction("Cycle Chart &View", self)
         self.cycle_view_action.setShortcut(QKeySequence("F2"))
-        self.cycle_view_action.setStatusTip("Cycle: South Indian → Wheel → North Indian (F2)")
+        self.cycle_view_action.setStatusTip("Cycle: South Indian → Wheel → North Indian → Body Graph → Cards of Truth (F2)")
         self.cycle_view_action.triggered.connect(self._cycle_chart_view)
         view_menu.addAction(self.cycle_view_action)
 
@@ -1243,6 +1375,16 @@ class ChartGUI(QMainWindow):
             "Show/hide element pie charts on wheel (Shift+F5)")
         self.pie_charts_action.triggered.connect(self._toggle_pie_charts)
         view_menu.addAction(self.pie_charts_action)
+
+        # Toggle Rashi Aspect Panel action (Shift+F2) — SPEC-BODY-002.
+        # Only meaningful on the Body Graph view (chart_stack index 3); the
+        # handler is a no-op elsewhere, matching the other view-specific toggles.
+        self.aspect_panel_action = QAction("Toggle Rashi &Aspect Panel", self)
+        self.aspect_panel_action.setShortcut(QKeySequence("Shift+F2"))
+        self.aspect_panel_action.setStatusTip(
+            "Show/hide the rashi aspect panel on the Body Graph view (Shift+F2)")
+        self.aspect_panel_action.triggered.connect(self._toggle_aspect_panel)
+        view_menu.addAction(self.aspect_panel_action)
 
         # Cycle Cusp Glow Lines action (F9)
         self.cusp_glow_action = QAction("Cycle Cusp &Lines", self)
@@ -1358,7 +1500,7 @@ class ChartGUI(QMainWindow):
         # Manual action
         manual_action = QAction("&Manual...", self)
         manual_action.setShortcut(QKeySequence("F1"))
-        manual_action.setStatusTip("Open the Varuna 360 help manual (F1)")
+        manual_action.setStatusTip("Open the Varuna360 help manual (F1)")
         manual_action.triggered.connect(self._show_manual)
         help_menu.addAction(manual_action)
 
@@ -1568,6 +1710,95 @@ class ChartGUI(QMainWindow):
 
         # Responsive: auto-hide side panels when window is narrow (tiled)
         self._update_responsive_panels()
+
+        # Keep the ORDER/fullscreen status controls at the chart view's right
+        # edge as the window (and thus the chart column) resizes. Deferred once
+        # so the side-panel show/hide above has settled its geometry first.
+        self._align_status_controls()
+        from PySide6.QtCore import QTimer as _QTimer
+        _QTimer.singleShot(self.DRAWER_ANIM_MS + 40, self._align_status_controls)
+
+    def _align_status_controls(self):
+        """Right-align ORDER pill + fullscreen glyph with the chart view edge.
+
+        The status bar spans the whole window, so ``addPermanentWidget`` parks
+        the controls at the far right — over the side panels, not the chart. A
+        width-only spacer to their right, sized to the gap between the chart
+        stack's right edge and the status bar's right edge, slides them left so
+        they sit under the chart column. Recomputed on resize because that gap
+        (side-panel widths + spacing) changes when responsive panels hide/show.
+
+        Global-coordinate math keeps it agnostic to which side panels are
+        currently visible. Skipped while fullscreen (the stack is reparented
+        out, its geometry stale) or off the Chart tab (stack hidden).
+        """
+        spacer = getattr(self, "_status_controls_spacer", None)
+        if spacer is None:
+            return
+        fm = getattr(self, "view_float_manager", None)
+        if fm is not None and fm.is_fullscreen:
+            return
+        stack = getattr(self, "chart_stack", None)
+        if stack is None or not stack.isVisible():
+            spacer.setFixedWidth(0)
+            return
+        from PySide6.QtCore import QPoint as _QPoint
+        sb = self.statusBar()
+        chart_right = stack.mapToGlobal(_QPoint(stack.width(), 0)).x()
+        sb_right = sb.mapToGlobal(_QPoint(sb.width(), 0)).x()
+        spacer.setFixedWidth(max(0, sb_right - chart_right))
+
+    # -- fullscreen descriptor (SPEC-FSV-001 universal-fullscreen WI-2) ----
+
+    def _chart_fullscreen_views(self):
+        """Live QGraphicsViews on the CURRENT chart page, for save/refit.
+
+        Pages 1/2 ARE graphics views; page 0 is a host exposing ``active_view``
+        (the classic or vector South Indian child currently shown). Page 3 is a
+        BodyAspectDualWidget holding TWO inner views — the body graph (always
+        shown) plus the aspect South Indian view (only when its panel is
+        toggled on); returning BOTH closes the shipped gap where the aspect view
+        never refit in fullscreen. Page 4 (Cards of Truth) is a plain QWidget
+        that lays out from its own width -> no graphics view to refit.
+        """
+        from PySide6.QtWidgets import QGraphicsView
+        page = self.chart_stack.currentWidget()
+        # Page 3 — the dual body/aspect widget (named body_graph_view for
+        # historical reasons; it is a BodyAspectDualWidget).
+        dual = getattr(self, "body_graph_view", None)
+        if dual is not None and page is dual:
+            views = []
+            inner_body = getattr(dual, "body_graph_view", None)
+            if isinstance(inner_body, QGraphicsView):
+                views.append(inner_body)
+            aspect = getattr(dual, "aspect_si_view", None)
+            if isinstance(aspect, QGraphicsView) and aspect.isVisible():
+                views.append(aspect)
+            return views
+        if isinstance(page, QGraphicsView):
+            return [page]
+        active = getattr(page, "active_view", None)
+        if isinstance(active, QGraphicsView):
+            return [active]
+        return []
+
+    def _chart_fullscreen_target(self):
+        """Descriptor for the main chart stack (the Chart tab surface).
+
+        cycle=True: F2 cycles the chart page (the global style broadcast).
+        chart_stack.currentChanged is a refit_signal so a page switch (incl. F2)
+        refits the newly shown page to the fullscreen viewport.
+        """
+        return {
+            "widget": self.chart_stack,
+            "layout": self.chart_content.layout(),
+            "views": self._chart_fullscreen_views,
+            "refit": True,
+            "cycle": True,
+            "refit_signals": [self.chart_stack.currentChanged],
+            "on_enter": None,
+            "on_exit": None,
+        }
 
     # Threshold below which side panels auto-hide (px).
     # 1400 = enough room for chart (~445px) + all side panels (~955px).
@@ -2098,11 +2329,25 @@ class ChartGUI(QMainWindow):
         """Reload the currently loaded chart. Delegates to ChartManager."""
         self.chart_manager.reload_current()
 
-    def _save_as_chtk(self):
-        """Save current chart as CHTK file. Delegates to CHTKWriter.
+    @staticmethod
+    def _writer_for_path(file_path):
+        """Map a chosen save path to a writer kind (SPEC-IMPORT-001 §6.1 B5).
 
-        Uses recipe as primary source when available, with fallback to
-        current_chart_data and current_birth_data for legacy entries.
+        Pure helper (no GUI state) so it is unit-testable. Returns 'toml' for a
+        .toml suffix, else 'chtk' (the default for .chtk and any unknown
+        extension — CHTK stays the conservative fallback). This is the writer
+        gate that prevents a .toml target from being written as CHTK binary.
+        """
+        from pathlib import Path
+        return 'toml' if Path(file_path).suffix.lower() == '.toml' else 'chtk'
+
+    def _save_as_chtk(self):
+        """Save current chart as a chart file (CHTK or TOML).
+
+        Writer is gated on the chosen file extension (SPEC-IMPORT-001 §6.1):
+        .toml -> TOMLChartWriter, .chtk (or unknown) -> CHTKWriter. Uses recipe
+        as primary source when available, with fallback to current_chart_data
+        and current_birth_data for legacy entries.
         """
         if not self.current_chart_data:
             QMessageBox.warning(self, "No Chart", "No chart loaded to save.")
@@ -2139,14 +2384,22 @@ class ChartGUI(QMainWindow):
 
         name = (_recipe.get('name') if _recipe else None) or chart.get('name') or bd.get('name') or 'chart'
         safe_name = "".join(c for c in name if c.isalnum() or c in " -_").strip()
-        suggested = f"{safe_name}.chtk" if safe_name else "chart.chtk"
+        # SPEC-IMPORT-001 §6.1: TOML is the preferred format, default the
+        # suggested name to .toml while still offering .chtk for Kala.
+        suggested = f"{safe_name}.toml" if safe_name else "chart.toml"
 
         file_path, _ = QFileDialog.getSaveFileName(
-            self, "Save As CHTK", suggested,
-            "CHTK Files (*.chtk);;All Files (*)"
+            self, "Save Chart As", suggested,
+            "Chart Files (*.chtk *.toml);;CHTK (*.chtk);;TOML (*.toml);;All Files (*)"
         )
         if not file_path:
             return
+
+        # SPEC-IMPORT-001 §6.1 (B5, 2nd corruption site): gate the writer on the
+        # chosen extension. A .toml target MUST NOT be written by CHTKWriter
+        # (UTF-16 binary) — that would corrupt the file. _writer_for_path() maps
+        # the suffix to the writer class; default to CHTK for unknown suffixes.
+        writer_kind = self._writer_for_path(file_path)
 
         try:
             from core.chtk_reader import CHTKWriter
@@ -2239,13 +2492,63 @@ class ChartGUI(QMainWindow):
                     },
                 }
 
-            writer = CHTKWriter()
-            writer.save_chtk_file(metadata, name=name, output_path=file_path)
+            if writer_kind == 'toml':
+                # SPEC-IMPORT-001 §5: TOMLChartWriter consumes a CANONICAL
+                # birth_data dict (flat lat/lon, local_* fields, julian_day,
+                # rodden/tags/notes), NOT the CHTK `metadata` shape. Build that
+                # canonical dict from the same sources, forwarding the additive
+                # metadata from current_birth_data when present (a .toml chart
+                # loaded earlier carries it; CHTK-origin charts leave it None).
+                from core.toml_chart import TOMLChartWriter
+                _coords = metadata['coordinates']
+
+                # Prefer birth_data, fall back to recipe, using an explicit
+                # `is None` check (NOT `or`) so a legitimate 0.0 dst_offset is
+                # not swallowed as falsy (project rule: no `or` chains on 0.0).
+                # `recipe_key` handles the BDM/recipe key mismatch: the recipe
+                # stores the UTC offset under 'utcoffset', the canonical dict
+                # under 'utc_offset_hours' (project memory: UTC offset key
+                # mismatch). Without the alias a recipe-only save (bd is None)
+                # would silently write utc_offset = 0.0.
+                def _meta(key, recipe_key=None):
+                    v = bd.get(key) if bd else None
+                    if v is None and _recipe:
+                        v = _recipe.get(recipe_key or key)
+                    return v
+
+                canonical = {
+                    'name': name,
+                    'gender': gender,
+                    'local_year': metadata['year'],
+                    'local_month': metadata['month'],
+                    'local_day': metadata['day'],
+                    'local_hour': metadata['hour'],
+                    'local_minute': metadata['minute'],
+                    'local_second': metadata['second'],
+                    'latitude': _coords['latitude'],
+                    'longitude': _coords['longitude'],
+                    'city': city,
+                    'country': country,
+                    'time_change_flag': metadata['time_change_flag'],
+                    # Additive TOML-native metadata (omit-when-None handled by
+                    # the writer): forward from the loaded birth_data / recipe.
+                    'rodden': _meta('rodden'),
+                    'tags': _meta('tags'),
+                    'notes': _meta('notes'),
+                    'julian_day': _meta('julian_day'),
+                    'dst_offset_hours': _meta('dst_offset_hours'),
+                    'utc_offset_hours': _meta('utc_offset_hours',
+                                              recipe_key='utcoffset'),
+                }
+                TOMLChartWriter().write(canonical, file_path)
+            else:
+                writer = CHTKWriter()
+                writer.save_chtk_file(metadata, name=name, output_path=file_path)
 
             self.statusBar().showMessage(f"Saved: {file_path}")
 
         except Exception as e:
-            QMessageBox.critical(self, "Save Error", f"Failed to save CHTK:\n{e}")
+            QMessageBox.critical(self, "Save Error", f"Failed to save chart:\n{e}")
             import traceback
             traceback.print_exc()
 
@@ -2265,8 +2568,8 @@ class ChartGUI(QMainWindow):
         """Show about dialog."""
         QMessageBox.about(
             self,
-            "About Varuna 360",
-            "<h2>Varuna 360</h2>"
+            "About Varuna360",
+            "<h2>Varuna360</h2>"
             "<p><b>Tropical Vedic Astrology</b></p>"
             "<p>Version: 1.0</p>"
             "<p>A professional astrology chart calculator combining the "
@@ -2303,17 +2606,17 @@ class ChartGUI(QMainWindow):
         # URL as a clickable link via Qt's automatic <a href> handling.
         QMessageBox.about(
             self,
-            "About Varuna 360 Pro",
-            f"<h2>Varuna 360 Pro</h2>"
+            "About Varuna360 Pro",
+            f"<h2>Varuna360 Pro</h2>"
             f"<p><b>{PRO_TAGLINE}</b></p>"
             f"<p>{PRO_DESCRIPTION}</p>"
             f"<h3>Pro features</h3>"
             f"<ul>{feature_list_html}</ul>"
             f"<p><b>Pricing:</b> {PRO_PRICE_DISPLAY}</p>"
             f'<p><a href="{PRO_UPGRADE_URL}">{PRO_UPGRADE_URL}</a></p>'
-            f"<p><i>Varuna 360 Core is and remains open-source under AGPL-3.0. "
-            f"Pro is an optional proprietary upgrade for users who want the "
-            f"additional research tooling.</i></p>"
+            f"<p><i>Varuna360 Core is and remains open source under AGPL-3.0. "
+            f"Pro is the larger paid edition, also AGPL-3.0, for users who "
+            f"want the additional research tooling.</i></p>"
         )
 
     # ──────────────────────────────────────────────────────────────────
@@ -2400,7 +2703,10 @@ class ChartGUI(QMainWindow):
 
         from managers.settings_manager import get_settings
         _sm = get_settings()
-        cot_order = _sm.get("cot.planet_order", "vedic")
+        # SPEC-COT-001 D-5: solar_system is the Kala-verified order. The old
+        # inline "vedic" fallback disagreed with the F2 view and mislabelled
+        # three of the seven main cards in this table.
+        cot_order = _sm.get("cot.planet_order", "solar_system")
 
         dialog = PlanetPlacementsDialog(
             parent=self,
@@ -2441,6 +2747,10 @@ class ChartGUI(QMainWindow):
             self.wheel_view.ensure_visible()
             self.north_indian_view.draw_chart()
             self.north_indian_view.ensure_visible()
+
+        # Pure relabel signal: language only affects the western label set,
+        # so listeners repopulate without recomputing (td-cm8o).
+        self.sign_names_changed.emit(self.state.aditya_mode)
 
     def _show_planet_dialog(self, planet_name, planet_info):
         """Show popup dialog with planet details when planet is double-clicked"""
@@ -2608,16 +2918,23 @@ class ChartGUI(QMainWindow):
 
     def _toggle_wheel_view(self):
         """
-        Cycle between South Indian, Wheel, and North Indian views.
+        Cycle between South Indian, Wheel, North Indian, Body Graph and Cards of Truth.
 
         Connected to the view toggle button in the chart title bar.
-        Cycles: South Indian (0) → Wheel (1) → North Indian (2) → South Indian (0)
+        Cycles: South Indian (0) → Wheel (1) → North Indian (2) → Body Graph (3)
+                → Cards of Truth (4) → South Indian (0)
+
+        This is an if/elif chain, NOT index arithmetic: each branch also sets the
+        toggle button to the label of the NEXT view and shows/hides the
+        view-specific buttons. The final ``else`` catches both the last view and
+        any unknown index, so a new view needs its own ``elif`` — without one it
+        is simply unreachable from F2 (SPEC-COT-001 §3.3).
         """
         current_index = self.chart_stack.currentIndex()
 
         # Theme-adaptive button styles — SPEC-THM-001 E5: use module-level import.
         _t = get_theme_colors()
-        active_style = """
+        active_style = desat_qss("""
             QPushButton {
                 background-color: #4CAF50;
                 color: white;
@@ -2630,7 +2947,7 @@ class ChartGUI(QMainWindow):
             QPushButton:hover {
                 background-color: #45A049;
             }
-        """
+        """)
         inactive_style = f"""
             QPushButton {{
                 background-color: {_t["secondary"]};
@@ -2666,17 +2983,12 @@ class ChartGUI(QMainWindow):
             # Update wheel view with current data
             # Chart-Everywhere Issue 2c: prefer state.active_chart when available.
             if self.state.active_chart is not None:
-                ayanamsa_off = self.chart_ayanamsa_offset if self.state.aditya_mode == "sidereal" else 0.0
-                self.wheel_view.update_from_chart(self.state.active_chart,
-                                                   use_western_names=getattr(self, 'use_western_names', False),
-                                                   ayanamsa_offset=ayanamsa_off,
-                                                   aditya_mode=self.state.aditya_mode)
+                # td-ijjf: rendered with no varga code, so F2 off a D-10
+                # South Indian chart used to land on a D-1 wheel.
+                self._apply_current_varga()
                 self.wheel_view.ensure_visible()
 
-            if hasattr(self, 'transit_overlay_manager') \
-                    and self.transit_overlay_manager.transit_enabled:
-                self.wheel_view.update_transit_from_manager(
-                    self.transit_overlay_manager)
+            self._push_transit_state(getattr(self, 'wheel_view', None))
 
             self.statusBar().showMessage("Switched to Wheel view")
 
@@ -2687,7 +2999,8 @@ class ChartGUI(QMainWindow):
             self.state.dispatch(SetChartViewStyle(style="north_indian"))
 
             if hasattr(self, 'wheel_btn'):
-                self.wheel_btn.setText("▣ South")
+                # Next view in the cycle is now Body Graph (SPEC-BODY-001).
+                self.wheel_btn.setText("❖ Body")
                 self.wheel_btn.setStyleSheet(active_style)
 
             # Hide wheel-only buttons (transit stays visible on all views)
@@ -2697,22 +3010,73 @@ class ChartGUI(QMainWindow):
             # Update north indian view with current data
             # Chart-Everywhere Issue 2c: prefer state.active_chart when available.
             if self.state.active_chart is not None:
-                ayanamsa_off = self.chart_ayanamsa_offset if self.state.aditya_mode == "sidereal" else 0.0
-                self.north_indian_view.update_from_chart(self.state.active_chart,
-                                                          use_western_names=getattr(self, 'use_western_names', False),
-                                                          ayanamsa_offset=ayanamsa_off,
-                                                          aditya_mode=self.state.aditya_mode)
+                # td-ijjf: same hole on the second leg of the F2 cycle.
+                self._apply_current_varga()
                 self.north_indian_view.ensure_visible()
 
-            if hasattr(self, 'transit_overlay_manager') \
-                    and self.transit_overlay_manager.transit_enabled:
-                self.north_indian_view.update_transit_overlay(
-                    self.transit_overlay_manager)
+            self._push_transit_state(getattr(self, 'north_indian_view', None))
 
             self.statusBar().showMessage("Switched to North Indian view")
 
+        elif current_index == 2:
+            # North Indian → Body Graph (SPEC-BODY-001, index 3).
+            # V1 has NO transit overlay, so unlike the wheel/north branches
+            # this one must NOT call update_transit_overlay (six-eyes M5).
+            self.chart_stack.setCurrentIndex(3)
+            from state.events import SetChartViewStyle
+            self.state.dispatch(SetChartViewStyle(style="body_graph"))
+
+            if hasattr(self, 'wheel_btn'):
+                # Next view in the cycle is Cards of Truth (SPEC-COT-001).
+                self.wheel_btn.setText("❐ Cards")
+                self.wheel_btn.setStyleSheet(active_style)
+
+            # Hide wheel-only buttons (transit stays visible on all views)
+            if hasattr(self, 'dual_rim_btn'):
+                self.dual_rim_btn.setVisible(False)
+
+            # Lazy chart data push — same pattern as the wheel/north branches.
+            # body_graph_view.update_from_chart absorbs ayanamsa_offset via **_kw.
+            if self.state.active_chart is not None and hasattr(self, 'body_graph_view'):
+                ayanamsa_off = self.chart_ayanamsa_offset if self.state.aditya_mode == "sidereal" else 0.0
+                self.body_graph_view.update_from_chart(self.state.active_chart,
+                                                       use_western_names=getattr(self, 'use_western_names', False),
+                                                       ayanamsa_offset=ayanamsa_off,
+                                                       aditya_mode=self.state.aditya_mode,
+                                                       gender=self._current_body_gender(),
+                                                       varga_code=self.body_graph_view._varga_code)
+                self.body_graph_view.ensure_visible()
+
+            self.statusBar().showMessage("Switched to Body Graph view")
+
+        elif current_index == 3:
+            # Body Graph → Cards of Truth (SPEC-COT-001, index 4).
+            # Like the body-graph branch this view has NO transit overlay, so
+            # it must not call _push_transit_state / update_transit_overlay.
+            self.chart_stack.setCurrentIndex(4)
+            from state.events import SetChartViewStyle
+            self.state.dispatch(SetChartViewStyle(style="cards_of_truth"))
+
+            if hasattr(self, 'wheel_btn'):
+                # Next view in the cycle is South Indian.
+                self.wheel_btn.setText("▣ South")
+                self.wheel_btn.setStyleSheet(active_style)
+
+            # Hide wheel-only buttons (transit stays visible on all views)
+            if hasattr(self, 'dual_rim_btn'):
+                self.dual_rim_btn.setVisible(False)
+
+            # Lazy chart data push through the ONE varga writer, so F2 onto this
+            # view lands on the active division rather than silently on D-1
+            # (the td-ijjf hole, in its Cards of Truth form).
+            if self.state.active_chart is not None and hasattr(self, 'cards_of_truth_view'):
+                self._apply_current_varga()
+                self.cards_of_truth_view.ensure_visible()
+
+            self.statusBar().showMessage("Switched to Cards of Truth view")
+
         else:
-            # North Indian → South Indian
+            # Cards of Truth → South Indian (and any unknown index)
             self.chart_stack.setCurrentIndex(0)
             from state.events import SetChartViewStyle
             self.state.dispatch(SetChartViewStyle(style="south_indian"))
@@ -2725,11 +3089,7 @@ class ChartGUI(QMainWindow):
             if hasattr(self, 'dual_rim_btn'):
                 self.dual_rim_btn.setVisible(False)
 
-            if hasattr(self, 'transit_overlay_manager') \
-                    and self.transit_overlay_manager.transit_enabled \
-                    and hasattr(self, 'chart_view') and self.chart_view:
-                self.chart_view.update_transit_overlay(
-                    self.transit_overlay_manager)
+            self._push_transit_state(getattr(self, 'chart_view', None))
 
             self.statusBar().showMessage("Switched to South Indian view")
 
@@ -2744,8 +3104,19 @@ class ChartGUI(QMainWindow):
         if self.time_adjust_widget and hasattr(self.time_adjust_widget, 'update_save_button_state'):
             self.time_adjust_widget.update_save_button_state()
 
+        # SPEC-VGC-001 §4.3 + SPEC-VGO-001 INV-8: the toggle greys out only
+        # on the body graph now, and its tooltip names the surface of
+        # whichever view is visible. The FLAG is untouched — F2 away and back
+        # restores the second chart through _apply_current_varga.
+        self._sync_varga_center_button()
+
     def _switch_to_chart_index(self, target_index: int):
-        """Switch chart view to a specific index: 0=South Indian, 1=Wheel, 2=North Indian."""
+        """Switch chart view to a specific chart_stack index.
+
+        Indices are defined once in state.chart_state.VIEW_STACK_INDEX
+        (SPEC-COT-001 INV-14): 0=South Indian, 1=Wheel, 2=North Indian,
+        3=Body Graph, 4=Cards of Truth.
+        """
         current = self.chart_stack.currentIndex()
         if current == target_index:
             return
@@ -2779,21 +3150,40 @@ class ChartGUI(QMainWindow):
         # Cycle the main chart view
         self._toggle_wheel_view()
 
+        # Sync the auxiliary dual-chart panels to mirror the main view.
+        # Body Graph: only the Compatibility page supports it (side-by-side,
+        # 2026-07-09); DualChartComparisonWidget guards it per-instance, so the
+        # eclipse panel always receives the broadcast. The other panels have no
+        # body view: skip them so they keep their current view instead of
+        # silently snapping to South Indian every time F2 cycles through it.
+        view_style = self.state.chart_view_style
+
+        # SPEC-COT-001 INV-8: Cards of Truth has no dual-chart surface at all,
+        # so it returns BEFORE the Eclipse sync — not after it like body_graph.
+        # The Eclipse panel's own guard only covers body_graph, and its
+        # view_map.get(name, 0) fallback would snap it to South Indian on every
+        # F2 press through this view. A silent wrong answer, not a fallback.
+        if view_style == "cards_of_truth":
+            return
+
         # Sync Eclipse panel if it exists
         if hasattr(self, 'eclipse_panel') and self.eclipse_panel:
-            self.eclipse_panel.sync_chart_view(self.state.chart_view_style)
+            self.eclipse_panel.sync_chart_view(view_style)
+
+        if view_style == "body_graph":
+            return
 
         # Sync Transit panel if it exists
         if hasattr(self, 'transit_panel') and self.transit_panel:
-            self.transit_panel.sync_chart_view(self.state.chart_view_style)
+            self.transit_panel.sync_chart_view(view_style)
 
         # Sync Exploration panel if it exists
         if hasattr(self, 'exploration_panel') and self.exploration_panel:
-            self.exploration_panel.sync_chart_view(self.state.chart_view_style)
+            self.exploration_panel.sync_chart_view(view_style)
 
         # Sync Solar Return page if it exists
         if hasattr(self, 'solar_return_page') and self.solar_return_page:
-            self.solar_return_page.sync_chart_view(self.state.chart_view_style)
+            self.solar_return_page.sync_chart_view(view_style)
 
     def _finalize_chart_load(self, *, skip_dasha=False,
                               skip_varga_reset=False, skip_loading=False):
@@ -2832,12 +3222,10 @@ class ChartGUI(QMainWindow):
                 self.loading_manager.finish()
             return
 
-        if hasattr(self, 'chart_view') and self.chart_view:
-            self.chart_view.update_from_chart(chart, use_western_names=use_western, aditya_mode=self.state.aditya_mode)
-        if hasattr(self, 'wheel_view') and self.wheel_view:
-            self.wheel_view.update_from_chart(chart, use_western_names=use_western, aditya_mode=self.state.aditya_mode)
-        if hasattr(self, 'north_indian_view') and self.north_indian_view:
-            self.north_indian_view.update_from_chart(chart, use_western_names=use_western, aditya_mode=self.state.aditya_mode)
+        # td-ijjf: this used to render every view with NO varga code, so a
+        # chart reload silently dropped D-10 back to D-1 while the varga
+        # column still showed 10 checked. One writer now (SPEC-VGC-001 §4.2).
+        self._apply_current_varga()
 
         if not skip_loading:
             self.loading_manager.update("Updating panels...")
@@ -2853,6 +3241,24 @@ class ChartGUI(QMainWindow):
             self.wheel_view.ensure_visible()
         if hasattr(self, 'north_indian_view') and self.north_indian_view:
             self.north_indian_view.ensure_visible()
+        if hasattr(self, 'body_graph_view') and self.body_graph_view:
+            self.body_graph_view.ensure_visible()
+        if hasattr(self, 'cards_of_truth_view') and self.cards_of_truth_view:
+            self.cards_of_truth_view.ensure_visible()
+
+    def _current_body_gender(self):
+        """Resolve the active chart's gender for the Body Graph silhouette.
+
+        Reads from source_params.birth_data (the reliable render-time source).
+        Anything other than Female (including a missing value) maps to the male
+        body via the view's own default, so this never has to be exact.
+        """
+        try:
+            sp = self.state.source_params or {}
+            bd = sp.get('birth_data') or {}
+            return bd.get('gender', 'Unknown')
+        except Exception:
+            return 'Unknown'
 
     def _close_current_chart(self):
         """Remove current chart from memory. Delegates to ChartManager."""
@@ -3228,6 +3634,12 @@ class ChartGUI(QMainWindow):
         if self.chart_zodiac == "sidereal" or self.state.aditya_mode == "sidereal":
             self._compute_chart_ayanamsa_offset()
             self._recalculate_chart()
+            # Sidereal ayanamsa change alters EVERY sidereal chart, so notify the
+            # panels (transit rebuilds both natal+transit in the new frame). There
+            # is no dedicated ayanamsa-applied signal; reuse the mode-changed one
+            # (SPEC-TJK-002 W4 finding 2). Only in this sidereal branch — the else
+            # branch changes no rendered chart.
+            self.aditya_mode_changed.emit(self.state.aditya_mode)
             from core.ayanamsa_data import get_ayanamsa_name
             ayan_name = get_ayanamsa_name(ayanamsa_id)
             self.statusBar().showMessage(
@@ -3275,12 +3687,21 @@ class ChartGUI(QMainWindow):
             return
         try:
             from libaditya import swe
-            if ayanamsa_id in (98, 99, 100):
-                # Custom ayanamsas — use Lahiri as ecliptic fallback for chart display
-                swe.set_sid_mode(1)
+            if ayanamsa_id in (99, 100):
+                # Vedanga Jyotisha: no Swiss Ephemeris sid mode. Compute the TRUE offset
+                # from the same ecliptic solstice identity the display path and kuta use
+                # (SPEC-KUTA-AYA-001 3.3) so the readout matches the frame rendered.
+                # Displayed sidereal = tropical + aval, i.e. offset = -aval.
+                from libaditya import utils as _lib_utils
+                self.chart_ayanamsa_offset = -_lib_utils.vedanga_ecliptic_aval(self.birth_jd)
+            elif ayanamsa_id == 98:
+                # Dhruva GC mid-Mula maps to Swiss Ephemeris #36 (see libaditya
+                # init_coords), not Lahiri — report its real offset.
+                swe.set_sid_mode(36)
+                self.chart_ayanamsa_offset = swe.get_ayanamsa_ut(self.birth_jd)
             else:
                 swe.set_sid_mode(ayanamsa_id)
-            self.chart_ayanamsa_offset = swe.get_ayanamsa_ut(self.birth_jd)
+                self.chart_ayanamsa_offset = swe.get_ayanamsa_ut(self.birth_jd)
         except Exception as e:
             print(f"[WARNING] Failed to compute ayanamsa offset: {e}")
             self.chart_ayanamsa_offset = 0.0
@@ -3436,6 +3857,11 @@ class ChartGUI(QMainWindow):
         elif idx == 2 and hasattr(self, 'north_indian_view') and self.north_indian_view:
             self.north_indian_view.update_transit_overlay(mgr)
 
+        # SPEC-VGC-001 D-1: transit outranks the center varga, so turning it
+        # on SUSPENDS a selected divisional chart. INV-5 requires that to be
+        # visible rather than silent.
+        self._sync_varga_center_button()
+
         from managers.settings_manager import get_settings
         get_settings().set("chart.show_transit_overlay", mgr.transit_enabled)
 
@@ -3443,6 +3869,25 @@ class ChartGUI(QMainWindow):
             self.statusBar().showMessage("Transit overlay ON")
         else:
             self.statusBar().showMessage("Transit overlay OFF")
+
+    def _push_transit_state(self, view):
+        """Push transit state to `view` whether transit is ON or OFF.
+
+        SPEC-SIC-003 §2.6 / T-10: the mediator only updates the VISIBLE
+        view, so a view hidden while transit was switched off never hears
+        about it. The switch-back pushes used to be gated on
+        `transit_enabled`, which blocked the one message that would have
+        corrected it — the hidden view kept redrawing a stale overlay. The
+        view decides what to do with the state; the gate belongs there, not
+        here.
+        """
+        mgr = getattr(self, 'transit_overlay_manager', None)
+        if mgr is None or view is None:
+            return
+        if hasattr(view, 'update_transit_from_manager'):
+            view.update_transit_from_manager(mgr)   # wheel
+        elif hasattr(view, 'update_transit_overlay'):
+            view.update_transit_overlay(mgr)        # South / North Indian
 
     def _on_transit_state_changed(self):
         """Mediator: route TransitOverlayManager state to the active view."""
@@ -3464,8 +3909,8 @@ class ChartGUI(QMainWindow):
     def _toggle_outer_planets(self):
         """
         Toggle outer planets visibility (Uranus, Neptune, Pluto).
-        Affects all chart views: South Indian, North Indian, and Wheel.
-        Shortcut: F2
+        Affects all chart views: South Indian, North Indian, Wheel, Body Graph.
+        Shortcut: F8
         """
         # Get current state from action (it toggles automatically)
         show = self.outer_planets_action.isChecked()
@@ -3490,6 +3935,18 @@ class ChartGUI(QMainWindow):
             if self.wheel_view._chart:
                 self.wheel_view.draw_wheel()
                 self.wheel_view.ensure_visible()
+
+        # Update Body Graph view (SPEC-BODY-001) — re-render so F8 hides/shows
+        # Uranus/Neptune/Pluto bars here too.
+        if hasattr(self, 'body_graph_view') and self.body_graph_view:
+            self.body_graph_view.show_outer_planets = show
+            if self.body_graph_view._current_chart is not None:
+                self.body_graph_view.update_from_chart(
+                    self.body_graph_view._current_chart,
+                    use_western_names=self.body_graph_view._use_western,
+                    aditya_mode=self.body_graph_view._aditya_mode,
+                    varga_code=self.body_graph_view._varga_code)
+                self.body_graph_view.ensure_visible()
 
         # Persist F8 outer planets preference
         from managers.settings_manager import get_settings
@@ -3557,7 +4014,7 @@ class ChartGUI(QMainWindow):
                 "Retinue rings only available on Wheel view (F2 to switch)", 3000)
         # Propagate to panel wheels (draw if visible, defer if not)
         active_tab = self.tab_widget.widget(self.tab_widget.currentIndex())
-        for panel_attr in ('transit_panel', 'solar_return_page'):
+        for panel_attr in ('transit_panel', 'solar_return_page', 'eclipse_panel'):
             panel = getattr(self, panel_attr, None)
             if panel:
                 for wheel in panel.get_all_wheels():
@@ -3586,7 +4043,7 @@ class ChartGUI(QMainWindow):
             self.statusBar().showMessage(
                 "Trimsamsha degrees only available on Wheel view (F2)", 3000)
         active_tab = self.tab_widget.widget(self.tab_widget.currentIndex())
-        for panel_attr in ('transit_panel', 'solar_return_page'):
+        for panel_attr in ('transit_panel', 'solar_return_page', 'eclipse_panel'):
             panel = getattr(self, panel_attr, None)
             if panel:
                 for wheel in panel.get_all_wheels():
@@ -3614,7 +4071,7 @@ class ChartGUI(QMainWindow):
             self.retinue_rings_action.setChecked(False)
         # Propagate to panel wheels (draw if visible, defer if not)
         active_tab = self.tab_widget.widget(self.tab_widget.currentIndex())
-        for panel_attr in ('transit_panel', 'solar_return_page'):
+        for panel_attr in ('transit_panel', 'solar_return_page', 'eclipse_panel'):
             panel = getattr(self, panel_attr, None)
             if panel:
                 for wheel in panel.get_all_wheels():
@@ -3623,6 +4080,25 @@ class ChartGUI(QMainWindow):
                         wheel.draw_wheel()
                     else:
                         wheel._retinue_dirty = True
+
+    def _toggle_aspect_panel(self):
+        """Toggle the rashi aspect panel on the Body Graph view (Shift+F2).
+
+        No-op unless the Body Graph (chart_stack index 3) is current, mirroring
+        the index guard used by the other view-specific shortcuts. The dual
+        widget persists its own show/hide state, so nothing else is needed here.
+        """
+        if self.chart_stack.currentIndex() != 3:
+            self.statusBar().showMessage(
+                "Rashi aspect panel is only available on the Body Graph view "
+                "(F2 to switch)", 3000)
+            return
+        current = self.chart_stack.currentWidget()
+        if hasattr(current, 'toggle_aspect_panel'):
+            current.toggle_aspect_panel()
+            state = "ON" if getattr(current, '_panel_visible', False) else "OFF"
+            self.statusBar().showMessage(
+                f"Rashi aspect panel: {state} (Shift+F2)", 3000)
 
     def _cycle_cusp_glow(self):
         """Cycle cusp glow lines: OFF → Angles → All → OFF (F9)."""
@@ -3638,7 +4114,7 @@ class ChartGUI(QMainWindow):
             get_settings().persist_runtime_change("chart.cusp_glow_mode", new_mode)
             # Propagate to panel wheels (draw if visible, defer if not)
             active_tab = self.tab_widget.widget(self.tab_widget.currentIndex())
-            for panel_attr in ('transit_panel', 'solar_return_page'):
+            for panel_attr in ('transit_panel', 'solar_return_page', 'eclipse_panel'):
                 panel = getattr(self, panel_attr, None)
                 if panel:
                     for wheel in panel.get_all_wheels():
@@ -3669,14 +4145,13 @@ class ChartGUI(QMainWindow):
         ADITYA_NAMES = ["Dhata", "Aryama", "Mitra", "Varuna", "Indra", "Vivasvan",
                        "Tvasta", "Vishnu", "Amzu", "Bhaga", "Pusha", "Parjanya"]
 
-        # If a Z6b button is currently driving the override, F4 takes over
-        # cleanly: deselect the Z6b column and reset the cycle so it starts
-        # from None (Birth Ascendant) → Dhata.
-        if getattr(self, "selected_z6b_sign", None) is not None:
-            for btn in getattr(self, "sign_selector_buttons", {}).values():
-                btn.setChecked(False)
-            self.current_ascendant_override = None
-            self._on_z6b_selection_changed(None)
+        # NOTE (SPEC-SIC-003 §4.3): there is deliberately NO "F4 takes over
+        # from the column" branch here. The column and F4 are two input
+        # surfaces over ONE Ascendant state (INV-10), so a takeover is a
+        # contradiction in terms. The branch that used to live here also
+        # never cleared `selected_z6b_sign` — only the column module writes
+        # it — so it re-fired on every subsequent press and re-zeroed the
+        # counter, pinning F4 to Dhata forever after any column click.
 
         # Cycle logic: None → 0 → 1 → ... → 11 → None
         if self.current_ascendant_override is None:
@@ -3687,6 +4162,14 @@ class ChartGUI(QMainWindow):
             self.current_ascendant_override = None  # Back to birth Ascendant
 
         override = self.current_ascendant_override
+
+        # Keep the sign column showing where the chart is anchored (INV-10).
+        # Uses the column's own setter, which does NOT re-enter
+        # _on_z6b_selection_changed — synthesising a click here would
+        # rewrite the counter this method is in the middle of advancing.
+        from apps.panels.sign_selector_column import set_column_selection
+        set_column_selection(
+            self, None if override is None else override + 1)
 
         # Update Wheel view
         if hasattr(self, 'wheel_view') and self.wheel_view:
@@ -3832,9 +4315,15 @@ class ChartGUI(QMainWindow):
                 current_chart = self.memory_panel.charts[current_idx]
                 chart_name = current_chart.get('recipe', {}).get('name') or current_chart.get('person_name', 'chart')
 
-                # Option 1: Use this chart's chtk_path if it has one
+                # Option 1: hand Kala the file only if Kala can READ it.
+                # SPEC-PERSIST-001 D-13 (td-rayw): this used to ask whether a
+                # file existed, which was the same question only while every
+                # chart was a .chtk. With .toml the default, the extension is
+                # the question — a .toml falls through to the temp-CHTK
+                # projection below, and the user's file is never rewritten.
+                from core.kala_export import kala_can_open
                 memory_chtk_path = current_chart.get('chtk_path')
-                if memory_chtk_path and os.path.exists(str(memory_chtk_path)):
+                if kala_can_open(memory_chtk_path):
                     chtk_path = str(memory_chtk_path)
                 else:
                     # Option 2: Build metadata from recipe for temp CHTK
@@ -3892,10 +4381,21 @@ class ChartGUI(QMainWindow):
         # Create temp CHTK if we have metadata but no chtk_path
         if not chtk_path and metadata:
             try:
+                # SPEC-IMPORT-001 §6.1: this ungated CHTKWriter path is
+                # intentional — Kala only consumes .chtk, and this always writes
+                # a FRESH temp file (never overwrites a user .toml), so it is not
+                # a B5 corruption site.
                 from core.chtk_reader import CHTKWriter
 
                 temp_dir = tempfile.gettempdir()
-                safe_name = chart_name.replace(' ', '_').replace('/', '_')
+                # Was `.replace(' ', '_').replace('/', '_')`, which leaves
+                # : \ ? * < > | " intact. Windows rejects every one of them,
+                # so "Open in Kala" on a chart named e.g. "Eclipse 11:14 UT"
+                # failed there and only there. windows_safe_filename returns
+                # an already-safe name byte-identical, so nothing that works
+                # today changes.
+                from core.fs_safety import windows_safe_filename
+                safe_name = windows_safe_filename(chart_name, default="chart")
                 temp_path = os.path.join(temp_dir, f"{safe_name}_kala.chtk")
 
                 writer = CHTKWriter()
@@ -3959,8 +4459,16 @@ class ChartGUI(QMainWindow):
         from ui.add_chart_dialog_qt import show_add_chart_dialog
         import copy
 
-        def on_chart_loaded(chart, name, location, *, planets_data=None):
-            """Callback when chart is successfully generated."""
+        def on_chart_loaded(chart, name, location, *, planets_data=None,
+                            file_path=None):
+            """Callback when chart is successfully generated.
+
+            file_path: the file the pipeline wrote (SPEC-PERSIST-001 INV-7).
+            It is recorded on the panel entry so the chart can be recovered
+            from disk. The entry key is still called chtk_path — it has held
+            the source path of ANY supported format since .toml import
+            shipped.
+            """
             from core.chart_factory import make_source_params, recipe_from_chart
             from state.events import SetActiveChart
             _chart = chart
@@ -3985,7 +4493,7 @@ class ChartGUI(QMainWindow):
             self.state.dispatch(SetActiveChart(
                 chart=_chart,
                 source_params=make_source_params(
-                    chtk_path=None,
+                    chtk_path=file_path,
                     birth_data=birth_data,
                     mode=self.state.aditya_mode,
                     ayanamsa=self.chart_sidereal_ayanamsa_id,
@@ -3999,17 +4507,20 @@ class ChartGUI(QMainWindow):
             self.current_timezone = timezone_str
             self.person_name = name
             self.birth_country = country
-            self.current_chart_path = None
+            self.current_chart_path = file_path
             self.is_human_design = False
 
             # 2. Add recipe to memory panel (property fallback needs this)
             if hasattr(self, 'chart_memory_panel') and self.chart_memory_panel:
+                # metadata N/A: the AI Add-Chart dialog does not collect
+                # rodden/tags/notes and produces no julian_day/dst_offset_hours.
                 _recipe = recipe_from_chart(
                     _chart, timezone=timezone_str,
                     city=location, country=country,
                 )
                 self.chart_memory_panel.add_chart(
                     _recipe, chart_obj=self.state.active_chart,
+                    chtk_path=file_path,
                 )
 
             # Invalidate property cache so fallback derives from new recipe
@@ -4036,7 +4547,8 @@ class ChartGUI(QMainWindow):
 
         _transit_result = calculate_transit_now(
             mode=self.state.aditya_mode,
-            ayanamsa=getattr(self, 'chart_sidereal_ayanamsa_id', 1),
+            ayanamsa=getattr(self, 'chart_sidereal_ayanamsa_id', 100),
+            hsys=self.state.house_system_code,
         )
         if not _transit_result:
             from PySide6.QtWidgets import QMessageBox
@@ -4065,6 +4577,7 @@ class ChartGUI(QMainWindow):
         _utc_off = now_local.utcoffset().total_seconds() / 3600.0 if now_local.utcoffset() else 0.0
 
         from core.chart_factory import make_recipe
+        # metadata N/A: derived chart ("Now" transit, no birth metadata).
         _recipe = make_recipe(
             name=name,
             year=now_local.year, month=now_local.month, day=now_local.day,
@@ -4145,7 +4658,7 @@ class ChartGUI(QMainWindow):
         # Green active style - Aditya mode with Aditya names
         active_style = f"""
             QPushButton {{
-                background-color: #4CAF50;
+                background-color: {desat_hex('#4CAF50')};
                 color: white;
                 font-weight: bold;
                 font-size: {scaled_area_px('buttons')}px;
@@ -4155,7 +4668,7 @@ class ChartGUI(QMainWindow):
                 min-width: 100px;
             }}
             QPushButton:hover {{
-                background-color: #45A049;
+                background-color: {desat_hex('#45A049')};
             }}
         """
 
@@ -4263,11 +4776,16 @@ class ChartGUI(QMainWindow):
         from PySide6.QtGui import QImage, QPainter
         from PySide6.QtCore import Qt
 
-        # Get current chart widget (South Indian, Wheel, or North Indian)
+        # Get the current chart widget. The four scene-based views export at
+        # their native 2048px scene resolution; Cards of Truth (SPEC-COT-001)
+        # paints straight onto the widget with no scene, so it exports the
+        # rendered widget instead — WYSIWYG at screen resolution rather than a
+        # 2x upscale that would soften the planet-icon raster art.
         current = self.chart_stack.currentWidget()
-        if not current or not hasattr(current, 'scene'):
+        if not current:
             self.statusBar().showMessage("No chart to save", 3000)
             return
+        scene_based = hasattr(current, 'scene')
 
         # Build default filename from chart name
         chart_name = "chart"
@@ -4275,6 +4793,11 @@ class ChartGUI(QMainWindow):
             chart_name = self.current_chart_data.get('name', 'chart')
             chart_name = "".join(c for c in chart_name if c.isalnum() or c in " _-").strip()
             chart_name = chart_name.replace(" ", "_")
+            # The filter above removes Windows-illegal characters, but a name
+            # made only of them collapses to "" (yielding a dotfile like
+            # ".png"), and CON/NUL/COM1 survive it intact.
+            from core.fs_safety import windows_safe_filename
+            chart_name = windows_safe_filename(chart_name, default="chart")
 
         default_path = str(Path.home() / f"{chart_name}.png")
 
@@ -4285,23 +4808,26 @@ class ChartGUI(QMainWindow):
         if not filepath:
             return
 
-        # Render scene at native resolution (scene is already 2048px — high quality)
-        scene = current.scene
-        scene_rect = scene.sceneRect()
-        width = int(scene_rect.width())
-        height = int(scene_rect.height())
+        if scene_based:
+            # Render scene at native resolution (scene is already 2048px — high quality)
+            scene = current.scene
+            scene_rect = scene.sceneRect()
+            width = int(scene_rect.width())
+            height = int(scene_rect.height())
 
-        from PySide6.QtCore import QRectF
-        image = QImage(width, height, QImage.Format.Format_ARGB32)
-        image.fill(QColor("#1a1a1e"))  # Dark background
+            from PySide6.QtCore import QRectF
+            image = QImage(width, height, QImage.Format.Format_ARGB32)
+            image.fill(QColor("#1a1a1e"))  # Dark background
 
-        painter = QPainter(image)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
-        # Explicit target (full image) ← source (full scene) mapping
-        target = QRectF(0, 0, width, height)
-        scene.render(painter, target, scene_rect)
-        painter.end()
+            painter = QPainter(image)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+            # Explicit target (full image) ← source (full scene) mapping
+            target = QRectF(0, 0, width, height)
+            scene.render(painter, target, scene_rect)
+            painter.end()
+        else:
+            image = current.grab().toImage()
 
         # PNG compression: 0 = max compression (smaller file), 100 = no compression
         image.save(filepath, "PNG", 50)
@@ -4316,6 +4842,11 @@ class ChartGUI(QMainWindow):
             chart_name = self.current_chart_data.get('name', 'chart')
             chart_name = "".join(c for c in chart_name if c.isalnum() or c in " _-").strip()
             chart_name = chart_name.replace(" ", "_")
+            # The filter above removes Windows-illegal characters, but a name
+            # made only of them collapses to "" (yielding a dotfile like
+            # ".png"), and CON/NUL/COM1 survive it intact.
+            from core.fs_safety import windows_safe_filename
+            chart_name = windows_safe_filename(chart_name, default="chart")
 
         default_path = str(Path.home() / f"{chart_name}_full.png")
 
@@ -4341,7 +4872,17 @@ class ChartGUI(QMainWindow):
         """
         sign_idx_0based = (sign_index_1based - 1) if sign_index_1based else None
 
+        # One shared Ascendant state (SPEC-SIC-003 INV-10 / D-5): the column
+        # writes the same counter F4 advances, so the two surfaces cannot
+        # drift apart.
+        self.current_ascendant_override = sign_idx_0based
+
         if hasattr(self, "chart_view") and self.chart_view:
+            # D-6: the SI host re-anchors like every other view — the fan
+            # reaches BOTH children, so a theme flip can never change the
+            # effective Ascendant. set_z6b_selection stays because the
+            # classic child still draws its mini North Indian chart from it.
+            self.chart_view.set_ascendant_override(sign_idx_0based)
             self.chart_view.set_z6b_selection(sign_index_1based)
 
         if hasattr(self, "wheel_view") and self.wheel_view:
@@ -4357,6 +4898,230 @@ class ChartGUI(QMainWindow):
         else:
             self.statusBar().showMessage("Birth Ascendant restored (F4 to cycle)")
 
+    def _toggle_varga_in_center(self, enabled):
+        """SPEC-VGC-001 §4.3 — the toggle below D-60.
+
+        Writes the flag, persists it (D-7), and re-runs the current varga
+        through the one writer. No routing logic of its own: everything that
+        decides where a varga is drawn lives in `_apply_current_varga`.
+        """
+        self.varga_in_center = bool(enabled)
+        try:
+            from managers.settings_manager import get_settings
+            get_settings().set("display.varga_in_center", self.varga_in_center)
+        except Exception as e:      # a preference must never block the view
+            print(f"[VARGA] Could not persist varga_in_center: {e}")
+
+        self._apply_current_varga()
+
+        varga = self.state.current_varga
+        if not self.varga_in_center:
+            self.statusBar().showMessage("Divisional chart back in the main chart")
+        elif varga == 1:
+            # D-3: nothing to compare yet. The box fills the moment a
+            # divisional chart is picked, which explains itself better than
+            # a refusal to toggle would.
+            self.statusBar().showMessage(
+                f"{self._varga_surface_phrase().capitalize()} ready - "
+                "pick a divisional chart")
+        else:
+            name = VARGA_NAMES.get(varga, f"D-{varga}")
+            self.statusBar().showMessage(
+                f"{name} (D-{varga}) in the {self._varga_surface_phrase()} - "
+                "main chart stays D-1")
+
+    def _center_varga_suspended_by(self):
+        """What is currently outranking the center varga, or None.
+
+        D-1 chose precedence over mutually-exclusive toggles, on the
+        grounds that the transit overlay is shared by every view and
+        switching it off from the varga column would reach far outside the
+        South Indian chart. The price of that choice is that the center
+        varga can be SUSPENDED — and INV-5 says a suspension must be
+        visible, or the toggle sits lit over a box showing something else
+        and the selected varga is nowhere with no explanation.
+        """
+        if not getattr(self, 'varga_in_center', False):
+            return None
+        if self.state.current_varga == 1:
+            return None
+        # Time adjust belongs to the South Indian center box only; the wheel
+        # and North Indian rings (SPEC-VGO-001) have no such mode, so asking
+        # the South Indian child about it while the wheel is visible would
+        # grey the toggle for a reason the user cannot see on screen.
+        if self._varga_second_surface() == "center_box":
+            view = getattr(self, 'chart_view', None)
+            if view is None:
+                return None
+            child = getattr(view, 'active_view', view)
+            if getattr(child, 'time_adjust_mode', False):
+                return "time adjust"
+        # The same INV-4 test every surface uses: enabled with no usable
+        # chart draws nothing, so it takes nothing from the varga either.
+        mgr = getattr(self, 'transit_overlay_manager', None)
+        if (mgr is not None and getattr(mgr, "transit_enabled", False)
+                and getattr(mgr, "transit_chart", None) is not None):
+            return "transit"
+        return None
+
+    # Which second surface the VISIBLE view offers the varga, or None.
+    # SPEC-VGO-001 INV-8: one toggle, three surfaces, and body graph has
+    # none. Indices match _switch_to_chart_index / VALID_VIEWS.
+    # 3 = Body Graph, 4 = Cards of Truth: neither has a second surface for the
+    # varga (Cards of Truth is natal-only by INV-15), so the centre-varga
+    # toggle greys out on both.
+    _SECOND_SURFACE_BY_INDEX = {0: "center_box", 1: "outer_ring",
+                                2: "outer_ring", 3: None, 4: None}
+
+    def _varga_second_surface(self):
+        """Name the second surface of the visible view, or None."""
+        stack = getattr(self, 'chart_stack', None)
+        if stack is None:
+            return "center_box"
+        return self._SECOND_SURFACE_BY_INDEX.get(stack.currentIndex())
+
+    def _varga_surface_phrase(self):
+        """The second surface, in the words the status bar uses.
+
+        The messages used to say "center box" unconditionally, which became
+        wrong the moment the wheel and North Indian charts grew a ring
+        (SPEC-VGO-001). Falls back to the ring wording rather than to the
+        South Indian one when no view is resolvable, because that is the
+        wording that is true for two of the three surfaces.
+        """
+        return ("center box" if self._varga_second_surface() == "center_box"
+                else "outer ring")
+
+    def _sync_varga_center_button(self):
+        """Enable the toggle only on a view that has a second surface.
+
+        South Indian draws the varga inside its center box, the wheel and
+        North Indian draw it as a ring around the chart (SPEC-VGO-001), and
+        the body graph has nowhere to put it — a live-looking button that
+        does nothing is worse than a grey one. The FLAG survives the
+        disabled period: `_apply_current_varga` runs on the way back, so F2
+        away and back restores the second chart.
+        """
+        btn = getattr(self, 'varga_center_button', None)
+        if btn is None:
+            return
+        surface = self._varga_second_surface()
+        btn.setEnabled(surface is not None)
+        suspended = self._center_varga_suspended_by() if surface else None
+        # A dynamic property so the stylesheet can dim it without a second
+        # style path (Rule 20: no hardcoded hex outside the theme).
+        btn.setProperty("suspended", bool(suspended))
+        btn.style().unpolish(btn)
+        btn.style().polish(btn)
+        where = ("inside the center box" if surface == "center_box"
+                 else "around the chart")
+        if surface is None:
+            btn.setToolTip(
+                "The body graph has no second chart surface.\n"
+                "Switch to a South Indian, wheel or North Indian chart.")
+        elif suspended:
+            btn.setToolTip(
+                f"Showing {suspended} instead.\n"
+                "The divisional chart returns when that is switched off.")
+        else:
+            btn.setToolTip(
+                f"Show the divisional chart {where},\n"
+                "keeping D-1 in the main chart")
+
+    def _apply_current_varga(self):
+        """Paint `state.current_varga` onto every surface. THE one writer.
+
+        SPEC-VGC-001 §4.2, closes td-ijjf. `_switch_varga` used to be treated
+        as the only route to the chart views, and it is not: three other
+        paths re-render with no varga code at all (`_update_all_chart_views`,
+        and both branches of `_toggle_wheel_view`). The visible symptom is a
+        live bug independent of any feature — show D-10, press F2, and the
+        wheel comes up D-1 while the varga column still shows 10 checked.
+        Every one of those paths now calls this instead of hand-rolling
+        `update_from_chart`.
+
+        Deliberately does NOT dispatch, start the loading manager or refresh
+        panels: the paths that call this already own those, and calling back
+        into them would recurse (pre-mortem F-6). `_switch_varga` keeps the
+        dispatch; this only paints.
+        """
+        active_chart = self.state.active_chart
+        if not active_chart:
+            return
+
+        # Use libaditya Chart.varga(N) directly. Mode is baked into the Chart
+        # at construction time (Issue 2), so chart.varga() already returns the
+        # mode-correct Varga object — no `chart.tropical()` branch needed (G7).
+        # Translate GUI varga numbers into libaditya's classical-formula codes
+        # (negative for BPHS deity-based vargas) — without this, D-10/D-24/
+        # D-40/D-45/D-60 silently return parivritti results.
+        from core.varga_codes import to_libaditya_varga_code
+        varga_number = self.state.current_varga
+        rcode = (None if varga_number == 1
+                 else to_libaditya_varga_code(varga_number))
+
+        ayanamsa_off = (self.chart_ayanamsa_offset
+                        if self.state.aditya_mode == "sidereal" else 0.0)
+        use_western = getattr(self, 'use_western_names', False)
+        render_offset = 0.0 if varga_number != 1 else ayanamsa_off
+
+        # SPEC-VGC-001 + SPEC-VGO-001: with the mode on, the MAIN chart of
+        # every view that has a second surface stays on D-1 and the varga is
+        # drawn beside it — inside the South Indian center box, around the
+        # wheel and the North Indian chart. Body graph has no second surface,
+        # so it keeps the varga full-size (SPEC-VGC-001 D-2).
+        in_second_surface = (bool(getattr(self, 'varga_in_center', False))
+                             and rcode is not None)
+        main_varga = None if in_second_surface else rcode
+        center_varga = rcode if in_second_surface else None
+        ring_varga = rcode if in_second_surface else None
+        grid_varga = main_varga
+
+        if hasattr(self, 'chart_view') and self.chart_view:
+            self.chart_view.update_from_chart(
+                active_chart, varga_code=grid_varga,
+                use_western_names=use_western,
+                ayanamsa_offset=(ayanamsa_off if grid_varga is None
+                                 else render_offset),
+                aditya_mode=self.state.aditya_mode)
+            setter = getattr(self.chart_view, 'set_center_varga', None)
+            if setter is not None:
+                setter(center_varga)
+        if hasattr(self, 'wheel_view') and self.wheel_view:
+            self.wheel_view.update_from_chart(active_chart, varga_code=main_varga,
+                                               ring_varga_code=ring_varga,
+                                               use_western_names=use_western,
+                                               ayanamsa_offset=(ayanamsa_off if main_varga is None
+                                                                else render_offset),
+                                               aditya_mode=self.state.aditya_mode)
+        if hasattr(self, 'north_indian_view') and self.north_indian_view:
+            self.north_indian_view.update_from_chart(active_chart, varga_code=main_varga,
+                                                      ring_varga_code=ring_varga,
+                                                      use_western_names=use_western,
+                                                      ayanamsa_offset=(ayanamsa_off if main_varga is None
+                                                                       else render_offset),
+                                                      aditya_mode=self.state.aditya_mode)
+        if hasattr(self, 'body_graph_view') and self.body_graph_view:
+            self.body_graph_view.update_from_chart(active_chart, varga_code=rcode,
+                                                    use_western_names=use_western,
+                                                    ayanamsa_offset=render_offset,
+                                                    aditya_mode=self.state.aditya_mode,
+                                                    gender=self._current_body_gender())
+        # SPEC-COT-001 INV-15 v2: the spread FOLLOWS the varga. It gets the full
+        # rcode, like the body graph, because it has no second surface — the
+        # divisional placement IS the main content, not a side panel. The card
+        # faces do not move with the varga; only which card each body falls in.
+        if hasattr(self, 'cards_of_truth_view') and self.cards_of_truth_view:
+            self.cards_of_truth_view.update_from_chart(active_chart, varga_code=rcode)
+
+        if hasattr(self, 'varga_buttons') and varga_number in self.varga_buttons:
+            self.varga_buttons[varga_number].setChecked(True)
+        if hasattr(self, 'varga_actions') and varga_number in self.varga_actions:
+            self.varga_actions[varga_number].setChecked(True)
+
+        self._sync_varga_center_button()
+        self._update_title()
+
     def _switch_varga(self, varga_number):
         """Switch to display a different Varga chart"""
         # Chart-Everywhere Issue 3 (G8): guard on active_chart, not the dict.
@@ -4367,59 +5132,30 @@ class ChartGUI(QMainWindow):
         from state.events import SetVarga
         self.state.dispatch(SetVarga(varga_number=varga_number))
 
-        # Use libaditya Chart.varga(N) directly. Mode is baked into the Chart at
-        # construction time (Issue 2), so chart.varga() already returns the
-        # mode-correct Varga object — no `chart.tropical()` branch needed (G7).
-        # Translate GUI varga numbers into libaditya's classical-formula codes
-        # (negative for BPHS deity-based vargas) — without this, D-10/D-24/D-40
-        # /D-45/D-60 silently return parivritti results.
-        active_chart = self.state.active_chart
-        if not active_chart:
-            return
-
-        from core.varga_codes import to_libaditya_varga_code
-        rcode = None if varga_number == 1 else to_libaditya_varga_code(varga_number)
-
-        ayanamsa_off = self.chart_ayanamsa_offset if self.state.aditya_mode == "sidereal" else 0.0
-        use_western = getattr(self, 'use_western_names', False)
-        render_offset = 0.0 if varga_number != 1 else ayanamsa_off
-
-        if hasattr(self, 'chart_view') and self.chart_view:
-            self.chart_view.update_from_chart(active_chart, varga_code=rcode,
-                                               use_western_names=use_western,
-                                               ayanamsa_offset=render_offset,
-                                               aditya_mode=self.state.aditya_mode)
-        if hasattr(self, 'wheel_view') and self.wheel_view:
-            self.wheel_view.update_from_chart(active_chart, varga_code=rcode,
-                                               use_western_names=use_western,
-                                               ayanamsa_offset=render_offset,
-                                               aditya_mode=self.state.aditya_mode)
-        if hasattr(self, 'north_indian_view') and self.north_indian_view:
-            self.north_indian_view.update_from_chart(active_chart, varga_code=rcode,
-                                                      use_western_names=use_western,
-                                                      ayanamsa_offset=render_offset,
-                                                      aditya_mode=self.state.aditya_mode)
-
-        # Phase 4 W5: all 12 panels migrated to controllers — varga changes
-        # propagate via the SetVarga dispatch above. Lazy controllers (avastha,
-        # shame) handle varga via _on_varga_changed with their own lazy guard.
-        # Aspects and strength stay D1-only (mode-invariant across vargas).
+        # Panels react to that dispatch on their own (state/panel_mixin.py).
+        # Almost all of them are D1-only by design and do not follow the
+        # varga at all — `shame_controller` is the single exception.
+        self._apply_current_varga()
 
         # Ensure varga chart displays immediately
         QApplication.processEvents()
 
-        if hasattr(self, 'varga_buttons') and varga_number in self.varga_buttons:
-            self.varga_buttons[varga_number].setChecked(True)
-
-        if hasattr(self, 'varga_actions') and varga_number in self.varga_actions:
-            self.varga_actions[varga_number].setChecked(True)
-
         varga_name = VARGA_NAMES.get(varga_number, f"D-{varga_number}")
-
-        # Use centralized title update (includes varga suffix when D2+)
-        self._update_title()
-
-        self.statusBar().showMessage(f"Showing {varga_name} (D-{varga_number}) chart")
+        suspended = self._center_varga_suspended_by()
+        if suspended:
+            # INV-5: the varga is selected but nothing on screen shows it.
+            self.statusBar().showMessage(
+                f"{varga_name} (D-{varga_number}) selected - the "
+                f"{self._varga_surface_phrase()} is showing {suspended}")
+        elif getattr(self, 'varga_in_center', False) and varga_number != 1:
+            # D-4: the main chart IS D-1 here, so say where the varga went
+            # rather than claiming the chart is a varga.
+            self.statusBar().showMessage(
+                f"{varga_name} (D-{varga_number}) in the "
+                f"{self._varga_surface_phrase()} - main chart stays D-1")
+        else:
+            self.statusBar().showMessage(
+                f"Showing {varga_name} (D-{varga_number}) chart")
 
     # ─── Keyboard Shortcuts ───────────────────────────────────────────
     def _setup_keyboard_shortcuts(self):
@@ -4487,10 +5223,11 @@ class ChartGUI(QMainWindow):
         self.chart_manager.load_chart(chtk_path)
 
     def _on_chart_folders_changed(self):
-        """Reload Find Chart paths and rebuild index after Settings saves."""
+        """Reload Find Chart paths after Settings saves. SPEC-FIND-003: no auto-rebuild."""
         if hasattr(self, 'find_chart_panel') and self.find_chart_panel:
             self.find_chart_panel._load_folder_paths()
-            self.find_chart_panel._build_index_async()
+            self.find_chart_panel.index_status.setText(
+                "Folders updated. Click REBUILD INDEX to re-index.")
 
     def _on_find_chart_selected(self, filepath):
         """Handle chart selection from Find Chart tab."""
@@ -4554,6 +5291,7 @@ class ChartGUI(QMainWindow):
 
                 mp = getattr(self, 'memory_panel', None) or getattr(self, 'chart_memory_panel', None)
                 if mp:
+                    # metadata N/A: derived chart (birth-time finder result).
                     _bf_recipe = recipe_from_chart(
                         _chart, name=name,
                         timezone=self.current_timezone,
@@ -4642,6 +5380,7 @@ class ChartGUI(QMainWindow):
 
                 mp = getattr(self, 'memory_panel', None) or getattr(self, 'chart_memory_panel', None)
                 if mp:
+                    # metadata N/A: derived chart (lunar return).
                     _lunar_recipe = recipe_from_chart(
                         _chart, name=name, timezone=timezone_str,
                         city=city, country=country,
@@ -4721,6 +5460,7 @@ class ChartGUI(QMainWindow):
 
                 mp = getattr(self, 'memory_panel', None) or getattr(self, 'chart_memory_panel', None)
                 if mp:
+                    # metadata N/A: derived chart (eclipse).
                     _eclipse_recipe = recipe_from_chart(
                         _chart, name=name, timezone=timezone_str,
                         city=city, country=country,
@@ -4779,7 +5519,9 @@ class ChartGUI(QMainWindow):
 
         try:
             from managers.birth_data_manager import BirthDataManager
-            bd = BirthDataManager.create_birth_data_from_chtk(chtk_path)
+            # SPEC-IMPORT-001 §6.1: dispatch by extension so exploration can load
+            # both .chtk and .toml companion charts.
+            bd = BirthDataManager.create_birth_data_from_file(chtk_path)
             BirthDataManager.report_tz_warnings(
                 BirthDataManager.validate_birth_data(bd),
                 status_bar=self.statusBar(), context=f"Companion {name}")
@@ -4791,8 +5533,14 @@ class ChartGUI(QMainWindow):
 
             self.loading_manager.start(f"Loading {name}...")
             from core.time_utils import julday
-            hour_decimal = bd['utc_hour'] + bd['utc_minute'] / 60.0 + bd['utc_second'] / 3600.0
-            birth_jd = julday(bd['utc_year'], bd['utc_month'], bd['utc_day'], hour_decimal)
+            # Honor the file's [moment].jd when present (TOML); CHTK recomputes
+            # from civil. Mirrors chart_manager.load_chart (M5, spec §6.2).
+            _bd_jd = bd.get('julian_day')
+            if _bd_jd is not None:
+                birth_jd = float(_bd_jd)
+            else:
+                hour_decimal = bd['utc_hour'] + bd['utc_minute'] / 60.0 + bd['utc_second'] / 3600.0
+                birth_jd = julday(bd['utc_year'], bd['utc_month'], bd['utc_day'], hour_decimal)
             _utc_off = bd.get('utc_offset_hours', 0.0)
 
             from core.chart_factory import build_chart_from_params, make_source_params
@@ -4829,11 +5577,17 @@ class ChartGUI(QMainWindow):
             mp = getattr(self, 'memory_panel', None) or getattr(self, 'chart_memory_panel', None)
             if mp:
                 from core.chart_factory import recipe_from_chart
+                # SPEC-IMPORT-001 §6.3: forward TOML-native metadata from the
+                # loaded birth_data so rodden/tags/notes survive into the recipe
+                # (and thus session.json). Absent on CHTK-origin charts -> None.
                 _expl_recipe = recipe_from_chart(
                     _chart, name=name, timezone=self.current_timezone,
                     city=city, country=country,
                     gender=bd.get('gender', 'Unknown'),
                     time_change_flag=bd.get('time_change_flag', 0),
+                    rodden=bd.get('rodden'), tags=bd.get('tags'),
+                    notes=bd.get('notes'), julian_day=bd.get('julian_day'),
+                    dst_offset_hours=bd.get('dst_offset_hours'),
                 )
                 mp.add_chart(
                     _expl_recipe,
@@ -4951,7 +5705,7 @@ class ChartGUI(QMainWindow):
                     panel.update_from_chart(self.state.active_chart, aditya_mode=self.state.aditya_mode)
 
         # Deferred retinue ring redraw for non-visible panel wheels (B5 perf fix)
-        for panel_attr in ('transit_panel', 'solar_return_page'):
+        for panel_attr in ('transit_panel', 'solar_return_page', 'eclipse_panel'):
             panel = getattr(self, panel_attr, None)
             if panel and tab_widget is panel:
                 for wheel in panel.get_all_wheels():
@@ -4959,19 +5713,31 @@ class ChartGUI(QMainWindow):
                         wheel.draw_wheel()
                         wheel._retinue_dirty = False
 
-    def _on_theme_changed(self, theme_file: str):
-        """Handle theme change from settings tab - apply immediately"""
+    def _on_theme_changed(self, theme_file: str, loading_message: str = None):
+        """Handle theme change from settings tab - apply immediately.
+
+        loading_message overrides the "Applying <Theme>..." caption — the
+        saturation fan-out reuses this method but is not a theme change, so it
+        passes its own label (SPEC-SAT-001) instead of the current theme name.
+        """
         from PySide6.QtCore import Qt
         from PySide6.QtGui import QCursor
 
         apply_fn = _get_apply_stylesheet()
         if apply_fn:
             theme_name = theme_file.replace('.xml', '').replace('_', ' ').title()
-            self.loading_manager.start(f"Applying {theme_name}...")
+            self.loading_manager.start(loading_message or f"Applying {theme_name}...")
             QApplication.setOverrideCursor(QCursor(Qt.CursorShape.WaitCursor))
 
             try:
-                apply_fn(QApplication.instance(), theme=theme_file)
+                # SPEC-SAT-001 WI-2: apply a DESATURATED copy of the theme XML
+                # when the saturation slider is below 100 (no-op at 100 — the
+                # built-in name passes straight through). This is the SINGLE
+                # application point for all qt-material chrome; get_theme_colors()
+                # inherits the muted QTMATERIAL_* env vars for free. theme_file
+                # stays the logical name so _save_theme_preference is unaffected.
+                from ui.qt_theme import desaturated_theme_path
+                apply_fn(QApplication.instance(), theme=desaturated_theme_path(theme_file))
                 self._save_theme_preference(theme_file)
                 # Refresh tab bar and menu bar styles (reads from qt-material env vars)
                 self.tab_widget.setStyleSheet(get_tab_bar_style())
@@ -4986,100 +5752,126 @@ class ChartGUI(QMainWindow):
                 # get_theme_colors() at paint time. No recalculation needed.
                 # Refresh info panels
                 self._update_all_panels()
-                # Refresh memory panel with new theme colors
-                if hasattr(self, 'memory_panel') and hasattr(self.memory_panel, 'refresh_theme'):
-                    self.memory_panel.refresh_theme()
-                # Refresh chart title widget
+                # SPEC-THM-001 (td-iqjb Wave A): refresh every themed surface in
+                # ISOLATION. Previously a single raising refresh_theme() aborted the
+                # entire fan-out below it, leaving those surfaces unstyled ("white
+                # patches in dark theme"). _safe_theme() mirrors the per-surface
+                # pattern already used by _on_font_sizes_changed()/_refresh_scaled_surfaces.
+                # WIRING ONLY - no per-surface logic changed; same attrs/methods/guards.
+                import traceback as _tb_theme
+                _theme_failures = []
+
+                def _safe_theme(label, fn):
+                    try:
+                        fn()
+                    except Exception:
+                        _theme_failures.append(label)
+                        _tb_theme.print_exc()
+
+                def _refresh_attr(attr, method='refresh_theme', *args):
+                    obj = getattr(self, attr, None)
+                    fn = getattr(obj, method, None) if obj is not None else None
+                    if callable(fn):
+                        _safe_theme(attr, lambda: fn(*args))
+
+                # Core panels/widgets with module-level refresh helpers
+                _refresh_attr('memory_panel')
                 if hasattr(self, 'chart_title_widget'):
                     from apps.widgets.chart_title_widget import refresh_chart_title_theme
-                    refresh_chart_title_theme(self)
-                # Refresh varga column buttons
+                    _safe_theme('chart_title_widget', lambda: refresh_chart_title_theme(self))
                 if hasattr(self, 'varga_buttons'):
                     from apps.panels.varga_column import refresh_varga_theme
-                    refresh_varga_theme(self)
-                # Refresh Z6b sign-selector buttons
+                    _safe_theme('varga_buttons', lambda: refresh_varga_theme(self))
                 if hasattr(self, 'sign_selector_buttons'):
                     from apps.panels.sign_selector_column import refresh_sign_selector_theme
-                    refresh_sign_selector_theme(self)
-                # Refresh profile button styling
+                    _safe_theme('sign_selector_buttons', lambda: refresh_sign_selector_theme(self))
                 if hasattr(self, 'profile_button'):
-                    self._update_profile_button_style()
-                # Refresh AI Reading panel
-                if hasattr(self, 'ai_reading_panel') and hasattr(self.ai_reading_panel, 'refresh_theme'):
-                    self.ai_reading_panel.refresh_theme()
-                # Refresh Find Chart panel
-                if hasattr(self, 'find_chart_panel') and hasattr(self.find_chart_panel, 'refresh_theme'):
-                    self.find_chart_panel.refresh_theme()
-                # Refresh Birth Finder panel
-                if hasattr(self, 'birth_finder_panel') and hasattr(self.birth_finder_panel, 'refresh_theme'):
-                    self.birth_finder_panel.refresh_theme()
-                # Refresh Lunar New Year panel
-                if hasattr(self, 'lunar_new_year_panel') and hasattr(self.lunar_new_year_panel, 'refresh_theme'):
-                    self.lunar_new_year_panel.refresh_theme()
-                # Refresh Eclipse panel
-                if hasattr(self, 'eclipse_panel') and hasattr(self.eclipse_panel, 'refresh_theme'):
-                    self.eclipse_panel.refresh_theme()
-                # Refresh Transit panel
-                if hasattr(self, 'transit_panel') and hasattr(self.transit_panel, 'refresh_theme'):
-                    self.transit_panel.refresh_theme()
-                # Refresh Edit Chart panel (sidebar + all subtabs)
-                if hasattr(self, 'edit_chart_panel') and hasattr(self.edit_chart_panel, 'refresh_theme'):
-                    self.edit_chart_panel.refresh_theme()
-                # Refresh Settings tab (needs style update even though it triggered the change)
-                if hasattr(self, 'settings_tab') and hasattr(self.settings_tab, 'refresh_theme'):
-                    self.settings_tab.refresh_theme()
-                # Refresh Exploration panel
-                if hasattr(self, 'exploration_panel') and hasattr(self.exploration_panel, 'refresh_theme'):
-                    self.exploration_panel.refresh_theme()
-                # Refresh Cliwoc Map panel
-                if hasattr(self, 'cliwoc_map_panel') and hasattr(self.cliwoc_map_panel, 'refresh_theme'):
-                    self.cliwoc_map_panel.refresh_theme()
-                # SPEC-THM-001 W1: refresh the three chart views so backgrounds
-                # and text pick up the new theme colors. Each view re-reads
-                # get_theme_colors() and redraws to apply colors to existing
-                # scene items (pre-mortem P-002/P-003).
-                if hasattr(self, 'chart_view') and hasattr(self.chart_view, 'refresh_theme'):
-                    self.chart_view.refresh_theme()
-                if hasattr(self, 'wheel_view') and hasattr(self.wheel_view, 'refresh_theme'):
-                    self.wheel_view.refresh_theme()
-                if hasattr(self, 'north_indian_view') and hasattr(self.north_indian_view, 'refresh_theme'):
-                    self.north_indian_view.refresh_theme()
+                    _safe_theme('profile_button', self._update_profile_button_style)
+                # SPEC-THM-002 §6.4 / D-7: fullscreen InfoPanelDialogs are
+                # non-modal top-levels that outlive the click that opened them.
+                # They were absent from this fan-out entirely, so a theme switch
+                # with one open left it painted in the old palette. Weak refs —
+                # a strong list here would pin every dialog ever opened.
+                for _dlg_ref in list(getattr(self, '_open_panel_dialogs', ()) or ()):
+                    _dlg = _dlg_ref()
+                    if _dlg is not None:
+                        _safe_theme('info_panel_dialog', _dlg.refresh_theme)
+                if getattr(self, '_open_panel_dialogs', None) is not None:
+                    self._open_panel_dialogs[:] = [
+                        r for r in self._open_panel_dialogs if r() is not None]
+                # Pro panels (ProChartGUI subclass creates these as self.<attr>;
+                # _refresh_attr no-ops cleanly when an attr/method is absent).
+                _refresh_attr('ai_reading_panel')       # deprecated; never instantiated
+                _refresh_attr('find_chart_panel')
+                _refresh_attr('birth_finder_panel')
+                _refresh_attr('lunar_new_year_panel')
+                _refresh_attr('eclipse_panel')
+                _refresh_attr('transit_panel')
+                _refresh_attr('solar_return_page')       # td-iqjb Wave A: previously orphaned
+                _refresh_attr('edit_chart_panel')
+                _refresh_attr('settings_tab')
+                _refresh_attr('exploration_panel')
+                _refresh_attr('cliwoc_map_panel')        # not instantiated in Pro
+                _refresh_attr('nakshatra_panel')         # td-iqjb Wave D: now has refresh_theme
+                _refresh_attr('antikythera_panel')       # td-iqjb Wave D: now has refresh_theme
+                # SPEC-THM-001 W1: four chart views re-read get_theme_colors() and redraw
+                # to apply colors to existing scene items (pre-mortem P-002/P-003).
+                _refresh_attr('chart_view')
+                _refresh_attr('wheel_view')
+                _refresh_attr('north_indian_view')
+                # SPEC-BODY-001: body graph swaps its background pixmap between the
+                # dark/light silhouette variants on theme change.
+                _refresh_attr('body_graph_view')
+                # SPEC-COT-001 §4.5: the card table has tuned dark/light palettes
+                # (a literal #000 "black" suit is invisible on the dark table),
+                # read live in paintEvent — refresh_theme just repaints.
+                _refresh_attr('cards_of_truth_view')
+                # SPEC-FSV-001: status-bar chart chrome (ORDER pill + fullscreen
+                # button) — painted widgets that read the palette live, so their
+                # refresh_theme is a bare repaint.
+                _refresh_attr('status_order_button')
+                _refresh_attr('status_fullscreen_button')
                 # SPEC-THM-001 W3 G13: loading overlay (wrapped by LoadingManager).
-                if hasattr(self, 'loading_manager') and hasattr(self.loading_manager, 'refresh_theme'):
-                    self.loading_manager.refresh_theme()
-                # SPEC-THM-001 W3 G18/G19: HTML controllers re-render content with
-                # live theme colors (pre-mortem P-006). The controller HTML is only
-                # rebuilt on chart/mode/varga change; theme switch must explicitly
-                # trigger a re-render.
-                if hasattr(self, 'shame_controller') and hasattr(self.shame_controller, 'refresh_theme'):
-                    self.shame_controller.refresh_theme()
-                if hasattr(self, 'tajika_yogas_controller') and hasattr(self.tajika_yogas_controller, 'refresh_theme'):
-                    self.tajika_yogas_controller.refresh_theme()
-                # Retinue tables (Hora/Trimsamsa) use is_light_theme() to pick
-                # color palettes; re-render so cell bg/fg match the new theme.
-                if hasattr(self, 'hora_controller') and hasattr(self.hora_controller, '_on_theme_changed'):
-                    self.hora_controller._on_theme_changed()
-                if hasattr(self, 'trimsamsa_controller') and hasattr(self.trimsamsa_controller, '_on_theme_changed'):
-                    self.trimsamsa_controller._on_theme_changed()
-                if hasattr(self, 'house_graph_controller') and hasattr(self.house_graph_controller, '_on_theme_changed'):
-                    self.house_graph_controller._on_theme_changed()
-                if hasattr(self, 'planetary_condition_controller') and hasattr(self.planetary_condition_controller, '_on_theme_changed'):
-                    self.planetary_condition_controller._on_theme_changed()
-                if hasattr(self, 'karakas_controller'):
-                    self.karakas_controller._refresh()
+                _refresh_attr('loading_manager')
+                # SPEC-THM-001 W3 G18/G19: HTML controllers re-render content with live
+                # theme colors (their HTML is only rebuilt on chart/mode/varga change).
+                _refresh_attr('shame_controller')
+                _refresh_attr('tajika_yogas_controller')
+                # Exchange/Final-Dispositor panel is a real Qt widget now; it no
+                # longer restyles via a QTextBrowser stylesheet, so it MUST be told
+                # to re-render its cards on theme change (hardening H2).
+                _refresh_attr('interchange_controller', 'refresh_theme')
+                # Nabhasa Yogas panel: same H2 contract, self-themes via refresh_theme().
+                _refresh_attr('nabhasa_controller', 'refresh_theme')
+                # Retinue tables (Hora/Trimsamsa) + house graph + planetary condition use
+                # is_light_theme(); re-render cell bg/fg via their _on_theme_changed().
+                _refresh_attr('hora_controller', '_on_theme_changed')
+                _refresh_attr('trimsamsa_controller', '_on_theme_changed')
+                _refresh_attr('house_graph_controller', '_on_theme_changed')
+                _refresh_attr('planetary_condition_controller', '_on_theme_changed')
+                _refresh_attr('karakas_controller', '_refresh')
 
-                # Auto-select background based on theme brightness
-                if theme_file.startswith('light_'):
-                    self._on_background_changed("stone_01")
-                else:
-                    self._on_background_changed("stone_06")
+                # Auto-select the theme-locked chart background (td-iqjb.8 Wave H:
+                # via the shared helper -- same stone the boot path and every
+                # embedded chart-view host now use, so they cannot drift). The
+                # stylesheet was applied above (:5193) so is_light_theme() reads
+                # the NEW theme here.
+                from ui.qt_theme import themed_chart_background
+                self._on_background_changed(themed_chart_background())
 
                 # SPEC-THM-001 E3: REMOVED redundant self.update() + self.repaint().
                 # Each setStyleSheet() above already queues a Qt repaint via the
                 # dirty-region system. ChartGUI has no paintEvent override,
                 # so the explicit full-window repaint was duplicating work.
                 theme_name = theme_file.replace('.xml', '').replace('_', ' ').title()
-                self.statusBar().showMessage(f"Theme applied: {theme_name}")
+                if _theme_failures:
+                    # SPEC-THM-001 (td-iqjb Wave A): surface which surfaces failed to
+                    # refresh instead of silently aborting the rest of the fan-out.
+                    self.statusBar().showMessage(
+                        f"Theme applied: {theme_name} "
+                        f"({len(_theme_failures)} surface(s) failed - see console)", 6000)
+                else:
+                    self.statusBar().showMessage(f"Theme applied: {theme_name}")
             except Exception as e:
                 self.statusBar().showMessage(f"Theme error: {e}")
                 print(f"Error applying theme: {e}")
@@ -5102,27 +5894,225 @@ class ChartGUI(QMainWindow):
         import traceback
 
         def _run_font_refresh():
-            try:
-                self._apply_scale_refresh(get_scale_factor())
+            # SPEC-FONT-001: a per-area font-size change must re-render every
+            # persistent surface whose HTML/painted output embeds a scaled_area_*
+            # value read at render time. This mirrors the surface set that
+            # _on_theme_changed() refreshes. Each surface is refreshed in
+            # isolation (via _safe) so one failure cannot abort the rest — the
+            # controllers and house graph must still update even if an earlier
+            # view raises.
+            failures = []
+
+            def _safe(label, fn):
+                try:
+                    fn()
+                except Exception:
+                    failures.append(label)
+                    traceback.print_exc()
+
+            # Tab/menu bars, panel stylesheets (incl. dasha lists and info-panel
+            # styles) and the sidebar memory list.
+            _safe("scale_refresh",
+                  lambda: self._apply_scale_refresh(get_scale_factor()))
+            _safe("relayout", lambda: relayout_info_panels(self))
+
+            # All surfaces whose painted or HTML output embeds a scaled_area_*
+            # value: sidebar columns, chart title, chart views, side panels, HTML
+            # controllers and the house graph. Shared with _on_scale_changed so a
+            # global Display-Scale change redraws them too (SPEC-FONT-001 M1).
+            self._refresh_scaled_surfaces(_safe)
+
+            if failures:
+                self.statusBar().showMessage(
+                    f"Font sizes updated ({len(failures)} surface(s) failed - "
+                    f"see console)", 5000)
+            else:
                 self.statusBar().showMessage("Font sizes updated", 3000)
-            except Exception:
-                traceback.print_exc()
-                self.statusBar().showMessage("Font size refresh failed - see console", 5000)
 
         # Defer to next event loop tick to avoid re-entrant layout
         QTimer.singleShot(0, _run_font_refresh)
 
+    def _refresh_scaled_surfaces(self, _safe):
+        """Re-render every persistent surface whose painted/HTML output embeds a
+        scaled_area_* value read at render time (SPEC-FONT-001).
+
+        Shared by _on_font_sizes_changed (a per-area base size changed) and
+        _on_scale_changed (the global Display Scale changed). Both change the
+        effective size returned by scaled_area_px/size/font, so both must redraw
+        these surfaces; otherwise chart-view labels, HTML controllers and the
+        house graph go stale. The Display-Scale slider regressed in exactly this
+        way once Wave 1 made the chart labels scaled_area_* (they used to be
+        hardcoded, and so were scale-independent).
+
+        Each surface is refreshed in isolation via the caller's _safe() so one
+        failure cannot abort the rest. Mirrors the set _on_theme_changed() covers.
+        """
+        # Sidebar button columns embed scaled_area_px('sidebar'/'buttons') and are
+        # not covered by _refresh_panel_styles(); refresh them explicitly.
+        if hasattr(self, 'varga_buttons'):
+            def _varga():
+                from apps.panels.varga_column import refresh_varga_theme
+                refresh_varga_theme(self)
+            _safe("varga", _varga)
+        if hasattr(self, 'sign_selector_buttons'):
+            def _sign_selector():
+                from apps.panels.sign_selector_column import refresh_sign_selector_theme
+                refresh_sign_selector_theme(self)
+            _safe("sign_selector", _sign_selector)
+
+        # Chart title bar. refresh_chart_title_theme() re-applies the full-size
+        # styles and stomps compact mode, so re-assert compact afterwards via the
+        # force-reapply idiom (set_chart_title_compact early-returns when the flag
+        # already matches).
+        if hasattr(self, 'chart_title_widget'):
+            def _title():
+                from apps.widgets.chart_title_widget import refresh_chart_title_theme
+                refresh_chart_title_theme(self)
+                if getattr(self, '_title_is_compact', False):
+                    from apps.widgets.chart_title_widget import set_chart_title_compact
+                    self._title_is_compact = False  # force past early-return
+                    set_chart_title_compact(self, True)
+            _safe("chart_title", _title)
+
+        # Chart views: refresh_theme() fully redraws the scene (wheel and
+        # north-indian via draw_*, body graph via update_from_chart), so label
+        # items are recreated with the new scaled_area_font/size. Each view
+        # self-guards on whether a chart is loaded.
+        for _view_name in ('chart_view', 'wheel_view',
+                           'north_indian_view', 'body_graph_view',
+                           'cards_of_truth_view'):
+            view = getattr(self, _view_name, None)
+            if view is not None and hasattr(view, 'refresh_theme'):
+                _safe(_view_name, view.refresh_theme)
+
+        # Side panels, the settings tab, and the loading overlay each own a
+        # refresh_theme() that regenerates scaled_area_* styling.
+        for _panel_name in ('find_chart_panel', 'birth_finder_panel',
+                           'edit_chart_panel', 'lunar_new_year_panel',
+                           'eclipse_panel', 'transit_panel',
+                           'exploration_panel', 'ai_reading_panel',
+                           'cliwoc_map_panel', 'settings_tab',
+                           'loading_manager'):
+            panel = getattr(self, _panel_name, None)
+            if panel is not None and hasattr(panel, 'refresh_theme'):
+                _safe(_panel_name, panel.refresh_theme)
+
+        # Font-size-dependent HTML controllers. _refresh() rebuilds each
+        # controller's HTML so it re-reads scaled_area_px/size. Deferred
+        # controllers (shame/tajika_yogas/planetary_condition/interchange) may not
+        # exist until their panel is first shown, hence the getattr guard. The
+        # eight controllers that use no scaled_area_* helper (avastha, strength,
+        # elements, modality, aspects, dignities, tajika_matrix,
+        # tajika_relationships) are intentionally omitted; their text is styled by
+        # the widget stylesheets already regenerated by _apply_scale_refresh().
+        for _ctrl_name in ('shame_controller', 'tajika_yogas_controller',
+                          'hora_controller', 'trimsamsa_controller',
+                          'planetary_condition_controller',
+                          'karakas_controller', 'interchange_controller',
+                          'nabhasa_controller'):
+            ctrl = getattr(self, _ctrl_name, None)
+            if ctrl is not None and hasattr(ctrl, '_refresh'):
+                _safe(_ctrl_name, ctrl._refresh)
+
+        # The house graph has no controller instance; it is painted by
+        # _HouseBarWidget (gui.house_graph_bars). Repaint it so its paint path
+        # re-reads scaled_area_px/size (matches the info_panels path).
+        bars = getattr(self, 'house_graph_bars', None)
+        if bars is not None:
+            def _repaint_bars():
+                bars.updateGeometry()
+                bars.update()
+            _safe("house_graph_bars", _repaint_bars)
+
+    def _on_saturation_changed(self, pct: int):
+        """Handle a global Color-Saturation change from settings (SPEC-SAT-001 WI-6).
+
+        Thin per Rule 4 — the real work is: (1) set the module saturation so
+        desat_hex/desat_image/desaturated_theme_path all pick it up; (2) clear
+        every Layer-3/4 icon cache so stale pixmaps are not served (the theme
+        fan-out's refresh_theme() redraws but reads caches first, so clearing is
+        mandatory); (3) re-run the existing theme fan-out which re-applies the
+        now-desaturated qt-material stylesheet AND refreshes every themed surface.
+
+        Persistence is already done by the settings tab's Apply handler; we set
+        it again here defensively (idempotent) so a programmatic caller is safe.
+        Cache surfaces are enumerated from CODE (findChildren) not a static list —
+        the font-refresh migration proved plan-time enumeration goes stale.
+        """
+        from ui import qt_theme
+        qt_theme.set_ui_saturation(pct)
+        try:
+            from managers.settings_manager import get_settings
+            get_settings().set("display.color_saturation", int(pct))
+        except Exception:
+            pass
+
+        # Clear every icon/image cache in the live widget tree.
+        from PySide6.QtWidgets import QWidget
+        for w in self.findChildren(QWidget):
+            fn = getattr(w, 'clear_icon_cache', None)
+            if callable(fn):
+                try:
+                    fn()
+                except Exception:
+                    pass
+            # House-graph bars keep their _icon_cache on the widget while the
+            # clear method lives on the controller — catch the raw dict too.
+            cache = getattr(w, '_icon_cache', None)
+            if isinstance(cache, dict):
+                cache.clear()
+
+        # Re-apply the (now desaturated) stylesheet + fan out to every surface.
+        # The fan-out already reaches every SouthIndianVectorView: the MAIN chart
+        # is self.chart_view (a create_south_indian_view() host that fans
+        # refresh_theme into its SIV), covered by _refresh_attr('chart_view'); the
+        # panel-hosted SIVs (eclipse/transit/solar/nakshatra mini-charts) are
+        # covered by their parent panels' refresh. An extra findChildren(SIV)
+        # sweep here just re-refreshed every one a second (and third) time — a
+        # multi-second freeze on Apply. Caches were cleared above, so the single
+        # fan-out redraws each surface at the new saturation exactly once.
+        try:
+            current_theme = self._load_theme_preference()
+        except Exception:
+            current_theme = "dark_blue.xml"
+        self._on_theme_changed(current_theme, loading_message=f"Applying saturation {int(pct)}%...")
+
     def _on_scale_changed(self, factor: float):
-        """Handle font scale change from settings tab — refresh UI stylesheets."""
+        """Handle a global Display-Scale change from settings (SPEC-FONT-001 M1).
+
+        The scale factor multiplies every scaled_area_* value, so this must redraw
+        the same surface set as _on_font_sizes_changed, not just the stylesheet
+        zones in _apply_scale_refresh(). Chart-view labels, HTML controllers and
+        the house graph became scale-dependent when Wave 1 replaced their
+        hardcoded fonts with scaled_area_*; without this fan-out they would stay
+        at the old size until the next unrelated redraw.
+        """
         from PySide6.QtCore import QTimer
         import traceback
 
         def _run_scale_refresh():
-            try:
-                self._apply_scale_refresh(factor)
-            except Exception:
-                traceback.print_exc()
-                self.statusBar().showMessage("Font scale refresh failed - see console", 5000)
+            failures = []
+
+            def _safe(label, fn):
+                try:
+                    fn()
+                except Exception:
+                    failures.append(label)
+                    traceback.print_exc()
+
+            # _apply_scale_refresh() regenerates the scaled_px/size stylesheet
+            # zones (tab/menu bars, panel styles, memory panel) and shows the
+            # "Font scale: N%" status message on success.
+            _safe("scale_refresh", lambda: self._apply_scale_refresh(factor))
+            _safe("relayout", lambda: relayout_info_panels(self))
+
+            # Plus every scaled_area_* surface — the M1 regression fix.
+            self._refresh_scaled_surfaces(_safe)
+
+            if failures:
+                self.statusBar().showMessage(
+                    f"Font scale updated ({len(failures)} surface(s) failed - "
+                    f"see console)", 5000)
 
         # Defer refresh to next event loop tick to avoid re-entrant layout
         QTimer.singleShot(0, _run_scale_refresh)
@@ -5216,12 +6206,18 @@ class ChartGUI(QMainWindow):
         from managers.settings_manager import get_settings
         s = get_settings()
 
-        # 1. Chart view type
+        # 1. Chart view type — SPEC-COT-001 INV-14: one shared mapping.
         view_type = s.get("chart.view_type", "south_indian")
-        view_map = {"south_indian": 0, "wheel": 1, "north_indian": 2}
-        target_index = view_map.get(view_type, 0)
+        from state.chart_state import VIEW_STACK_INDEX
+        target_index = VIEW_STACK_INDEX.get(view_type, 0)
         if self.chart_stack.currentIndex() != target_index:
             self._switch_to_chart_index(target_index)
+
+        # 1b. South Indian theme (classic/vector) — SPEC-SIC-002 D-13:
+        # explicit activation on EVERY live host (main view, dual-chart,
+        # Pro panels) via the live-host registry — a style-only change
+        # triggers no panel retheme path (Phase-3 review finding 1).
+        sync_all_south_indian_hosts()
 
         # 2. Outer planets
         show_outer = s.get("chart.show_outer_planets", True)
@@ -5515,7 +6511,41 @@ class ChartGUI(QMainWindow):
             tbl = getattr(self, attr, None)
             if tbl:
                 tbl.setStyleSheet(table_style)
-                tbl.resizeRowsToContents()
+        # Avastha table: its own compact style (SPEC-AVA-001 rev3) — the SAME
+        # helper the construction site uses, so live refresh cannot drift.
+        if getattr(self, 'avastha_table', None):
+            from apps.panels.info_panels import avastha_compact_table_style
+            self.avastha_table.setStyleSheet(avastha_compact_table_style())
+                # NO resizeRowsToContents() here (td-v21r): it set EXPLICIT
+                # content-based row heights that override the construction
+                # setDefaultSectionSize AND survive relayout_info_panels, so a
+                # live THEME switch inflated every info-table row (boot-parity
+                # break caught by test/theme_audit.py). It predates (2026-04)
+                # the proper re-layout chain relayout_info_panels (SPEC-RESP-001,
+                # 2026-06), which both font/scale paths already call right
+                # after this method.
+
+        # Swap/lang icon buttons on the Karakas + Strength headers (td-v21r):
+        # construction-styled with secondary_dark bg / primary border and never
+        # replayed, so they kept the previous theme's colors after a live
+        # switch. Same expression as their construction sites; the icon is
+        # re-tinted with the LIVE primary_text (the stored _make_swap_icon
+        # closure's default color froze the construction theme, so pass it).
+        _swap_btn_style = f"""
+            QPushButton {{ background: {theme["secondary_dark"]}; border: 1px solid {theme["primary"]};
+                border-radius: {scaled_px(4)}px; padding: 0px; }}
+            QPushButton:hover {{ background: {theme["primary"]}; border-color: {theme["primary_light"]}; }}
+        """
+        _make_swap_icon = getattr(self, '_make_swap_icon', None)
+        for attr in ('karakas_swap_btn', 'strength_lang_btn'):
+            btn = getattr(self, attr, None)
+            if btn:
+                btn.setStyleSheet(_swap_btn_style)
+                if _make_swap_icon:
+                    try:
+                        btn.setIcon(_make_swap_icon(theme["primary_text"]))
+                    except Exception:
+                        pass
 
         # Dignities table: omit `color` from QTableWidget so DignityColorDelegate
         # can set per-cell text colors via ForegroundRole (SPEC-THM-001 compliant)
@@ -5599,7 +6629,7 @@ class ChartGUI(QMainWindow):
         # Refresh action bar buttons (SOUTH, OPEN IN KALA, etc.) — they use
         # get_3d_button_style which already uses scaled_px internally
         action_bar_style = get_3d_button_style("blue", "text")
-        for attr in ('south_btn', 'open_kala_btn', 'wikibio_btn'):
+        for attr in ('south_btn', 'open_kala_btn', 'chart_info_btn'):
             btn = getattr(self, attr, None)
             if btn:
                 btn.setStyleSheet(action_bar_style)
@@ -5689,9 +6719,10 @@ class ChartGUI(QMainWindow):
             te = getattr(self, attr, None)
             if te is not None:
                 te.setStyleSheet(textedit_style)
-        te = getattr(self, 'exchange_display', None)
-        if te is not None:
-            te.setStyleSheet(textedit_style.replace("QTextEdit", "QTextBrowser"))
+        # exchange_display is now a ParivartanaWidget (real Qt cards), NOT a
+        # QTextBrowser: it self-themes via interchange_controller.refresh_theme()
+        # in the theme fan-out. Applying a QTextBrowser stylesheet here would
+        # clobber the card widget on every theme change (hardening H2).
 
     def showEvent(self, event):
         """
@@ -5772,6 +6803,12 @@ def main():
         from state.user_data import get_user_data_dir
         data_dir = get_user_data_dir() or PROJECT_ROOT
         theme = "dark_blue.xml"
+        # SPEC-SAT-001 WI-2: boot saturation. SettingsManager does NOT exist yet
+        # at this point, so read display.color_saturation with the SAME raw
+        # json.load pattern the theme read uses (never get_settings()). Covering
+        # boot here is what stops the app starting saturated until the first
+        # manual theme switch (boot-asymmetry pre-mortem #8).
+        boot_saturation = 100
         try:
             # Check app_settings.json first (post-migration canonical source)
             app_settings_path = data_dir / "app_settings.json"
@@ -5785,6 +6822,7 @@ def main():
                             if t[1] == display_name:
                                 theme = t[0]
                                 break
+                    boot_saturation = app_cfg.get("display", {}).get("color_saturation", 100)
             else:
                 # Fallback to legacy settings.json
                 theme_settings_path = data_dir / "settings.json"
@@ -5792,9 +6830,13 @@ def main():
                     with open(theme_settings_path, "r") as f:
                         settings = json.load(f)
                         theme = settings.get("theme", "dark_blue.xml")
+                        boot_saturation = settings.get("display", {}).get(
+                            "color_saturation", 100)
         except Exception:
             pass
-        apply_fn(app, theme=theme)
+        from ui.qt_theme import set_ui_saturation, desaturated_theme_path
+        set_ui_saturation(boot_saturation)
+        apply_fn(app, theme=desaturated_theme_path(theme))
     else:
         app.setStyle("Fusion")
 
@@ -5887,10 +6929,12 @@ def main():
     window._license_state = license_state  # Store for periodic refresh
     window.show()
 
-    # Open .chtk file if passed as command-line argument (e.g. double-click from file manager)
+    # Open a chart file if passed as command-line argument (e.g. double-click
+    # from file manager). SPEC-IMPORT-001 §6.1: accept .toml as well as .chtk;
+    # chart_manager.load_chart dispatches by extension (create_birth_data_from_file).
     chtk_arg = None
     for arg in sys.argv[1:]:
-        if arg.endswith('.chtk') and os.path.isfile(arg):
+        if arg.endswith(('.chtk', '.toml')) and os.path.isfile(arg):
             chtk_arg = arg
             break
     if chtk_arg:

@@ -62,3 +62,17 @@ INSTRUCTIONS.md
 .cursorrules
 .aider*
 .windsurfrules
+
+# PyInstaller spec files — defense layer 3 of 4.
+# PyInstaller writes <name>.spec into its working directory, which is
+# dist_lite_src/ during a Core build. A .spec generated from a build that
+# bundled Nuitka .so modules embeds ABSOLUTE build paths, which is how
+# Varuna360Core-3.1.0-linux-x86_64.spec published ten copies of the
+# maintainer's home directory and the private repo name in v3.2.0.
+# Upstream: build_lite.py --specpath, check_static.py Gate 1 suffix
+# denylist, sync_to_mirror.py RSYNC_EXCLUDES, and check_publish_surface.py
+# Gate 7. This entry is the last line of defense.
+*.spec
+
+# Local scratch. Never publish.
+trash/

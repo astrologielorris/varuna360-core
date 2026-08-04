@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 # Copyright (C) 2026 Lorris Turpin / 360 Hearts in the Sky
 # Licensed under AGPL-3.0 — see LICENSE file for details.
-# Commercial exception: see NOTICE file.
 """
 Wheel Chart Graphics Items
 Custom QGraphicsItem subclasses for the circular zodiac wheel.
@@ -35,7 +34,7 @@ from PySide6.QtGui import (
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 
 # Import theme for consistent colors
-from ui.qt_theme import TEXT_PRIMARY, ACCENTS, get_theme_colors
+from ui.qt_theme import TEXT_PRIMARY, ACCENTS, get_theme_colors, scaled_area_font, desat_hex
 from core.aditya_mode import displayed_sign_name
 
 
@@ -80,7 +79,7 @@ class ZodiacSectorItem(QGraphicsPathItem):
 
         self.sign_index = sign_index
         element = self.ELEMENT_CYCLE[sign_index % 4]
-        base_color = QColor(self.ELEMENT_COLORS[element])
+        base_color = QColor(desat_hex(self.ELEMENT_COLORS[element]))  # SPEC-SAT-001 WI-3
 
         # Create pie slice path
         path = QPainterPath()
@@ -296,7 +295,7 @@ class TrimsamshaDegreeTick(QGraphicsLineItem):
         self.setZValue(3.9)
         if degree_text:
             self._label = QGraphicsSimpleTextItem(degree_text, self)
-            self._label.setFont(QFont("Inter", 11))
+            self._label.setFont(scaled_area_font('tables', family='Inter'))
             self._label.setBrush(QBrush(QColor("#AAAAAA")))
             br = self._label.boundingRect()
             self._label.setPos(
@@ -409,7 +408,7 @@ class PlanetIndicatorLineGroup(QGraphicsItem):
         # Determine color from sign index or fallback
         if sign_index is not None:
             element = self.SIGN_ELEMENTS[sign_index % 12]
-            self.line_color = QColor(self.ELEMENT_COLORS[element])
+            self.line_color = QColor(desat_hex(self.ELEMENT_COLORS[element]))  # SPEC-SAT-001 WI-3
         elif color:
             self.line_color = QColor(color)
         else:
@@ -880,7 +879,10 @@ class OuterRimAscendantGlow(QGraphicsEllipseItem):
             glow_radius: Size of glow effect
         """
         # Calculate position
-        marker_angle = 180 + (ascendant_degrees - rotation_offset)
+        # Same convention as planets: get_planet_angle(deg, rot) = deg + rot
+        # (SPEC-TRN-004 4.5 fix; the old 180 + (asc - rot) put the marker at 2*asc
+        # instead of on the Ascendant axis).
+        marker_angle = ascendant_degrees + rotation_offset
         angle_rad = math.radians(marker_angle)
 
         glow_x = center_x + radius * math.cos(angle_rad)
@@ -910,7 +912,7 @@ class OuterRimAscendantLabel(QGraphicsTextItem):
 
     def __init__(self, center_x: float, center_y: float, radius: float,
                  ascendant_degrees: float, rotation_offset: float,
-                 color: str = "#FF8C00", parent=None):
+                 color: str = "#FF8C00", sign_name: str = None, parent=None):
         """
         Create an outer rim Ascendant label.
 
@@ -920,26 +922,33 @@ class OuterRimAscendantLabel(QGraphicsTextItem):
             ascendant_degrees: Ascendant position in degrees
             rotation_offset: Current wheel rotation offset
             color: Text color
+            sign_name: mode-aware sign name from the caller (SPEC-TRN-004 4.5).
+                When None, falls back to the fixed Aditya names (legacy callers).
         """
         super().__init__(parent)
 
-        # Get sign info
-        sign_index = int(ascendant_degrees / 30) % 12
-        ADITYA_SIGNS = ['Dhata', 'Aryama', 'Mitra', 'Varuna', 'Indra', 'Vivasvan',
-                        'Tvasta', 'Vishnu', 'Amzu', 'Bhaga', 'Pusha', 'Parjanya']
-        sign_name = ADITYA_SIGNS[sign_index]
+        # Get sign info. Prefer the caller's mode-aware name; fall back to the
+        # fixed Aditya list only when not provided (do not hardcode zodiac mode).
         deg_in_sign = ascendant_degrees % 30
+        if sign_name is None:
+            sign_index = int(ascendant_degrees / 30) % 12
+            ADITYA_SIGNS = ['Dhata', 'Aryama', 'Mitra', 'Varuna', 'Indra', 'Vivasvan',
+                            'Tvasta', 'Vishnu', 'Amzu', 'Bhaga', 'Pusha', 'Parjanya']
+            sign_name = ADITYA_SIGNS[sign_index]
 
         # Set text
         self.setPlainText(f"ASC {deg_in_sign:.0f}° {sign_name}")
 
         # Style
-        font = QFont("Arial", 11, QFont.Weight.Bold)
+        font = scaled_area_font('tables', family='Arial', bold=True)
         self.setFont(font)
         self.setDefaultTextColor(QColor(color))
 
         # Calculate position (outside the outer rim)
-        marker_angle = 180 + (ascendant_degrees - rotation_offset)
+        # Same convention as planets: get_planet_angle(deg, rot) = deg + rot
+        # (SPEC-TRN-004 4.5 fix; the old 180 + (asc - rot) put the marker at 2*asc
+        # instead of on the Ascendant axis).
+        marker_angle = ascendant_degrees + rotation_offset
         angle_rad = math.radians(marker_angle)
 
         label_x = center_x + radius * math.cos(angle_rad)
@@ -960,7 +969,8 @@ class OuterRimAscendantMarker(QGraphicsPathItem):
 
     def __init__(self, center_x: float, center_y: float, radius: float,
                  ascendant_degrees: float, rotation_offset: float,
-                 color: str = "#FF8C00", size: float = 20, parent=None):
+                 color: str = "#FF8C00", size: float = 20, sign_name: str = None,
+                 parent=None):
         """
         Create an outer rim Ascendant marker.
 
@@ -975,7 +985,10 @@ class OuterRimAscendantMarker(QGraphicsPathItem):
         super().__init__(parent)
 
         # Calculate position: Ascendant angle + wheel rotation
-        marker_angle = 180 + (ascendant_degrees - rotation_offset)
+        # Same convention as planets: get_planet_angle(deg, rot) = deg + rot
+        # (SPEC-TRN-004 4.5 fix; the old 180 + (asc - rot) put the marker at 2*asc
+        # instead of on the Ascendant axis).
+        marker_angle = ascendant_degrees + rotation_offset
         angle_rad = math.radians(marker_angle)
 
         # Position at outer radius
@@ -1013,12 +1026,13 @@ class OuterRimAscendantMarker(QGraphicsPathItem):
         self.setZValue(18)  # On top of outer rim planets
         self.setData(Qt.ItemDataRole.UserRole, "outer_rim_ascendant")
 
-        # Tooltip
-        sign_index = int(ascendant_degrees / 30) % 12
-        ADITYA_SIGNS = ['Dhata', 'Aryama', 'Mitra', 'Varuna', 'Indra', 'Vivasvan',
-                        'Tvasta', 'Vishnu', 'Amzu', 'Bhaga', 'Pusha', 'Parjanya']
-        sign_name = ADITYA_SIGNS[sign_index]
+        # Tooltip. Prefer the caller's mode-aware name (SPEC-TRN-004 4.5).
         deg_in_sign = ascendant_degrees % 30
+        if sign_name is None:
+            sign_index = int(ascendant_degrees / 30) % 12
+            ADITYA_SIGNS = ['Dhata', 'Aryama', 'Mitra', 'Varuna', 'Indra', 'Vivasvan',
+                            'Tvasta', 'Vishnu', 'Amzu', 'Bhaga', 'Pusha', 'Parjanya']
+            sign_name = ADITYA_SIGNS[sign_index]
         self.setToolTip(f"Outer Ascendant: {deg_in_sign:.1f}° {sign_name}")
 
 

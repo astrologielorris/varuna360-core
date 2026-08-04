@@ -1,6 +1,5 @@
 # Copyright (C) 2026 Lorris Turpin / 360 Hearts in the Sky
 # Licensed under AGPL-3.0 — see LICENSE file for details.
-# Commercial exception: see NOTICE file.
 """
 First-run data directory dialog for AppImage/frozen installs.
 
@@ -96,10 +95,15 @@ class FirstRunDialog(QDialog):
         layout.addLayout(btn_layout)
 
     def _on_browse(self):
+        # Open where the platform default lives, not a hardcoded ~/Documents.
+        # On macOS ~/Documents is TCC-protected, so starting the user there
+        # points them straight back at the folder the default was chosen to
+        # avoid.
+        from state.user_data import get_default_data_dir
         folder = QFileDialog.getExistingDirectory(
             self,
             "Select Data Folder",
-            str(Path.home() / "Documents"),
+            str(get_default_data_dir().parent),
         )
         if folder:
             self._path_edit.setText(folder)

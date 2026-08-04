@@ -24,6 +24,7 @@ from apps.widgets.panel_controllers.tajika_relationships_controller import Tajik
 from apps.widgets.panel_controllers.tajika_yogas_controller import TajikaYogasController
 from apps.widgets.panel_controllers.dignities_controller import DignitiesController
 from apps.widgets.panel_controllers.interchange_controller import InterchangeController
+from apps.widgets.panel_controllers.nabhasa_controller import NabhasaController
 
 __all__ = [
     "ElementsController",
@@ -41,4 +42,5 @@ __all__ = [
     "TajikaYogasController",
     "DignitiesController",
     "InterchangeController",
+    "NabhasaController",
 ]

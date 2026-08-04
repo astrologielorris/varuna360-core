@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 # Copyright (C) 2026 Lorris Turpin / 360 Hearts in the Sky
 # Licensed under AGPL-3.0 — see LICENSE file for details.
-# Commercial exception: see NOTICE file.
 """
 North Indian Diamond Chart View Widget
 Diamond-style zodiac chart using PySide6 QGraphicsView.
@@ -55,8 +54,17 @@ from .north_indian_items import (
 )
 
 # Import theme
-from ui.qt_theme import BG, SURFACE, TEXT_PRIMARY, GOLD, get_theme_colors
+from ui.qt_theme import BG, SURFACE, TEXT_PRIMARY, GOLD, get_theme_colors, scaled_area_font, desat_image, sat_key
 from core.aditya_mode import displayed_sign_name, get_planet_display_name
+
+# SPEC-COT-001 §4.10 — the in-chart card index. The setting, the memoised
+# spread and the plaque art are shared with the wheel and South Indian views;
+# only the per-cell placement below is this view's business.
+from apps.widgets.cot_index_item import CotIndexMixin, CotPlaque, scale_for_name
+
+#: UserRole tag on the card items, so a test or a later selective redraw can
+#: find them without pattern-matching on the rank text.
+TAG_COT_CARD = "ni.cot_card"
 
 
 class NorthIndianScene(QGraphicsScene):
@@ -72,7 +80,7 @@ class NorthIndianScene(QGraphicsScene):
         self.setItemIndexMethod(QGraphicsScene.ItemIndexMethod.NoIndex)
 
 
-class NorthIndianView(QGraphicsView):
+class NorthIndianView(CotIndexMixin, QGraphicsView):
     """
     North Indian diamond-style chart view.
 
@@ -84,6 +92,8 @@ class NorthIndianView(QGraphicsView):
     - Zoom with mouse wheel, pan with drag
     - Click planets to show info dialog
     """
+
+    _cot_log_prefix = "[NORTH INDIAN]"
 
     # Aditya names (12 solar deities)
     ADITYA_NAMES = [
@@ -144,6 +154,11 @@ class NorthIndianView(QGraphicsView):
         self.max_zoom = 3.0
         self.zoom_step = 1.15
 
+        # SPEC-COT-001 §4.10 — caches + the live-update subscription for the
+        # in-chart card index. Before _chart exists, because the subscription
+        # can fire the moment it is registered.
+        self._cot_init()
+
         # Chart-first data (Issue 20)
         self._chart = None
         self._varga_code = None
@@ -152,8 +167,6 @@ class NorthIndianView(QGraphicsView):
         self._is_aditya = False
 
         self._has_chart = False
-        # Deprecated — kept for set_planets_data() compat until Issue 11
-        self.planets_data = None
         self.aditya_mode = "aditya"
         self.ayanamsa_offset = 0.0
         self.use_western_names = False
@@ -168,6 +181,12 @@ class NorthIndianView(QGraphicsView):
         self._transit_manager = None
         self._transit_geometry = None
         self._original_scene_rect = None
+        # SPEC-VGO-001: the two independent ring producers, and whichever
+        # of them the arbiter picked. Kept apart so turning transit off
+        # restores a suspended varga ring instead of losing it.
+        self._transit_ring = None
+        self._varga_ring = None
+        self._ring_source = None
 
         # Ascendant override for "Sign as Ascendant" feature (F4)
         # None = use actual birth Ascendant, 0-11 = use that sign index as Ascendant
@@ -382,7 +401,7 @@ class NorthIndianView(QGraphicsView):
 
     @staticmethod
     def _inscribed_rect_avoiding(polygon: QPolygonF, center: tuple,
-                                  avoid_rect: tuple,
+                                  avoid_rect,
                                   aspect: float = 1.0,
                                   margin: float = 6.0) -> tuple:
         """
@@ -396,8 +415,12 @@ class NorthIndianView(QGraphicsView):
         4 corners both (a) stay inside the polygon with margin AND (b)
         do not intersect the badge rectangle.
 
-        ``avoid_rect`` = (left, top, width, height). Pass ``None`` to
-        behave like plain ``_inscribed_rect``.
+        ``avoid_rect`` = one ``(left, top, width, height)`` tuple, a SEQUENCE
+        of them, or ``None`` to behave like plain ``_inscribed_rect``. The
+        sequence form exists because a cell can now carry two reserved
+        regions — the sign badge and the Cards of Truth index (SPEC-COT-001
+        §4.10), which sit at opposite ends of the cell and would otherwise
+        both compete with the planets for the same corner.
 
         Returns (left, top, width, height). Returns a tiny fallback rect
         when nothing fits.
@@ -409,19 +432,26 @@ class NorthIndianView(QGraphicsView):
             fallback = max(4.0, bbox.width() * 0.1)
             return (cx - fallback, cy - fallback, 2 * fallback, 2 * fallback)
 
-        # AABB intersection test against the avoid rectangle.
+        if avoid_rect is None:
+            avoid_rects = ()
+        elif avoid_rect and isinstance(avoid_rect[0], (int, float)):
+            avoid_rects = (avoid_rect,)      # a bare (l, t, w, h)
+        else:
+            avoid_rects = tuple(r for r in avoid_rect if r is not None)
+
+        # AABB intersection test against every avoid rectangle.
         def intersects_avoid(half_w, half_h):
-            if avoid_rect is None:
-                return False
-            ar_l, ar_t, ar_w, ar_h = avoid_rect
-            ar_r = ar_l + ar_w
-            ar_b = ar_t + ar_h
             rl = cx - half_w
             rr = cx + half_w
             rt = cy - half_h
             rb = cy + half_h
-            # Not-intersect condition: one rect is fully on one side.
-            return not (rr < ar_l or rl > ar_r or rb < ar_t or rt > ar_b)
+            for ar_l, ar_t, ar_w, ar_h in avoid_rects:
+                ar_r = ar_l + ar_w
+                ar_b = ar_t + ar_h
+                # Not-intersect condition: one rect is fully on one side.
+                if not (rr < ar_l or rl > ar_r or rb < ar_t or rt > ar_b):
+                    return True
+            return False
 
         lo, hi = 0.0, max_half_h
         best_half_h = 0.0
@@ -603,6 +633,9 @@ class NorthIndianView(QGraphicsView):
             'center': h1_cent,
             'inner_vertex': C,
             'icon_position': inner_biased(C, h1_cent, 0.35),
+            # The badge sits in the half nearest C; the card takes the
+            # OTHER half, biased off the outer vertex by the same 0.35.
+            'card_anchor': inner_biased(T, h1_cent, 0.35),
             'planet_area': (h1_cent[0], h1_cent[1], S * 0.2),
             'shape': 'diamond',
             'badge_rect': None,
@@ -616,6 +649,9 @@ class NorthIndianView(QGraphicsView):
             'center': h4_cent,
             'inner_vertex': C,
             'icon_position': inner_biased(C, h4_cent, 0.35),
+            # The badge sits in the half nearest C; the card takes the
+            # OTHER half, biased off the outer vertex by the same 0.35.
+            'card_anchor': inner_biased(L, h4_cent, 0.35),
             'planet_area': (h4_cent[0], h4_cent[1], S * 0.2),
             'shape': 'diamond',
             'badge_rect': None,
@@ -629,6 +665,9 @@ class NorthIndianView(QGraphicsView):
             'center': h7_cent,
             'inner_vertex': C,
             'icon_position': inner_biased(C, h7_cent, 0.35),
+            # The badge sits in the half nearest C; the card takes the
+            # OTHER half, biased off the outer vertex by the same 0.35.
+            'card_anchor': inner_biased(B, h7_cent, 0.35),
             'planet_area': (h7_cent[0], h7_cent[1], S * 0.2),
             'shape': 'diamond',
             'badge_rect': None,
@@ -642,6 +681,9 @@ class NorthIndianView(QGraphicsView):
             'center': h10_cent,
             'inner_vertex': C,
             'icon_position': inner_biased(C, h10_cent, 0.35),
+            # The badge sits in the half nearest C; the card takes the
+            # OTHER half, biased off the outer vertex by the same 0.35.
+            'card_anchor': inner_biased(R, h10_cent, 0.35),
             'planet_area': (h10_cent[0], h10_cent[1], S * 0.2),
             'shape': 'diamond',
             'badge_rect': None,
@@ -666,6 +708,7 @@ class NorthIndianView(QGraphicsView):
             'center': h2_cent,
             'inner_vertex': I1,
             'icon_position': outer_biased(midpoint(T, TL), h2_cent, 0.25),
+            'card_anchor': inner_biased(I1, h2_cent, 0.35),
             'planet_area': (h2_cent[0], h2_cent[1], S * 0.15),
             'shape': 'triangle',
             'badge_rect': None,  # populated by _draw_sign_badge
@@ -678,6 +721,7 @@ class NorthIndianView(QGraphicsView):
             'center': h3_cent,
             'inner_vertex': I1,
             'icon_position': outer_biased(midpoint(TL, L), h3_cent, 0.25),
+            'card_anchor': inner_biased(I1, h3_cent, 0.35),
             'planet_area': (h3_cent[0], h3_cent[1], S * 0.15),
             'shape': 'triangle',
             'badge_rect': None,
@@ -691,6 +735,7 @@ class NorthIndianView(QGraphicsView):
             'center': h5_cent,
             'inner_vertex': I4,
             'icon_position': outer_biased(midpoint(L, BL), h5_cent, 0.25),
+            'card_anchor': inner_biased(I4, h5_cent, 0.35),
             'planet_area': (h5_cent[0], h5_cent[1], S * 0.15),
             'shape': 'triangle',
             'badge_rect': None,
@@ -703,6 +748,7 @@ class NorthIndianView(QGraphicsView):
             'center': h6_cent,
             'inner_vertex': I4,
             'icon_position': outer_biased(midpoint(BL, B), h6_cent, 0.25),
+            'card_anchor': inner_biased(I4, h6_cent, 0.35),
             'planet_area': (h6_cent[0], h6_cent[1], S * 0.15),
             'shape': 'triangle',
             'badge_rect': None,
@@ -716,6 +762,7 @@ class NorthIndianView(QGraphicsView):
             'center': h8_cent,
             'inner_vertex': I3,
             'icon_position': outer_biased(midpoint(B, BR), h8_cent, 0.25),
+            'card_anchor': inner_biased(I3, h8_cent, 0.35),
             'planet_area': (h8_cent[0], h8_cent[1], S * 0.15),
             'shape': 'triangle',
             'badge_rect': None,
@@ -728,6 +775,7 @@ class NorthIndianView(QGraphicsView):
             'center': h9_cent,
             'inner_vertex': I3,
             'icon_position': outer_biased(midpoint(BR, R), h9_cent, 0.25),
+            'card_anchor': inner_biased(I3, h9_cent, 0.35),
             'planet_area': (h9_cent[0], h9_cent[1], S * 0.15),
             'shape': 'triangle',
             'badge_rect': None,
@@ -741,6 +789,7 @@ class NorthIndianView(QGraphicsView):
             'center': h11_cent,
             'inner_vertex': I2,
             'icon_position': outer_biased(midpoint(R, TR), h11_cent, 0.25),
+            'card_anchor': inner_biased(I2, h11_cent, 0.35),
             'planet_area': (h11_cent[0], h11_cent[1], S * 0.15),
             'shape': 'triangle',
             'badge_rect': None,
@@ -753,6 +802,7 @@ class NorthIndianView(QGraphicsView):
             'center': h12_cent,
             'inner_vertex': I2,
             'icon_position': outer_biased(midpoint(TR, T), h12_cent, 0.25),
+            'card_anchor': inner_biased(I2, h12_cent, 0.35),
             'planet_area': (h12_cent[0], h12_cent[1], S * 0.15),
             'shape': 'triangle',
             'badge_rect': None,
@@ -918,7 +968,8 @@ class NorthIndianView(QGraphicsView):
                     event.accept()
                     return
                 if isinstance(item, DiamondCellItem):
-                    if item.data(Qt.ItemDataRole.UserRole) == self._TAG:
+                    # Ring cells are not clickable sign cells — either ring.
+                    if item.data(Qt.ItemDataRole.UserRole) in self._RING_TAGS:
                         continue
                     self._is_dragging = False
                     self.viewport().setCursor(Qt.CursorShape.ArrowCursor)
@@ -934,22 +985,30 @@ class NorthIndianView(QGraphicsView):
             self.viewport().setCursor(Qt.CursorShape.ArrowCursor)
         super().mouseReleaseEvent(event)
 
-    def set_planets_data(self, planets_data: dict):
-        """Deprecated — use update_from_chart(). Kept until Issue 11."""
-        self.planets_data = planets_data
+    def update_from_chart(self, chart, varga_code=None, use_western_names=False,
+                          ring_varga_code=None, **_kw):
+        """Render diamond from a libaditya Chart (primary entry point).
 
-    def update_from_chart(self, chart, varga_code=None, use_western_names=False, **_kw):
-        """Render diamond from a libaditya Chart (primary entry point)."""
+        ``ring_varga_code`` (SPEC-VGO-001) draws a SECOND, divisional chart
+        as the outer ring while ``varga_code`` stays the main one. Passed as
+        a kwarg rather than set afterwards because this method ends in a
+        ``draw_chart()`` that clears the scene: a ring set after the call
+        would need a second full redraw per varga click.
+        """
         from libaditya.objects.context import Circle
         self._chart = chart
         self._varga_code = varga_code
         self._has_chart = True
-        self.planets_data = True
         self._is_aditya = (chart.context.circle == Circle.ADITYA)
+        # SPEC-COT-001 §4.10: drop the memoised faces on EVERY update, not only
+        # when the object changed — identity caching alone would keep serving
+        # the old spread if a caller ever mutated a Chart in place.
+        self._cot_forget_faces()
         source = chart.varga(varga_code) if varga_code and varga_code != 1 else chart.rashi()
         self._planets = source.planets()
         self._cusps = source.cusps()
         self.use_western_names = use_western_names
+        self._build_varga_ring(ring_varga_code)
         self.draw_chart()
 
     def ensure_visible(self):
@@ -982,6 +1041,15 @@ class NorthIndianView(QGraphicsView):
         self.scene.update()
         self.viewport().update()
 
+    def clear_icon_cache(self):
+        """Drop cached planet/zodiac pixmaps so they are rebuilt at the current
+        UI saturation (SPEC-SAT-001 WI-4). Called by the saturation-change
+        handler before the theme fan-out re-renders."""
+        if hasattr(self, 'planet_icons'):
+            self.planet_icons.clear()
+        if hasattr(self, 'zodiac_icons'):
+            self.zodiac_icons.clear()
+
     def set_aditya_mode(self, mode: str, ayanamsa_offset: float = 0.0):
         """Deprecated — mode is baked into Chart at construction. Kept until Issue 11."""
         self.aditya_mode = mode
@@ -998,12 +1066,13 @@ class NorthIndianView(QGraphicsView):
                         False for Aditya names (Dhata, Aryama...)
         """
         self.use_western_names = use_western
-        # Note: Redraw will happen in set_planets_data() call
+        # Note: Redraw happens on the next update_from_chart() call
 
     def load_zodiac_icon(self, zodiac_index: int, size: int = 140):
         """Load zodiac icon using Qt best practices."""
         variation = self.get_zodiac_variation(zodiac_index)
-        cache_key = f"zodiac_{zodiac_index}_v{variation}_{size}"
+        # Cache key + saturation (SPEC-SAT-001 WI-4; sat_key is '' at 100)
+        cache_key = f"zodiac_{zodiac_index}_v{variation}_{size}{sat_key()}"
 
         if cache_key in self.zodiac_icons:
             return self.zodiac_icons[cache_key]
@@ -1031,6 +1100,9 @@ class NorthIndianView(QGraphicsView):
             Qt.TransformationMode.SmoothTransformation
         )
 
+        # Desaturate AFTER scale (SPEC-SAT-001 WI-4; no-op at 100)
+        qimage = desat_image(qimage)
+
         pixmap = QPixmap.fromImage(qimage)
         self.zodiac_icons[cache_key] = pixmap
         return pixmap
@@ -1038,7 +1110,8 @@ class NorthIndianView(QGraphicsView):
     def load_planet_image(self, planet_name: str, size: int = 100):
         """Load planet image using Qt best practices."""
         variation = self.get_planet_variation(planet_name)
-        cache_key = f"{planet_name}_v{variation}_{size}"
+        # Cache key + saturation (SPEC-SAT-001 WI-4; sat_key is '' at 100)
+        cache_key = f"{planet_name}_v{variation}_{size}{sat_key()}"
 
         if cache_key in self.planet_icons:
             return self.planet_icons[cache_key]
@@ -1069,6 +1142,9 @@ class NorthIndianView(QGraphicsView):
                 Qt.AspectRatioMode.KeepAspectRatio,
                 Qt.TransformationMode.SmoothTransformation
             )
+
+            # Desaturate AFTER scale (SPEC-SAT-001 WI-4; no-op at 100)
+            qimage = desat_image(qimage)
 
             pixmap = QPixmap.fromImage(qimage)
             self.planet_icons[cache_key] = pixmap
@@ -1153,6 +1229,11 @@ class NorthIndianView(QGraphicsView):
         # planet zone.
         self._draw_sign_badge()
 
+        # Layer 5.4: Cards of Truth index (SPEC-COT-001 §4.10). Before the
+        # planets, because it writes geom['cot_rect'] and the planet zone
+        # search reads it — a card drawn after would be sat on.
+        self._draw_cot_cards()
+
         # Layer 5.5: Ascendant degree marker (SPEC-NIC-001)
         if self._cusps and self.ascendant_override is None:
             self._draw_ascendant_degree()
@@ -1165,11 +1246,19 @@ class NorthIndianView(QGraphicsView):
         self.scene.update()
         self.viewport().update()
 
-        # Post-redraw restore: transit overlay survives scene.clear() (SPEC-TRN-003 S5.7)
-        if self._transit_overlay_active and self._transit_manager:
+        # Post-redraw restore: the ring survives scene.clear() (SPEC-TRN-003
+        # S5.7). Keyed on the SOURCE, not on the transit manager — a varga
+        # ring has no manager and would otherwise vanish on every theme
+        # refresh, ascendant override and chart update (SPEC-VGO-001 §2.5).
+        if self._ring_source is not None:
             self._expand_scene_for_transit()
             self._calculate_transit_geometry()
-            self._draw_transit_overlay()
+            self._draw_ring_overlay()
+        else:
+            # Symmetry matters: update_from_chart can CLEAR the ring, and
+            # without this the scene stays expanded to ring size, leaving
+            # the chart small and off-centre with nothing around it.
+            self._restore_scene_rect()
 
     def _draw_background(self):
         """Draw the background rectangle."""
@@ -1414,15 +1503,123 @@ class NorthIndianView(QGraphicsView):
                     label_item.setData(Qt.ItemDataRole.UserRole, tag)
                 self.scene.addItem(label_item)
 
+    def _cot_repaint(self):
+        self.draw_chart()
+
+    def _draw_cot_cards(self):
+        """The Cards of Truth index, in the OPPOSITE section of each cell.
+
+        Each cell already spends one end on the sign badge — the half nearest
+        the chart centre for the four diamonds, the wide outer edge for the
+        eight triangles. The card takes the other end: the outer half of a
+        diamond, the inner tip of a triangle. That is the region the layout
+        already treats as spare, so nothing has to move to make room.
+
+        Lordship, not occupancy: Aries shows Mars's card, Leo the Sun's, and
+        Capricorn and Aquarius both show Saturn's — twelve signs onto seven
+        planetary positions, so five cards legitimately appear twice.
+
+        Writes ``geom['cot_rect']`` for the planet-zone search, and clears it
+        on every pass: a stale rect left behind by a card that is no longer
+        drawn would go on pushing planets away from an empty corner.
+        """
+        for house_num in range(1, 13):
+            self.house_geometry[house_num]['cot_rect'] = None
+
+        if not self._cot_enabled():
+            return
+        faces = self._cot_faces()
+        if not faces:
+            return
+
+        sign_settings = self.display_settings.get("sign_name", {})
+        font_size_diamond = sign_settings.get("font_size_diamond", 24)
+        font_size_triangle = sign_settings.get("font_size_triangle", 18)
+        dpr = self.devicePixelRatioF() or 1.0
+
+        # Same fit machinery as the badge: march from the anchor toward the
+        # centroid until all four corners clear the cell edges. A triangle tip
+        # is narrow, so the first position tried often does not fit.
+        BADGE_MARGIN = 18
+        SHIFT_STEP_PX = 10
+        MAX_SHIFT_STEPS = 20
+
+        for house_num in range(1, 13):
+            geom = self.house_geometry[house_num]
+            sign_index = self._get_sign_for_house(house_num)
+            card = faces.get(sign_index)
+            if card is None:
+                continue
+
+            anchor = geom.get('card_anchor')
+            if anchor is None:
+                continue
+            polygon = geom['polygon']
+            centroid = geom['center']
+            is_diamond = geom.get('shape') == 'diamond'
+
+            # The card tracks whatever size the sign name renders at in this
+            # cell shape, so a triangle's smaller label gets a smaller card.
+            name_pt = font_size_diamond if is_diamond else font_size_triangle
+            plaque = CotPlaque(card, scale=scale_for_name(name_pt), dpr=dpr)
+
+            half_w = plaque.width / 2.0
+            half_h = plaque.height / 2.0
+            dx = centroid[0] - anchor[0]
+            dy = centroid[1] - anchor[1]
+            length = (dx * dx + dy * dy) ** 0.5
+            ux, uy = (dx / length, dy / length) if length > 1e-6 else (0.0, 0.0)
+
+            placed = None
+            for step in range(MAX_SHIFT_STEPS + 1):
+                cx = anchor[0] + ux * step * SHIFT_STEP_PX
+                cy = anchor[1] + uy * step * SHIFT_STEP_PX
+                corners = (
+                    QPointF(cx - half_w, cy - half_h),
+                    QPointF(cx + half_w, cy - half_h),
+                    QPointF(cx - half_w, cy + half_h),
+                    QPointF(cx + half_w, cy + half_h),
+                )
+                if all(self._point_in_polygon_with_margin(c, polygon,
+                                                          BADGE_MARGIN)
+                       for c in corners):
+                    placed = (cx, cy)
+                    break
+
+            if placed is None:
+                # No silent half-card: a plaque hanging over a cell edge would
+                # read as belonging to the neighbouring sign, which is worse
+                # than the index simply not appearing in that one cell.
+                continue
+
+            cx, cy = placed
+            plaque.add_to(self.scene, cx, cy, tag=TAG_COT_CARD)
+            geom['cot_rect'] = (cx - half_w, cy - half_h,
+                                plaque.width, plaque.height)
+
     def _draw_ascendant_degree(self, geometry=None, tag=None,
-                               house_num=1, cusps_source=None):
-        """Draw ASC degree label next to the sign name (SPEC-NIC-001 S3)."""
+                               house_num=1, cusps_source=None,
+                               source_is_varga=None):
+        """Draw ASC degree label next to the sign name (SPEC-NIC-001 S3).
+
+        ``source_is_varga`` (SPEC-VGO-001) states the degree convention of
+        an EXTERNAL cusp source. Without it this method assumed any
+        ``cusps_source`` was a transit and used sky degrees, which labelled
+        a varga ring's ascendant in one convention while its planets used
+        the other — the exact inconsistency the ring source exists to
+        prevent. None keeps the historical behaviour for every other
+        caller: the main chart's own varga state decides.
+        """
         geo = geometry if geometry is not None else self.house_geometry
         cusps = cusps_source if cusps_source is not None else self._cusps
         if not cusps:
             return
         asc_cusp = cusps[1]
-        if self._varga_code and cusps_source is None:
+        if source_is_varga is None:
+            use_amsha = bool(self._varga_code) and cusps_source is None
+        else:
+            use_amsha = bool(source_is_varga)
+        if use_amsha:
             asc_risl = asc_cusp.amsha_raw_in_sign_longitude()
         else:
             asc_risl = asc_cusp.real_in_sign_longitude()
@@ -1431,7 +1628,7 @@ class NorthIndianView(QGraphicsView):
         label_text = f"ASC {degrees}°{minutes:02d}'"
 
         label = QGraphicsTextItem(label_text)
-        label.setFont(QFont("Inter", 14, QFont.Weight.Bold))
+        label.setFont(scaled_area_font('chart_labels', family='Inter', bold=True))
         label.setDefaultTextColor(QColor("#FFFFFF"))
         label.setZValue(5.5)
 
@@ -1546,6 +1743,11 @@ class NorthIndianView(QGraphicsView):
         centroid = geom['center']
         is_diamond = geom.get('shape') == 'diamond'
         badge_rect = geom.get('badge_rect')  # may be None if badge failed
+        # SPEC-COT-001 §4.10: the card index reserves the OPPOSITE end of the
+        # cell — which is exactly the "opposite" candidate below. None whenever
+        # the index is off or did not fit, so the zone is unchanged then.
+        cot_rect = geom.get('cot_rect')
+        avoid_rects = [r for r in (badge_rect, cot_rect) if r is not None]
 
         inner_vertex = geom.get('inner_vertex', centroid)
 
@@ -1590,7 +1792,7 @@ class NorthIndianView(QGraphicsView):
         best_area = -1.0
         for _name, cand_center in candidates:
             cand_rect = self._inscribed_rect_avoiding(
-                polygon, cand_center, badge_rect,
+                polygon, cand_center, avoid_rects,
                 aspect=aspect, margin=rect_margin
             )
             _, _, cw, ch = cand_rect
@@ -1736,11 +1938,18 @@ class NorthIndianView(QGraphicsView):
         self._chart = None
         self._planets = None
         self._cusps = None
-        self.planets_data = None
+        # The memoised spread holds the Chart strongly. Dropping `_chart` alone
+        # would leave the whole object graph alive until the NEXT chart loads —
+        # which, for a view kept around between charts, is exactly the window a
+        # "clear" is supposed to close.
+        self._cot_forget_faces()
         self.scene.clear()
         self.house_cells = {}
         self._transit_overlay_active = False
         self._transit_manager = None
+        self._transit_ring = None
+        self._varga_ring = None
+        self._ring_source = None
         self._restore_scene_rect()
 
         # Draw empty chart structure
@@ -1749,11 +1958,44 @@ class NorthIndianView(QGraphicsView):
         self._draw_inner_diamond()
 
     # =================================================================
-    # TRANSIT OVERLAY (SPEC-TRN-003 v2.0)
+    # RING OVERLAY (SPEC-TRN-003 v2.0 transits; SPEC-VGO-001 vargas)
     # Reuses natal drawing code via parameterized geometry/tag.
+    #
+    # The ring was born as a transit renderer, so its transit assumptions
+    # were invisible until something that is not a transit was fed through
+    # it (SPEC-VGO-001 §9). _RingSource makes them explicit: what to draw,
+    # under which tag, and which degree-within-sign accessor to read.
     # =================================================================
 
     _TAG = "ni_transit"
+    _VARGA_TAG = "ni_varga_ring"
+    _RING_TAGS = (_TAG, _VARGA_TAG)
+
+    class _RingSource:
+        """One ring's worth of bodies, plus the policy for reading them.
+
+        ``is_varga`` is NOT cosmetic. libaditya exposes two degrees within
+        the sign — ``real_in_sign_longitude()`` is the sky degree and
+        ``amsha_raw_in_sign_longitude()`` is the divisional one — and they
+        differ by up to a third of a sign on D-10. A transit wants the
+        first, a varga wants the second, which is what this view already
+        does when it draws the same varga full-size (`:1475`, `:1510`).
+        Carried on the SOURCE rather than read off ``self._varga_code``,
+        because with SPEC-VGO-001's routing the main chart is D-1 while the
+        ring is D-10, so view state cannot answer the question.
+        """
+
+        __slots__ = ("planets", "cusps", "tag", "is_varga")
+
+        def __init__(self, planets, cusps, tag, is_varga):
+            self.planets = planets
+            self.cusps = cusps
+            self.tag = tag
+            self.is_varga = is_varga
+
+        def deg_in_sign(self, body):
+            return (body.amsha_raw_in_sign_longitude() if self.is_varga
+                    else body.real_in_sign_longitude())
 
     def _get_transit_depth(self):
         """S/2: exact mirror of natal cells."""
@@ -1765,15 +2007,66 @@ class NorthIndianView(QGraphicsView):
         """Public entry point called by core_gui_qt mediator."""
         self._transit_manager = manager
         if manager.transit_enabled and manager.transit_planets:
-            self._transit_overlay_active = True
-            self._hide_transit_overlay()
-            self._expand_scene_for_transit()
-            self._calculate_transit_geometry()
-            self._draw_transit_overlay()
+            source = self._RingSource(manager.transit_planets,
+                                      manager.transit_cusps,
+                                      self._TAG, is_varga=False)
         else:
-            self._transit_overlay_active = False
-            self._hide_transit_overlay()
+            source = None
+        self._transit_ring = source
+        self._arbitrate_ring()
+
+    def _build_varga_ring(self, varga_code):
+        """Store ``varga_code`` as the varga ring source. Draws nothing.
+
+        Split from ``set_ring_varga`` so ``update_from_chart`` can set the
+        ring and let its own single ``draw_chart()`` render it, instead of
+        drawing a ring into a scene that is about to be cleared.
+        """
+        source = None
+        if varga_code is not None and self._chart is not None:
+            try:
+                varga = self._chart.varga(varga_code)
+                source = self._RingSource(varga.planets(), varga.cusps(),
+                                          self._VARGA_TAG, is_varga=True)
+            except Exception as e:
+                print(f"[NI RING] Could not build varga {varga_code}: {e}")
+        changed = (source is not None) or (self._varga_ring is not None)
+        self._varga_ring = source
+        # The arbiter owns _ring_source; keep it in step for the redraw
+        # restore path even when nothing is drawn right now.
+        self._ring_source = self._transit_ring or self._varga_ring
+        self._transit_overlay_active = self._ring_source is not None
+        return changed
+
+    def set_ring_varga(self, varga_code):
+        """Draw ``varga_code`` as the ring, or clear it with None.
+
+        SPEC-VGO-001: the counterpart of the South Indian center box. The
+        main chart stays D-1 and the divisional chart is drawn around it,
+        through the SAME renderer the transit ring uses (INV-1).
+        """
+        if self._build_varga_ring(varga_code):
+            self._arbitrate_ring()
+
+    def _arbitrate_ring(self):
+        """THE one writer for the ring. Transit outranks a varga.
+
+        SPEC-VGO-001 INV-4. Precedence lives here rather than in the caller
+        so that the two independent producers — the transit mediator and
+        the varga column — cannot both believe they own the ring. Turning
+        transit on therefore suspends a varga ring without the varga path
+        ever touching ``transit_enabled``.
+        """
+        source = self._transit_ring or self._varga_ring
+        self._ring_source = source
+        self._transit_overlay_active = source is not None
+        self._hide_transit_overlay()
+        if source is None:
             self._restore_scene_rect()
+            return
+        self._expand_scene_for_transit()
+        self._calculate_transit_geometry()
+        self._draw_ring_overlay()
 
     def _expand_scene_for_transit(self):
         """Expand scene rect to accommodate full-mirror outer ring."""
@@ -1869,16 +2162,18 @@ class NorthIndianView(QGraphicsView):
             9:  _cell((R, E8, BR),         'triangle', E8, mid(R, BR)),
         }
 
-    def _draw_transit_overlay(self):
-        """Render transit overlay by calling the same drawing functions
-        as natal, parameterized with transit geometry and data."""
-        if not self._transit_geometry or not self._transit_manager:
-            return
-        mgr = self._transit_manager
-        if not mgr.transit_planets:
+    def _draw_ring_overlay(self):
+        """Render the ring by calling the same drawing functions as natal,
+        parameterized with ring geometry, tag and source.
+
+        Identical for a transit and for a varga: the only thing that
+        differs between them is the source, which is the point.
+        """
+        source = self._ring_source
+        if not self._transit_geometry or source is None or not source.planets:
             return
 
-        tag = self._TAG
+        tag = source.tag
         geo = self._transit_geometry
 
         self._draw_house_cells(geometry=geo, tag=tag)
@@ -1892,13 +2187,12 @@ class NorthIndianView(QGraphicsView):
         planets_by_house = {i: [] for i in range(1, 13)}
         for planet_name in planets_to_draw:
             try:
-                planet = mgr.transit_planets[planet_name]
+                planet = source.planets[planet_name]
                 sign_idx = planet.sign() - 1
                 house_num = self._get_house_for_planet_sign(sign_idx)
-                deg_in_sign = planet.real_in_sign_longitude()
                 planets_by_house[house_num].append({
                     "name": planet_name,
-                    "deg_in_sign": deg_in_sign,
+                    "deg_in_sign": source.deg_in_sign(planet),
                     "planet_obj": planet,
                 })
             except (KeyError, AttributeError, TypeError):
@@ -1909,16 +2203,19 @@ class NorthIndianView(QGraphicsView):
                 self._draw_planets_in_house(
                     house_num, planets, geometry=geo, tag=tag)
 
-        # Transit ascendant marker (SPEC-TRN-003 S5.4)
-        if mgr.transit_cusps and self._cusps:
+        # Ring ascendant marker (SPEC-TRN-003 S5.4), mapped into the natal
+        # house frame — the ring is a second set of bodies over the natal
+        # houses, for a varga exactly as for a transit (SPEC-VGO-001 D-9).
+        if source.cusps and self._cusps:
             try:
                 natal_asc = self._cusps[1].sign() - 1
-                transit_asc_sign = mgr.transit_cusps[1].sign() - 1
-                transit_asc_house = ((transit_asc_sign - natal_asc) % 12) + 1
+                ring_asc_sign = source.cusps[1].sign() - 1
+                ring_asc_house = ((ring_asc_sign - natal_asc) % 12) + 1
                 self._draw_ascendant_degree(
                     geometry=geo, tag=tag,
-                    house_num=transit_asc_house,
-                    cusps_source=mgr.transit_cusps)
+                    house_num=ring_asc_house,
+                    cusps_source=source.cusps,
+                    source_is_varga=source.is_varga)
             except (IndexError, AttributeError, TypeError):
                 pass
 
@@ -1926,11 +2223,15 @@ class NorthIndianView(QGraphicsView):
         self.viewport().update()
 
     def _hide_transit_overlay(self):
-        """Remove all items tagged 'ni_transit' from the scene."""
-        tag = self._TAG
+        """Remove every ring item from the scene, whichever ring drew it.
+
+        Both tags, always: the arbiter can swap a varga ring for a transit
+        one in a single call, and clearing only the incoming ring's tag
+        would leave the outgoing one on screen underneath it.
+        """
         to_remove = [
             item for item in self.scene.items()
-            if item.data(Qt.ItemDataRole.UserRole) == tag
+            if item.data(Qt.ItemDataRole.UserRole) in self._RING_TAGS
         ]
         for item in to_remove:
             self.scene.removeItem(item)

@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100">
+  <!-- SPEC-COT-001 D-3: bundled suit art, never a system font glyph.
+       Broad shoulders, high point, flared foot. Filled with currentColor is
+       not honoured by QSvgRenderer, so the fill is recoloured at paint time by
+       CardsOfTruthView._suit_pixmap (composition mode SourceIn). -->
+  <path fill="#000000" d="M50 4.5c-8.4 14.2-24.6 26.3-33.9 38.9-9.8 13.2-8.7 28.9 4.2 35.6 10.5 5.5 22.3 1 27.1-8.6.6 12.2-3.6 21-13.4 26.6-1.5.9-.9 2.6.8 2.6h30.4c1.7 0 2.3-1.7.8-2.6-9.8-5.6-14-14.4-13.4-26.6 4.8 9.6 16.6 14.1 27.1 8.6 12.9-6.7 14-22.4 4.2-35.6C74.6 30.8 58.4 18.7 50 4.5z"/>
+</svg>

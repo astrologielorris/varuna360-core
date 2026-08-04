@@ -18,10 +18,13 @@ from libaditya import swe
 from core.house_systems import HOUSE_SYSTEM_CODES, get_house_system_code
 
 
-def _mode_to_circle_sysflg(mode):
+def mode_to_circle_sysflg(mode):
     """Map ChartState aditya_mode → (Circle, sysflg, sign_names) tuple.
 
     Mode is baked at construction so downstream consumers do not branch.
+    Public (td-tagx.7): core.chart_helpers.ascendant_probe reuses this so the
+    fast Cusps probe shares the exact Circle/sysflg basis the factory bakes,
+    keeping the single source of truth for the mode→Circle mapping.
     """
     if mode == "aditya":
         return Circle.ADITYA, const.TROP, "adityas"
@@ -49,7 +52,7 @@ def build_chart_from_params(*, jd, lat, lon, mode, name="", utcoffset=0.0,
     Returns:
         Chart with context.circle/sysflg matching `mode`.
     """
-    circle, sysflg, sign_names = _mode_to_circle_sysflg(mode)
+    circle, sysflg, sign_names = mode_to_circle_sysflg(mode)
     timeJD = JulianDay(jd, utcoffset=utcoffset)
     location = Location(lat=lat, long=lon, alt=0, placename=name, utcoffset=utcoffset)
     ctx = EphContext(
@@ -93,7 +96,8 @@ def build_chart_from_planets_data(planets_data, mode, name="", ayanamsa=98):
 
 
 def make_source_params(*, chtk_path, birth_data, mode, ayanamsa,
-                       house_system="campanus", is_human_design=False):
+                       house_system="campanus", is_human_design=False,
+                       origin_memory_id=None):
     """Build the dict ChartState stores for chart reconstruction.
 
     Consumers:
@@ -104,15 +108,41 @@ def make_source_params(*, chtk_path, birth_data, mode, ayanamsa,
     `birth_data` is always populated. `chtk_path` may be None for "Now"
     charts, AI-generated charts, edited charts, and time-adjusted charts
     — that is the majority case (audit B6).
+
+    `origin_memory_id` (SPEC-ECL-002 section 6, td-n3h3.8 7d): the memory
+    entry UUID the active chart was dispatched FROM. Single writer: ONLY
+    the chart_memory_panel dispatch passes it; every other build path (new
+    chart, edit, Now, AI) constructs fresh params without the key, so its
+    presence is a reliable identity short-circuit for the Personal Eclipse
+    pinned natal row. The key is ABSENT (not None) when not provided.
+
+    The stored `birth_data` is isolated from the caller's dict so later
+    mutation of `tags`/`_toml_extra`/`tz_warnings` on either side does not
+    leak across (SPEC-IMPORT-001 §6.6, §L4-R4). Only those mutable nested
+    keys are deep-copied; flat values (and large blobs like `raw_chtk_data`)
+    stay shallow so folder-load of 500+ charts is not penalized.
     """
-    return {
+    import copy
+
+    if birth_data:
+        sp_bd = dict(birth_data)  # shallow base
+        for k in ("tags", "_toml_extra", "tz_warnings"):
+            if birth_data.get(k) is not None:
+                sp_bd[k] = copy.deepcopy(birth_data[k])
+    else:
+        sp_bd = {}
+
+    params = {
         "chtk_path": chtk_path,
-        "birth_data": dict(birth_data) if birth_data else {},
+        "birth_data": sp_bd,
         "mode": mode,
         "ayanamsa": ayanamsa,
         "house_system": house_system,
         "is_human_design": bool(is_human_design),
     }
+    if origin_memory_id is not None:
+        params["origin_memory_id"] = origin_memory_id
+    return params
 
 
 def rebuild_chart(chart, **overrides):
@@ -131,7 +161,7 @@ def rebuild_chart(chart, **overrides):
 
     if "mode" in overrides:
         mode = overrides.pop("mode")
-        circle, sysflg, sign_names = _mode_to_circle_sysflg(mode)
+        circle, sysflg, sign_names = mode_to_circle_sysflg(mode)
         overrides.setdefault("circle", circle)
         overrides.setdefault("sysflg", sysflg)
         overrides.setdefault("sign_names", sign_names)
@@ -233,6 +263,12 @@ def metadata_from_recipe(recipe):
         'city': recipe['city'], 'country': recipe['country'],
         'coordinates': {'latitude': recipe['lat'], 'longitude': recipe['lon']},
         'location': {'city': recipe['city'], 'country': recipe['country']},
+        # SPEC-IMPORT-001 §6.3: additive TOML metadata (None for CHTK charts).
+        'rodden': recipe.get('rodden'),
+        'tags': recipe.get('tags'),
+        'notes': recipe.get('notes'),
+        'julian_day': recipe.get('julian_day'),
+        'dst_offset_hours': recipe.get('dst_offset_hours'),
     }
     return birth_data, birth_metadata
 
@@ -256,6 +292,12 @@ def chart_data_from_recipe(recipe):
         'latitude': recipe['lat'], 'longitude': recipe['lon'],
         'location': {'city': recipe['city'], 'country': recipe['country']},
         'coordinates': {'latitude': recipe['lat'], 'longitude': recipe['lon']},
+        # SPEC-IMPORT-001 §6.3: additive TOML metadata (None for CHTK charts).
+        'rodden': recipe.get('rodden'),
+        'tags': recipe.get('tags'),
+        'notes': recipe.get('notes'),
+        'julian_day': recipe.get('julian_day'),
+        'dst_offset_hours': recipe.get('dst_offset_hours'),
     }
 
 
@@ -270,18 +312,43 @@ def birth_data_from_recipe(recipe):
         'lat': recipe['lat'], 'lon': recipe['lon'],
         'city': recipe['city'], 'country': recipe['country'],
         'gender': recipe.get('gender', 'Unknown'),
+        # SPEC-IMPORT-001 §6.3: additive TOML metadata (None for CHTK charts).
+        'rodden': recipe.get('rodden'),
+        'tags': recipe.get('tags'),
+        'notes': recipe.get('notes'),
+        'julian_day': recipe.get('julian_day'),
+        'dst_offset_hours': recipe.get('dst_offset_hours'),
     }
 
 
 def make_recipe(*, name, year, month, day, timedec, utcoffset,
                 timezone='UTC', lat, lon, city='', country='',
                 gender='Unknown', time_change_flag=0,
-                house_system='campanus'):
+                house_system='campanus',
+                rodden=None, tags=None, notes=None,
+                julian_day=None, dst_offset_hours=None):
     """Build a validated recipe dict (SPEC-MEM-002 S2.1, SPEC-HSY-001 §7.3).
 
     house_system is stored as a human key (e.g. 'campanus'), never an SE code.
+
+    SPEC-IMPORT-001 §6.3: rodden/tags/notes/julian_day/dst_offset_hours are
+    optional TOML-native metadata. They default to None so CHTK-origin charts
+    (which never carry them) round-trip unchanged. Per §6.3 ("include in output
+    dict if not None") each of the 5 fields is emitted CONDITIONALLY: a field
+    is added to the recipe ONLY when its value is not None. This keeps a CHTK
+    recipe byte-identical to its pre-T1 shape (no 5 spurious None keys) and
+    preserves the `if mapped in recipe` presence check used by the memory
+    panel. The *_from_recipe consumers all use recipe.get(...), so an absent
+    key reads back as None and stays robust.
+
+    None-safe casting (SPEC-IMPORT-001 §6.3 hardening, Trap #1):
+      - julian_day / dst_offset_hours: float(x) only when not None
+        (float(None) raises TypeError).
+      - tags: list(tags) when not None (preserves an explicit empty list as a
+        distinct value from absent), never a shared mutable default.
+      - rodden / notes: passed through verbatim.
     """
-    return {
+    recipe = {
         'name': str(name),
         'year': int(year),
         'month': int(month),
@@ -297,15 +364,62 @@ def make_recipe(*, name, year, month, day, timedec, utcoffset,
         'time_change_flag': int(time_change_flag),
         'house_system': str(house_system),
     }
+    # Conditional additive metadata (omit when None; §6.3).
+    if rodden is not None:
+        recipe['rodden'] = rodden
+    if tags is not None:
+        recipe['tags'] = list(tags)
+    if notes is not None:
+        recipe['notes'] = notes
+    if julian_day is not None:
+        recipe['julian_day'] = float(julian_day)
+    if dst_offset_hours is not None:
+        recipe['dst_offset_hours'] = float(dst_offset_hours)
+    return recipe
+
+
+def resolve_recipe_dst_flag(recipe):
+    """Guard for legacy recipes carrying time_change_flag == -1 (td-5w3c.1).
+
+    Recipes written after the CHTK auto-flag fix always carry a resolved
+    flag (canonical birth_data normalizes -1 at load), but sessions saved
+    BEFORE the fix can still hold the Kala -1 AUTO sentinel. Applying -1
+    as-is corrupts the UTC offset (treated as no-DST, chart loads 1h early).
+
+    Returns (flag, warnings):
+    - flag != -1: passed through unchanged, no warnings.
+    - flag == -1 with an IANA name in recipe['timezone'] (contains '/'):
+      resolved via core.time_utils.resolve_auto_dst_flag at the recipe's
+      local birth instant.
+    - flag == -1 without an IANA name: degrades to 0 with a fail-loud
+      warning (SPEC-TZ-001 5f), via the same helper's falsy-IANA branch.
+    """
+    flag = recipe.get('time_change_flag', 0)
+    if flag != -1:
+        return flag, []
+    from core.time_utils import resolve_auto_dst_flag
+    tz = str(recipe.get('timezone') or '')
+    iana = tz if '/' in tz else None
+    hour, minute, _second = timedec_to_hms(recipe.get('timedec', 12.0))
+    return resolve_auto_dst_flag(
+        iana, recipe.get('year', 2000), recipe.get('month', 1),
+        recipe.get('day', 1), hour, minute, longitude=recipe.get('lon'))
 
 
 def recipe_from_chart(chart, *, name='', timezone='UTC', city='', country='',
-                      gender='Unknown', time_change_flag=0):
+                      gender='Unknown', time_change_flag=0,
+                      rodden=None, tags=None, notes=None,
+                      julian_day=None, dst_offset_hours=None):
     """Extract a recipe from a libaditya Chart object (SPEC-MEM-002 S4.3).
 
     usrhour(), usryear(), usrmonth(), usrday() all return LOCAL time
     (JulianDay.usrdt() computes swe.revjul(jd + utcoffset/24)).
     No offset conversion needed.
+
+    SPEC-IMPORT-001 §6.3: rodden/tags/notes/julian_day/dst_offset_hours are
+    forwarded verbatim to make_recipe (which applies None-safe casting). The
+    Chart object does not carry this metadata, so callers supply it from the
+    source birth_data; absent values stay None.
     """
     ctx = chart.context
     jd = ctx.timeJD
@@ -325,11 +439,23 @@ def recipe_from_chart(chart, *, name='', timezone='UTC', city='', country='',
         city=city, country=country,
         gender=gender, time_change_flag=time_change_flag,
         house_system=hsys_human,
+        rodden=rodden, tags=tags, notes=notes,
+        julian_day=julian_day, dst_offset_hours=dst_offset_hours,
     )
 
 
 def recipe_from_chtk_meta(meta, house_system="campanus"):
-    """Extract a recipe from a CHTK meta dict (SPEC-MEM-002 S4.4)."""
+    """Extract a recipe from a CHTK meta dict (SPEC-MEM-002 S4.4).
+
+    # DEAD: no callers as of 2026-06-21 (grep -rn 'recipe_from_chtk_meta'
+    # finds only this definition). Kept (not trashed) to avoid breaking any
+    # import; revive if a caller is added. SPEC-IMPORT-001 §6.3 requires the
+    # 5 additive metadata fields (rodden/tags/notes/julian_day/
+    # dst_offset_hours) be FORWARDED here even though CHTK meta dicts never
+    # carry them: meta.get(...) yields None when absent, make_recipe emits
+    # those conditionally (omits None), so a CHTK recipe stays byte-identical
+    # while a future meta that DID carry them would round-trip correctly.
+    """
     hour = meta.get('hour', 0) or 0
     minute = meta.get('minute', 0) or 0
     second = meta.get('second', 0) or 0
@@ -351,15 +477,50 @@ def recipe_from_chtk_meta(meta, house_system="campanus"):
         gender=meta.get('gender', 'Unknown'),
         time_change_flag=meta.get('time_change_flag', 0),
         house_system=house_system,
+        rodden=meta.get('rodden'),
+        tags=meta.get('tags'),
+        notes=meta.get('notes'),
+        julian_day=meta.get('julian_day'),
+        dst_offset_hours=meta.get('dst_offset_hours'),
+    )
+
+
+#: The recipe fields that determine the instant. Anything that edits one of
+#: these invalidates a stored julian_day (td-nbl8).
+RECIPE_INSTANT_FIELDS = ('year', 'month', 'day', 'timedec', 'utcoffset')
+
+
+def jd_from_recipe_civil(recipe):
+    """Julian Day from the recipe's CIVIL time, ignoring any stored julian_day.
+
+    The one place this formula lives. build_chart_from_recipe falls back to it,
+    and chart_memory_panel.update_current_chart re-derives a stale JD with it
+    after a time edit. Two copies of this expression would drift, and a drift
+    here moves the chart.
+    """
+    return swe.julday(
+        recipe['year'], recipe['month'], recipe['day'],
+        recipe['timedec'] - recipe['utcoffset']
     )
 
 
 def build_chart_from_recipe(recipe, mode, ayanamsa):
-    """Build a Chart from a recipe dict. Single reconstruction path (SPEC-MEM-002 S3.1)."""
-    jd = swe.julday(
-        recipe['year'], recipe['month'], recipe['day'],
-        recipe['timedec'] - recipe['utcoffset']
-    )
+    """Build a Chart from a recipe dict. Single reconstruction path (SPEC-MEM-002 S3.1).
+
+    SPEC-IMPORT-001 §6.3 (JD forwarding): when the recipe carries a non-None
+    julian_day (TOML-origin charts), use it directly to preserve the file's
+    sub-second precision across session restart. CHTK-origin recipes have
+    julian_day=None, so JD is recomputed from civil time as before.
+
+    The stored JD WINS over civil time, so whoever edits the civil fields owns
+    keeping it honest — see td-nbl8, where a saved time adjustment reverted on
+    the next rebuild because only timedec had been updated.
+    """
+    _recipe_jd = recipe.get('julian_day')
+    if _recipe_jd is not None:
+        jd = float(_recipe_jd)
+    else:
+        jd = jd_from_recipe_civil(recipe)
     # SPEC-HSY-001: recipe stores a human key; convert to SE code at consumption.
     hsys = get_house_system_code(recipe.get('house_system', 'campanus'))
     return build_chart_from_params(

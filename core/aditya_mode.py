@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 # Copyright (C) 2026 Lorris Turpin / 360 Hearts in the Sky
 # Licensed under AGPL-3.0 — see LICENSE file for details.
-# Commercial exception: see NOTICE file.
 """
 Aditya Mode Calculator
 Calculates sign positions for both Tropical Classic and Aditya Circle modes.
@@ -305,12 +304,20 @@ def load_chart_from_chtk(chtk_path, mode="aditya"):
     from core.chart_factory import build_chart_from_params
     from libaditya import swe
 
-    bd = BirthDataManager.create_birth_data_from_chtk(str(chtk_path))
+    # SPEC-IMPORT-001 §6.1: format-agnostic dispatch (.chtk or .toml).
+    bd = BirthDataManager.create_birth_data_from_file(str(chtk_path))
 
-    hour_decimal = bd['utc_hour'] + bd['utc_minute'] / 60.0 + bd['utc_second'] / 3600.0
+    # SPEC-IMPORT-001 §5.3 ("jd wins"): a .toml carries an authoritative,
+    # sub-second julian_day. Re-deriving JD from the integer civil fields would
+    # truncate that precision, so prefer the stored value (mirrors chart_manager).
     from core.planets_calculator import get_calendar_flag
-    jd = swe.julday(bd['utc_year'], bd['utc_month'], bd['utc_day'], hour_decimal,
-                    get_calendar_flag(bd['utc_year'], bd['utc_month'], bd['utc_day']))
+    _stored_jd = bd.get('julian_day')
+    if _stored_jd is not None:
+        jd = float(_stored_jd)
+    else:
+        hour_decimal = bd['utc_hour'] + bd['utc_minute'] / 60.0 + bd['utc_second'] / 3600.0
+        jd = swe.julday(bd['utc_year'], bd['utc_month'], bd['utc_day'], hour_decimal,
+                        get_calendar_flag(bd['utc_year'], bd['utc_month'], bd['utc_day']))
 
     utcoffset = bd.get('utc_offset_hours', 0.0)
     chart = build_chart_from_params(

@@ -1,6 +1,5 @@
 # Copyright (C) 2026 Lorris Turpin / 360 Hearts in the Sky
 # Licensed under AGPL-3.0 — see LICENSE file for details.
-# Commercial exception: see NOTICE file.
 """
 CHTK Loader - External module for loading CHTK files into chart applications.
 Keeps core_gui.py clean by extracting loading logic to this module.

@@ -1,6 +1,5 @@
 # Copyright (C) 2026 Lorris Turpin / 360 Hearts in the Sky
 # Licensed under AGPL-3.0 — see LICENSE file for details.
-# Commercial exception: see NOTICE file.
 """
 Dasha Manager - Handles Vedanga and Vimshottari dasha navigation and display
 
@@ -456,7 +455,7 @@ class DashaManager:
         second = int(((hour_dec - hour) * 60 - minute) * 60)
 
         mode = gui.state.aditya_mode
-        ayanamsa = getattr(gui, 'chart_sidereal_ayanamsa_id', 1)
+        ayanamsa = getattr(gui, 'chart_sidereal_ayanamsa_id', 100)
         hsys = getattr(gui, '_house_system_code', 'C')
 
         chart = build_chart_from_params(

@@ -15,7 +15,6 @@
 #    along with libaditya.  If not, see <https://www.gnu.org/licenses/>.
 
 import swisseph as swe
-from prettytable import PrettyTable
 from dataclasses import replace
 
 from libaditya import constants as const
@@ -114,6 +113,13 @@ class Planet(CelestialObject,Longitude,PlanetBala):
             # will need to add custom ayanamsas here
             if self.ayanamsa() == 98:
                 self._ayanamsa = 36
+            if self.ayanamsa() in (99, 100):
+                # Vedanga Jyotisha: Swiss Ephemeris has no sid mode for 99/100, so a raw
+                # set_sid_mode renders Fagan/Bradley. Compute the TROPICAL position and
+                # apply the ecliptic solstice offset (SPEC-KUTA-AYA-001 3.3) so the
+                # displayed signs, nakshatra labels, offset readout and kuta share one
+                # Vedanga frame identity.
+                return self._vedanga_coords(loc)
             swe.set_sid_mode(self.ayanamsa())
             if self.ayanamsa() == 97:
                 utils.set_swe_true_sidereal_ayanamsa()
@@ -124,6 +130,24 @@ class Planet(CelestialObject,Longitude,PlanetBala):
         if isinstance(self,Earth) and self.context.sysflg != const.HELIO and self.context.sysflg != const.BARY:
             return swe.calc_ut(self.jd, swe.SUN, self.sysflg if self.sysflg >= 0 else 0)[0]
         return swe.calc_ut(self.jd, self.pnumber, self.sysflg if self.sysflg >= 0 else 0)[0]
+
+    def _vedanga_coords(self, loc):
+        """Tropical calc + Vedanga ecliptic solstice offset (ayanamsa 99/100).
+
+        Returns the 6-tuple ``init_coords`` expects (long, lat, dist, and their speeds),
+        with only the longitude shifted into the Vedanga frame. See
+        ``libaditya.utils.vedanga_ecliptic_aval`` and SPEC-KUTA-AYA-001 3.3.
+        """
+        if self.system == const.TOPO or self.system == (const.SID | const.TOPO):
+            swe.set_topo(loc[0], loc[1], loc[2])
+        aval = utils.vedanga_ecliptic_aval(self.jd)
+        trop_flg = self.sysflg & ~swe.FLG_SIDEREAL if self.sysflg >= 0 else 0
+        if isinstance(self, Earth) and self.context.sysflg != const.HELIO and self.context.sysflg != const.BARY:
+            coords = list(swe.calc_ut(self.jd, swe.SUN, trop_flg)[0])
+        else:
+            coords = list(swe.calc_ut(self.jd, self.pnumber, trop_flg)[0])
+        coords[0] = (coords[0] + aval) % 360.0
+        return coords
 
     def name(self) -> str:
         return self.planet_name + self.retrostr()
@@ -1820,6 +1844,7 @@ class Planets:
         return a PrettyTable string with coordinates for all planets on julianday
         using sysflag coordinates
         """
+        from prettytable import PrettyTable
         output = PrettyTable()
         output.field_names = [
             "Planet",
@@ -1881,6 +1906,7 @@ class Planets:
         return a PrettyTable string with coordinates for all planets on julianday
         using sysflag coordinates
         """
+        from prettytable import PrettyTable
         output = PrettyTable()
         output.field_names = [
             "Planet",
@@ -1977,6 +2003,7 @@ class Planets:
         return header
 
     def hd_planets_definition(self) -> str:
+        from prettytable import PrettyTable
         output = PrettyTable()
         output.field_names = [
             "Planet",
@@ -2018,6 +2045,7 @@ class Planets:
         return ret
 
     def hd_planets_state(self) -> str:
+        from prettytable import PrettyTable
         output = PrettyTable()
         output.field_names = [
             "Planet",

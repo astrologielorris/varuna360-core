@@ -1,6 +1,5 @@
 # Copyright (C) 2026 Lorris Turpin / 360 Hearts in the Sky
 # Licensed under AGPL-3.0 — see LICENSE file for details.
-# Commercial exception: see NOTICE file.
 """
 CHTK File Reader and Writer
 Integrates with Kala astrology software format
@@ -85,6 +84,11 @@ class CHTKReader:
             gender = 'Male'
         elif gender_raw.lower() in ['f', '2']:
             gender = 'Female'
+        elif gender_raw == '0':
+            # Kala's "not set". Already the result of falling through, but
+            # stated explicitly now that the writers target it (td-n0z9) —
+            # an unstated behaviour is one a future edit removes by accident.
+            gender = 'Unknown'
         elif 'gender' in gender_raw.lower():
             # Extract the number from gender line (before or after " >gender")
             gender_num = ''
@@ -96,7 +100,11 @@ class CHTKReader:
 
             if gender_num:
                 gender_num = gender_num[0]  # Take first digit
-                gender = 'Male' if gender_num == '1' else 'Female' if gender_num == '0' else 'Unknown'
+                # 1 Male, 2 Female, 0 unset — the same three codes as the
+                # bare-value branch above. This line read 0 as Female and 2
+                # as Unknown, which is neither Kala's mapping nor its own
+                # module's.
+                gender = {'1': 'Male', '2': 'Female'}.get(gender_num, 'Unknown')
             else:
                 # Check for female codes: 'f', 'F', '2'
                 if gender_raw.lower() in ['f', '2']:
@@ -177,9 +185,134 @@ class CHTKReader:
             'city': city,  # Changed from 'location' to 'city'
         }
 
+        # Populate notes + optional embedded metadata from the CHTK notes section.
+        # SPEC-IMPORT-002 Phase 3: when the notes begin with a [Varuna360 Metadata]
+        # header (written by the Chart Info dialog), parse rodden/tags out and keep
+        # only the freeform notes. Plain Kala notes (no header) round-trip unchanged
+        # (rodden/tags stay None, notes = the full text), so existing files are
+        # untouched. read_notes() returns '' when absent -> normalize to None.
+        _raw_notes = self.read_notes(chtk_path) or None
+        _rodden, _tags, _notes = self.parse_metadata_from_notes(_raw_notes)
+        result['rodden'] = _rodden
+        result['tags'] = _tags
+        result['notes'] = _notes
+
         # Log parsed birth data for DAI tracing
 
         return result
+
+    def read_notes(self, filepath):
+        """
+        Read notes section from CHTK file.
+
+        Notes are stored between line 15 and the '~end of notes~' marker.
+        May contain biography sections like:
+        - "---------- Biography section simple search:"
+        - "---------- Biography section deep search:"
+        - "---------- Biography section astrodient profile:"
+
+        Args:
+            filepath: Path to CHTK file
+
+        Returns:
+            str: Notes content, or empty string if no notes
+        """
+        filepath = Path(filepath)
+        if not filepath.exists():
+            return ""
+
+        try:
+            # Try UTF-16 first (Kala native format)
+            try:
+                with open(filepath, 'r', encoding='utf-16') as f:
+                    lines = f.read().splitlines()
+            except (UnicodeDecodeError, UnicodeError):
+                # Fall back to UTF-8
+                with open(filepath, 'r', encoding='utf-8') as f:
+                    lines = f.read().splitlines()
+
+            # Find the ~end of notes~ marker
+            end_marker_idx = None
+            for i, line in enumerate(lines):
+                if '~end of notes~' in line:
+                    end_marker_idx = i
+                    break
+
+            if end_marker_idx is None or end_marker_idx <= 14:
+                # No notes or invalid format
+                return ""
+
+            # Notes are from line 15 (index 14) to just before the marker
+            # Line 15 may just be a space if no notes
+            notes_lines = lines[14:end_marker_idx]
+
+            # Join and strip
+            notes_text = '\n'.join(notes_lines).strip()
+
+            # If it's just whitespace, return empty
+            if not notes_text or notes_text.isspace():
+                return ""
+
+            return notes_text
+
+        except Exception as e:
+            print(f"Error reading notes from {filepath}: {e}")
+            return ""
+
+    @staticmethod
+    def parse_metadata_from_notes(notes_text):
+        """Parse a [Varuna360 Metadata] notes block (SPEC-IMPORT-002 Phase 3.2).
+
+        Format (Phase 3.1):
+            [Varuna360 Metadata]
+            Rodden: AA
+            Tags: celebrity, vedic, rectification
+            === Notes ===
+            <freeform notes...>
+
+        Returns (rodden, tags, freeform_notes). When the notes do NOT begin with
+        the [Varuna360 Metadata] header, returns (None, None, notes_text) so every
+        existing CHTK file (Kala biographies, plain notes, empty) is treated as
+        freeform exactly as before, BACKWARD COMPATIBLE by construction.
+
+        Kala displays the whole block as plain text, which is intentional: a user
+        sees "Rodden: AA" / "Tags: ..." as readable notes.
+        """
+        if not notes_text:
+            return None, None, (notes_text or None)
+        lines = notes_text.split('\n')
+        first = 0
+        while first < len(lines) and not lines[first].strip():
+            first += 1
+        if first >= len(lines) or lines[first].strip() != '[Varuna360 Metadata]':
+            return None, None, notes_text  # no header -> all freeform (unchanged)
+
+        rodden = None
+        tags = None
+        notes_start = None
+        for i in range(first + 1, len(lines)):
+            s = lines[i].strip()
+            if s == '=== Notes ===':
+                notes_start = i + 1
+                break
+            if s.startswith('Rodden:'):
+                rodden = s[len('Rodden:'):].strip() or None
+            elif s.startswith('Tags:'):
+                raw = [t.strip() for t in s[len('Tags:'):].split(',') if t.strip()]
+                # Dedup preserving first-occurrence order (case-insensitive),
+                # matching the tag-widget rule.
+                seen, dedup = set(), []
+                for t in raw:
+                    k = t.lower()
+                    if k not in seen:
+                        seen.add(k)
+                        dedup.append(t)
+                tags = dedup or None
+
+        freeform = None
+        if notes_start is not None:
+            freeform = '\n'.join(lines[notes_start:]).strip() or None
+        return rodden, tags, freeform
 
     def _normalize_timezone_format(self, tz_str):
         """
@@ -352,18 +485,20 @@ class CHTKWriter:
         minute = birth_data['local_minute'] if 'local_minute' in birth_data else birth_data.get('minute', 0)
         second = birth_data['local_second'] if 'local_second' in birth_data else birth_data.get('second', 0)
         time_change_flag = birth_data.get('time_change_flag', 0)
+        # Raw CHTK flag for the two flag LINE slots only (line 14 birth +
+        # line 26 residence). Kala's -1 AUTO sentinel must round-trip
+        # verbatim (td-5w3c.2); time_change_flag above stays the NORMALIZED
+        # 0/1/2 value and is the only one that may enter offset arithmetic
+        # (the DST subtraction below must never see -1).
+        time_change_flag_line = birth_data.get(
+            'time_change_flag_raw', time_change_flag)
 
         # Gender - convert to CHTK format (1=Male, 2=Female)
-        gender = birth_data.get('gender', 'Unknown')
-        if isinstance(gender, str):
-            if gender.lower() in ['male', 'm', '1']:
-                gender_code = '1'
-            elif gender.lower() in ['female', 'f', '2']:
-                gender_code = '2'
-            else:
-                gender_code = '2'  # Default to Female if unknown
-        else:
-            gender_code = '1' if int(gender) == 1 else '2'
+        # SPEC-IMPORT-001 §6.12 / td-n0z9: ONE mapping, shared with
+        # core.chtk_writer.create_chtk. Two local copies is how this file and
+        # that one ended up with opposite defaults for an unknown gender.
+        from core.chtk_writer import gender_to_chtk_code
+        gender_code = gender_to_chtk_code(birth_data.get('gender', 'Unknown'))
 
         # City and Country
         country = birth_data.get('country', 'Unknown')
@@ -453,7 +588,7 @@ class CHTKWriter:
             longitude_dms,             # Line 11: Longitude (DMS)
             latitude_dms,              # Line 12: Latitude (DMS)
             timezone,                  # Line 13: Timezone
-            str(time_change_flag),     # Line 14: DST flag (0=Standard, 1=DST)
+            str(time_change_flag_line),  # Line 14: DST flag (raw; -1 = AUTO)
             ' ',                       # Line 15: Notes (empty)
             '~end of notes~',          # Line 16: End notes marker
             ' ',                       # Line 17: Empty
@@ -490,7 +625,7 @@ class CHTKWriter:
             longitude_dms,             # Line 23: Residence longitude
             latitude_dms,              # Line 24: Residence latitude
             residence_tz,              # Line 25: Residence timezone
-            str(time_change_flag),     # Line 26: Residence DST flag
+            str(time_change_flag_line),  # Line 26: Residence DST flag (raw)
             residence_id_27,           # Line 27: Identifier (country, 0 for non-USA)
             '',                        # Line 28: Empty end line
         ])
@@ -539,9 +674,15 @@ class CHTKWriter:
 
         # Auto-generate filename if not provided
         if output_path is None:
+            from core.fs_safety import windows_safe_filename
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            person_name = (name or birth_data.get('name', 'anonymous')).replace(' ', '_')
-            city = birth_data.get('city', '').replace(' ', '_')
+            # windows_safe_filename: a name or city carrying ':' or '/' (very
+            # common in chart titles) produced a path Windows rejects outright.
+            person_name = windows_safe_filename(
+                (name or birth_data.get('name', 'anonymous')).replace(' ', '_'),
+                default='anonymous')
+            city = windows_safe_filename(
+                birth_data.get('city', '').replace(' ', '_'), default='')
 
             if city:
                 filename = f"{person_name}_{city}_{timestamp}.chtk"
@@ -561,6 +702,57 @@ class CHTKWriter:
             f.write(chtk_content.replace('\n', '\r\n'))
 
         return output_path
+
+    @staticmethod
+    def format_metadata_notes(rodden, tags, notes):
+        """Build the CHTK notes-section lines for rodden/tags/notes (Phase 3.1).
+
+        Layout:
+            [Varuna360 Metadata]
+            Rodden: AA              (omitted when rodden is falsy)
+            Tags: a, b, c           (omitted when tags is empty)
+            === Notes ===           (only when there ARE freeform notes)
+            <freeform notes...>
+
+        - When there is no rodden AND no tags, the notes are written directly with
+          NO header, so a notes-only CHTK chart stays human-clean for Kala.
+        - The unambiguous `=== Notes ===` separator is used (NOT `---`): existing
+          Kala biographies use `----------` markers and users type `---` as rules.
+        Returns a list of notes-block lines (never includes ~end of notes~).
+        """
+        has_meta = bool(rodden) or bool(tags)
+        out = []
+        if has_meta:
+            out.append('[Varuna360 Metadata]')
+            if rodden:
+                out.append(f'Rodden: {rodden}')
+            if tags:
+                out.append('Tags: ' + ', '.join(str(t) for t in tags))
+            if notes:
+                out.append('=== Notes ===')
+                out.extend(str(notes).split('\n'))
+        elif notes:
+            out.extend(str(notes).split('\n'))
+        if not out:
+            out = [' ']  # empty notes section placeholder (fresh-chart shape)
+        return out
+
+    def _rebuild_notes_in_preserved(self, preserved, rodden, tags, notes):
+        """Replace the notes sub-block in `preserved` (lines 15..~end of notes~).
+
+        Keeps the muhurtas + residence tail (from ~end of notes~ onward) verbatim.
+        If no ~end of notes~ marker is present (unexpected structure) returns
+        `preserved` unchanged so a malformed file is never corrupted.
+        """
+        end_idx = None
+        for i, line in enumerate(preserved):
+            if '~end of notes~' in line:
+                end_idx = i
+                break
+        if end_idx is None:
+            return preserved  # malformed / no marker: do not touch
+        new_notes_block = CHTKWriter.format_metadata_notes(rodden, tags, notes)
+        return new_notes_block + preserved[end_idx:]
 
     def update_chtk_birth_data(self, chtk_path, birth_data):
         """
@@ -604,26 +796,50 @@ class CHTKWriter:
         lat_dms = self.decimal_to_dms(lat, is_longitude=False)
         lon_dms = self.decimal_to_dms(lon, is_longitude=True)
 
-        # Compute CHTK timezone (inverted sign, without DST)
+        # Compute CHTK timezone (inverted sign, without DST). Subtract the
+        # DST/War Time amount to recover the standard BASE offset that CHTK
+        # stores. Prefer the float dst_offset_hours when present-and-non-None
+        # (preserves non-1h DST like Lord Howe Island's 0.5h); fall back to the
+        # integer time_change_flag for CHTK charts where dst_offset_hours is
+        # None. Trap #1: dict.get returns None (not the default) when the key is
+        # present with value None, so use an explicit `is None` check, never
+        # birth_data.get('dst_offset_hours', float(tcf)) (would float(None)).
+        # The integer fallback stays gated on (1, 2): the reader emits -1 as a
+        # "no/unknown DST" sentinel, and only flags 1 (DST) / 2 (War Time) add
+        # an offset (byte-identical with the historical behavior).
         utc_offset = birth_data.get('utc_offset_hours', 0)
         tcf = birth_data.get('time_change_flag', 0)
-        base_offset = utc_offset - tcf if tcf in (1, 2) else utc_offset
-        chtk_offset = -base_offset
-        chtk_h = int(chtk_offset)
-        chtk_m = int(abs(chtk_offset - chtk_h) * 60)
-        chtk_sign = '+' if chtk_offset >= 0 else '-'
-        tz_str = f"{chtk_sign}{abs(chtk_h):02d}:{chtk_m:02d}:00"
-
-        gender = birth_data.get('gender', 'Unknown')
-        if isinstance(gender, str):
-            if gender.lower() in ('male', 'm', '1'):
-                gender_code = '1'
-            elif gender.lower() in ('female', 'f', '2'):
-                gender_code = '2'
-            else:
-                gender_code = '2'
+        # Raw CHTK flag for the LINE slots only (line 14; synthesized
+        # residence flag in the missing-tail fallback below). Kala's -1 AUTO
+        # sentinel round-trips verbatim (td-5w3c.2). `tcf` stays the
+        # NORMALIZED 0/1/2 value: it alone feeds the DST subtraction, so the
+        # raw -1 can never bake std+dst into line 13 (pm-104b).
+        tcf_line = birth_data.get('time_change_flag_raw', tcf)
+        # Line 13: prefer the preserved chtk_timezone string VERBATIM.
+        # CHTK-sourced charts carry the original field (lossless, keeps
+        # seconds-bearing offsets and the unsigned USA form); edited charts
+        # get a fresh string from create_from_form_data. Recomputing from the
+        # DST-inclusive utc_offset_hours is only a fallback for callers that
+        # do not supply the key, and it hardcodes ':00' seconds.
+        chtk_tz_verbatim = birth_data.get('chtk_timezone')
+        if chtk_tz_verbatim:
+            tz_str = str(chtk_tz_verbatim)
         else:
-            gender_code = str(gender)
+            dst = birth_data.get('dst_offset_hours')
+            if dst is None:
+                dst = float(tcf) if tcf in (1, 2) else 0.0
+            else:
+                dst = float(dst)  # defensive: tomllib gives floats, but guard
+                #                    Decimal/str if a raw dict slips through.
+            base_offset = utc_offset - dst
+            chtk_offset = -base_offset
+            chtk_h = int(chtk_offset)
+            chtk_m = int(abs(chtk_offset - chtk_h) * 60)
+            chtk_sign = '+' if chtk_offset >= 0 else '-'
+            tz_str = f"{chtk_sign}{abs(chtk_h):02d}:{chtk_m:02d}:00"
+
+        from core.chtk_writer import gender_to_chtk_code
+        gender_code = gender_to_chtk_code(birth_data.get('gender', 'Unknown'))
 
         city = birth_data.get('city', '')
         country = birth_data.get('country', '')
@@ -654,7 +870,7 @@ class CHTKWriter:
             lon_dms,
             lat_dms,
             tz_line,
-            str(tcf),
+            str(tcf_line),
         ]
 
         # Preserve lines 15+ from the original file (notes, muhurtas, residence)
@@ -664,8 +880,21 @@ class CHTKWriter:
             preserved = [
                 ' ', '~end of notes~', ' ', '~end of muhurtas~', '0',
                 country, country, city_formatted, lon_dms, lat_dms,
-                tz_line, str(tcf), country, '',
+                tz_line, str(tcf_line), country, '',
             ]
+
+        # SPEC-IMPORT-002 Phase 3: rewrite the notes sub-block ONLY when the caller
+        # explicitly opts in via _chtk_write_metadata (the Chart Info dialog sets
+        # it on a metadata edit). Every other caller (normal birth-data edit-save,
+        # the read-path regression harness) leaves `preserved` untouched, so
+        # unedited charts stay byte-identical (the 5,106-chart regression gate).
+        if birth_data.get('_chtk_write_metadata'):
+            preserved = self._rebuild_notes_in_preserved(
+                preserved,
+                birth_data.get('rodden'),
+                birth_data.get('tags'),
+                birth_data.get('notes'),
+            )
 
         final_lines = new_birth_lines + preserved
         chtk_content = '\n'.join(final_lines)
@@ -687,64 +916,6 @@ class CHTKWriter:
             raise
 
         return True
-
-    def read_notes(self, filepath):
-        """
-        Read notes section from CHTK file.
-
-        Notes are stored between line 15 and the '~end of notes~' marker.
-        May contain biography sections like:
-        - "---------- Biography section simple search:"
-        - "---------- Biography section deep search:"
-        - "---------- Biography section astrodient profile:"
-
-        Args:
-            filepath: Path to CHTK file
-
-        Returns:
-            str: Notes content, or empty string if no notes
-        """
-        filepath = Path(filepath)
-        if not filepath.exists():
-            return ""
-
-        try:
-            # Try UTF-16 first (Kala native format)
-            try:
-                with open(filepath, 'r', encoding='utf-16') as f:
-                    lines = f.read().splitlines()
-            except (UnicodeDecodeError, UnicodeError):
-                # Fall back to UTF-8
-                with open(filepath, 'r', encoding='utf-8') as f:
-                    lines = f.read().splitlines()
-
-            # Find the ~end of notes~ marker
-            end_marker_idx = None
-            for i, line in enumerate(lines):
-                if '~end of notes~' in line:
-                    end_marker_idx = i
-                    break
-
-            if end_marker_idx is None or end_marker_idx <= 14:
-                # No notes or invalid format
-                return ""
-
-            # Notes are from line 15 (index 14) to just before the marker
-            # Line 15 may just be a space if no notes
-            notes_lines = lines[14:end_marker_idx]
-
-            # Join and strip
-            notes_text = '\n'.join(notes_lines).strip()
-
-            # If it's just whitespace, return empty
-            if not notes_text or notes_text.isspace():
-                return ""
-
-            return notes_text
-
-        except Exception as e:
-            print(f"Error reading notes from {filepath}: {e}")
-            return ""
 
 # Example usage and testing
 if __name__ == "__main__":

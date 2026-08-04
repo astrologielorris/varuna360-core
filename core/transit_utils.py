@@ -1,6 +1,5 @@
 # Copyright (C) 2026 Lorris Turpin / 360 Hearts in the Sky
 # Licensed under AGPL-3.0 — see LICENSE file for details.
-# Commercial exception: see NOTICE file.
 """
 Transit Utilities - Shared transit chart calculation logic.
 
@@ -20,6 +19,28 @@ from typing import Optional, Tuple
 _cached_location: Optional[Tuple[float, float]] = None
 _cached_location_name: Optional[str] = None
 _cached_iana_timezone: Optional[str] = None
+
+
+def format_place(*parts: str) -> str:
+    """Join location parts (city, country, ...) into a clean display label.
+
+    Splits EVERY part on commas, strips whitespace off each token, and drops
+    empty tokens before rejoining with ', '. This is the recurrent-double-comma
+    fix ('Ermont,, France'): it is robust to ANY stray-comma arrangement a
+    geocoder produces, not just a single trailing comma, e.g.
+      'Ermont,' + 'France'      -> 'Ermont, France'
+      'City, ,' + 'Country'     -> 'City, Country'
+      'City, , Country' + ''    -> 'City, Country'
+    Non-string parts (None, dicts) are ignored. Rejoining is idempotent for
+    legitimate multi-part names ('Washington, D.C.' stays intact)."""
+    tokens = []
+    for p in parts:
+        if isinstance(p, str):
+            for piece in p.split(','):
+                piece = piece.strip()
+                if piece:
+                    tokens.append(piece)
+    return ", ".join(tokens)
 
 
 def set_location(lat: float, lon: float, name: str = ""):
@@ -48,6 +69,21 @@ def clear_location():
     _cached_iana_timezone = None
 
 
+def get_cached_location() -> Tuple[float, float]:
+    """
+    Cache-only location read: NEVER performs network geolocation.
+
+    Returns the shared cached location if set, else the (0.0, 0.0)
+    null-island sentinel meaning "unresolved". Safe on render paths
+    (get_current_location can block on IP geolocation for seconds when
+    the cache is empty; this never does).
+    """
+    global _cached_location
+    if _cached_location is not None:
+        return _cached_location
+    return (0.0, 0.0)
+
+
 def get_current_location() -> Tuple[float, float]:
     """
     Get current location via IP geolocation, with caching.
@@ -73,7 +109,7 @@ def get_current_location() -> Tuple[float, float]:
             city = g.city or "Unknown city"
             country = g.country or ""
             _cached_location = (float(lat), float(lon))
-            _cached_location_name = f"{city}, {country}"
+            _cached_location_name = format_place(city, country)
             return _cached_location
         else:
             print(f"[TRANSIT] Geolocation failed: {g.status}")
@@ -93,7 +129,7 @@ def get_current_location() -> Tuple[float, float]:
             city = data.get("city", "Unknown city")
             country = data.get("country", "")
             _cached_location = (lat, lon)
-            _cached_location_name = f"{city}, {country}"
+            _cached_location_name = format_place(city, country)
             return _cached_location
     except Exception as e:
         print(f"[TRANSIT] Stdlib fallback geolocation error: {e}")
@@ -143,7 +179,8 @@ def get_iana_timezone(lat: float, lon: float) -> str:
 
 def calculate_transit_now(lat: Optional[float] = None, lon: Optional[float] = None,
                           mode: str = "aditya", ayanamsa: Optional[int] = None,
-                          target_dt: Optional[datetime] = None) -> Optional[Tuple]:
+                          target_dt: Optional[datetime] = None,
+                          hsys: str = "C") -> Optional[Tuple]:
     """Calculate planetary positions for a given moment (default: now).
 
     Args:
@@ -179,7 +216,8 @@ def calculate_transit_now(lat: Optional[float] = None, lon: Optional[float] = No
         hour_decimal = dt.hour + dt.minute / 60.0 + dt.second / 3600.0
         jd = swe.julday(dt.year, dt.month, dt.day, hour_decimal)
         chart = build_chart_from_params(jd=jd, lat=lat, lon=lon, mode=mode,
-                                        ayanamsa=ayanamsa, utcoffset=utc_off)
+                                        ayanamsa=ayanamsa, utcoffset=utc_off,
+                                        hsys=hsys)
 
         return chart, iana_tz
 

@@ -1,6 +1,5 @@
 # Copyright (C) 2026 Lorris Turpin / 360 Hearts in the Sky
 # Licensed under AGPL-3.0 — see LICENSE file for details.
-# Commercial exception: see NOTICE file.
 """
 Strength panel controller — Phase 4 W2.5 (sidereal-aware).
 
@@ -67,6 +66,7 @@ class StrengthController(PanelControllerBase):
                     digbala = data.get("digbala", 0)
                     uccha = data.get("uccha", 0)
                     chesta = data.get("chesta", 0)
+                    duc_bala = data.get("duc_bala", 0)
 
                     planet_text = f"{symbol} {planet_name}"
                     item0 = QTableWidgetItem(planet_text)
@@ -101,6 +101,14 @@ class StrengthController(PanelControllerBase):
                     gui.strength_table.setItem(i, 3, item3)
                     if chesta > STRENGTH_THRESHOLD:
                         highlight_cells.add((i, 3))
+
+                    # Col 4: DUC Bala combined score (Dig+Uccha+Chesta)/3.
+                    # No retro marker here (R* belongs on chesta, col 3 only).
+                    item4 = QTableWidgetItem(f"{duc_bala:.1f}")
+                    item4.setTextAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
+                    gui.strength_table.setItem(i, 4, item4)
+                    if duc_bala > STRENGTH_THRESHOLD:
+                        highlight_cells.add((i, 4))
 
             if hasattr(gui, "strength_delegate"):
                 gui.strength_delegate.update_highlights(highlight_cells)

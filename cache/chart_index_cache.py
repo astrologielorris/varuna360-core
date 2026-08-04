@@ -9,11 +9,14 @@ import glob
 from datetime import datetime
 from core.chtk_reader import CHTKReader
 from core.chart_factory import build_chart_from_params
+from managers.birth_data_manager import BirthDataManager
 import re
 
 # v3: added per-planet tropical longitude ({planet}_lon) so search can compute
 # the sign in the user's current zodiac mode instead of relabeling a fixed system.
-CACHE_VERSION = 3
+# v4: DST flag -1 auto-resolution (td-5w3c) moved positions for the 22 flag -1
+# charts; their files are byte-unchanged so mtime checks cannot catch it.
+CACHE_VERSION = 4
 
 # Filterable bodies: entry key (lowercase) -> libaditya planet name.
 FILTER_BODIES = {
@@ -110,12 +113,28 @@ class ChartIndexCache:
                 self.index = {}
 
     def _save_cache(self):
-        """Save cache to disk."""
+        """Save cache to disk atomically (BUG-16 SPEC-IMPORT-002).
+
+        Write to a sibling temp file then os.replace() it into place so a crash
+        mid-write cannot truncate the JSON. A truncated cache fails to parse on
+        load and resets the ENTIRE index to empty (the json.JSONDecodeError
+        handler in _load_cache), losing every cached chart. os.replace is atomic
+        on POSIX and Windows when src and dst share a filesystem (the temp is a
+        sibling of the cache file, so they always do).
+
+        On a replace failure the temp is intentionally NOT deleted (project policy
+        forbids unlink/rm). It is a FIXED-NAME sibling, so the next save reopens it
+        in 'w' mode and truncates it — it can never accumulate (at most one stale
+        copy exists, harmless and overwritten on the next attempt).
+        """
+        tmp = f"{self.cache_file}.tmp"
         try:
-            with open(self.cache_file, 'w', encoding='utf-8') as f:
+            with open(tmp, 'w', encoding='utf-8') as f:
                 json.dump(self.index, f, indent=2, ensure_ascii=False)
-        except IOError as e:
-            print(f"[ERROR] Could not save cache: {e}")
+            os.replace(tmp, self.cache_file)
+        except (IOError, OSError) as e:
+            print(f"[ERROR] Could not save cache: {e} "
+                  f"(temp {tmp} retained, reused next save)")
 
     def _get_file_modified_time(self, filepath):
         """Get file modification time as ISO string."""
@@ -187,24 +206,37 @@ class ChartIndexCache:
             dict with chart data or None if failed
         """
         try:
-            chtk_data = self.chtk_reader.read_chtk_file(filepath)
+            # Format dispatch (SPEC-IMPORT-001 §6.5 change 2). Both .chtk and
+            # .toml resolve to the SAME canonical birth_data shape via the one
+            # BirthDataManager dispatcher, so all field access below uses
+            # canonical keys (local_year, flat latitude/longitude,
+            # utc_offset_hours = TOTAL, pre-computed utc_*). canonicalize=False
+            # so batch indexing NEVER mutates user .toml files (hardening GATE);
+            # the .chtk branch ignores the flag. Using the public dispatcher
+            # (not TOMLChartReader + _build_canonical directly) removes the
+            # private-method coupling on _build_canonical.
+            chtk_data = BirthDataManager.create_birth_data_from_file(
+                filepath, canonicalize=False)
             if not chtk_data:
-                return self._make_skip_entry(filepath, None, "empty or invalid CHTK file")
+                return self._make_skip_entry(filepath, None, "empty or invalid chart file")
 
-            # Extract birth data
-            year = chtk_data.get('year', 0)
-            month = chtk_data.get('month', 0)
-            day = chtk_data.get('day', 0)
-            hour = chtk_data.get('hour', 0)
-            minute = chtk_data.get('minute', 0)
-            second = chtk_data.get('second', 0)
+            # Extract LOCAL birth date/time from canonical keys (local_*, not
+            # the raw year/month/day the inline CHTK parser used). Used only for
+            # validation and the displayed birth_date/birth_time strings; the
+            # JD below comes from the canonical UTC fields.
+            year = chtk_data.get('local_year', 0)
+            month = chtk_data.get('local_month', 0)
+            day = chtk_data.get('local_day', 0)
+            hour = chtk_data.get('local_hour', 0)
+            minute = chtk_data.get('local_minute', 0)
+            second = chtk_data.get('local_second', 0)
 
             # === VALIDATION: Skip files with unsupported data ===
             # BCE years (negative) not supported by Python datetime
             if year < 1:
                 return self._make_skip_entry(filepath, chtk_data, f"BCE year ({year})")
 
-            # Clamp invalid time values
+            # Clamp invalid time values (display only)
             hour = max(0, min(23, hour))
             minute = max(0, min(59, minute))
             second = max(0, min(59, second))
@@ -219,37 +251,44 @@ class ChartIndexCache:
             if day < 1 or day > max_day:
                 return self._make_skip_entry(filepath, chtk_data, f"invalid day ({day}) for month {month}")
 
-            # Get coordinates
-            coords = chtk_data.get('coordinates', {})
-            lat = coords.get('latitude', 0.0)
-            lon = coords.get('longitude', 0.0)
+            # Get coordinates (flat canonical keys, not nested coordinates dict)
+            lat = chtk_data.get('latitude', 0.0)
+            lon = chtk_data.get('longitude', 0.0)
 
-            # Handle timezone - convert CHTK offset to UTC
-            chtk_tz = chtk_data.get('timezone', '+00:00:00')
-            time_change_flag = chtk_data.get('time_change_flag', 0)
-
-            # Parse and invert timezone (CHTK uses opposite convention)
-            match = re.match(r'([+-])(\d{1,2}):(\d{2}):(\d{2})', str(chtk_tz))
-            if match:
-                sign, hours, minutes, seconds = match.groups()
-                offset_hours = int(hours) if sign == '-' else -int(hours)
-                offset_minutes = int(minutes) if sign == '-' else -int(minutes)
-
-                # Apply DST if flagged
-                if time_change_flag == 1:
-                    offset_hours += 1
-            else:
-                offset_hours = 0
-                offset_minutes = 0
-
-            # Convert to UTC
-            from datetime import timedelta
-            local_dt = datetime(year, month, day, hour, minute, second)
-            utc_dt = local_dt - timedelta(hours=offset_hours, minutes=offset_minutes)
-
-            from libaditya import swe
-            hour_dec = utc_dt.hour + utc_dt.minute / 60.0 + utc_dt.second / 3600.0
-            jd = swe.julday(utc_dt.year, utc_dt.month, utc_dt.day, hour_dec)
+            # Build JD from the canonical UTC fields. _build_canonical has
+            # ALREADY applied the timezone + DST (utc_offset_hours is the TOTAL
+            # offset and utc_* is the resulting UTC instant), so we must NOT
+            # re-parse or re-invert any timezone string and must NOT re-add DST.
+            # This deletes the old inline CHTK TZ parser, whose DST handling only
+            # covered flag==1 and silently dropped War-Time flag==2; the canonical
+            # path handles both correctly. (matches managers/chart_manager.py)
+            # NOTE: rodden/tags are intentionally NOT indexed for search here.
+            # SPEC-IMPORT-001 Q3 (search over metadata) is OPEN / out of scope.
+            from core.time_utils import julday
+            # Defensive: use .get() for the canonical UTC fields. A single
+            # malformed chart (missing/None UTC field) must SKIP gracefully,
+            # not raise KeyError/TypeError and abort the whole index build.
+            _utc_y = chtk_data.get('utc_year')
+            _utc_mo = chtk_data.get('utc_month')
+            _utc_d = chtk_data.get('utc_day')
+            _utc_h = chtk_data.get('utc_hour')
+            _utc_mi = chtk_data.get('utc_minute')
+            _utc_s = chtk_data.get('utc_second')
+            if None in (_utc_y, _utc_mo, _utc_d, _utc_h, _utc_mi, _utc_s):
+                _missing = [
+                    k for k, v in (
+                        ('utc_year', _utc_y), ('utc_month', _utc_mo),
+                        ('utc_day', _utc_d), ('utc_hour', _utc_h),
+                        ('utc_minute', _utc_mi), ('utc_second', _utc_s),
+                    ) if v is None
+                ]
+                print(f"[ChartIndexCache] Skipping {filepath}: missing "
+                      f"canonical UTC field(s) {_missing}")
+                return self._make_skip_entry(
+                    filepath, chtk_data,
+                    f"missing canonical UTC field(s): {', '.join(_missing)}")
+            utc_hour_dec = (_utc_h + _utc_mi / 60.0 + _utc_s / 3600.0)
+            jd = julday(_utc_y, _utc_mo, _utc_d, utc_hour_dec)
             _chart = build_chart_from_params(jd=jd, lat=lat, lon=lon, mode="aditya", ayanamsa=1)
 
             from core.chart_helpers import get_planet_sign_name, get_planet_in_sign_longitude, get_planet_decimal_degrees
@@ -326,9 +365,16 @@ class ChartIndexCache:
             return entry
 
         except Exception as e:
-            # Silently create skip entry - these will be cached to avoid re-processing
-            # Common reasons: BCE dates, invalid times, empty files
-            return self._make_skip_entry(filepath, None, str(e))
+            # BUG-13 (SPEC-IMPORT-002): do NOT cache an UNEXPECTED failure as a
+            # skip entry — that buries the file permanently until a manual rebuild.
+            # (Deterministic skips above — BCE / invalid date / empty file — stay
+            # cached because re-processing them cannot help.) Returning None makes
+            # the build loop's `if chart_data:` guard drop it WITHOUT caching, so
+            # the file is re-attempted on the next rebuild. Log with the filepath
+            # so a genuinely broken file is visible instead of silently missing.
+            print(f"[WARNING] Indexing failed for {filepath} "
+                  f"(not cached, will retry next rebuild): {e}")
+            return None
 
     def build_index(self, folder_paths, progress_callback=None):
         """
@@ -346,12 +392,15 @@ class ChartIndexCache:
         # Folders to exclude from indexing (deleted files, temporary data)
         excluded_folders = {'trash', '.trash', 'to_migrate'}
 
-        # Find all CHTK files (deduplicate in case of overlapping paths)
+        # Find all chart files (deduplicate in case of overlapping paths).
+        # SPEC-IMPORT-001 §6.5 change 1: index .toml (Open Astrology Chart)
+        # alongside .chtk; both dispatch through the canonical reader.
         all_files = []
         seen_files = set()
         for folder in folder_paths:
             if folder and os.path.exists(folder):
-                files = glob.glob(os.path.join(folder, "**", "*.chtk"), recursive=True)
+                files = (glob.glob(os.path.join(folder, "**", "*.chtk"), recursive=True)
+                         + glob.glob(os.path.join(folder, "**", "*.toml"), recursive=True))
                 for f in files:
                     norm_f = os.path.normpath(f)
                     # Skip files inside excluded folders
@@ -401,6 +450,44 @@ class ChartIndexCache:
         self.index = new_index
         self._save_cache()
         return self.index
+
+    def add_file(self, filepath, save=True):
+        """Index ONE file and keep the rest of the index as it is.
+
+        SPEC-PERSIST-001 INV-8 / D-11 (td-av6c). A newly created chart used to
+        be invisible in Find Chart until a full rebuild, and a rebuild over
+        thousands of files is slow enough that the honest advice was "don't
+        bother" — so new charts were simply not findable.
+
+        SPEC-FIND-003 3.5 already allows single-entry updates; this is that,
+        for the create path. Cost is one chart calculation, not N.
+
+        Returns the entry, or None when the file could not be indexed (the
+        same contract as _calculate_chart_data: an unexpected failure is NOT
+        cached, so the next rebuild retries it).
+        """
+        filepath = str(filepath)
+        entry = self._calculate_chart_data(filepath)
+        if not entry:
+            return None
+        self.index[filepath] = entry
+        if save:
+            self._save_cache()
+        return entry
+
+    def remove_file(self, filepath, save=True):
+        """Drop one file from the index. Returns True when it was there.
+
+        The counterpart to add_file: an index that only ever grows starts
+        answering with charts that no longer exist.
+        """
+        filepath = str(filepath)
+        if filepath not in self.index:
+            return False
+        del self.index[filepath]
+        if save:
+            self._save_cache()
+        return True
 
     def get_all_entries(self):
         """Get all cached entries as a list."""

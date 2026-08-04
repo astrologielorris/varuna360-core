@@ -1,11 +1,10 @@
 # Copyright (C) 2026 Lorris Turpin / 360 Hearts in the Sky
 # Licensed under AGPL-3.0 — see LICENSE file for details.
-# Commercial exception: see NOTICE file.
 """
 QThread workers for license operations.
 
 Keeps license_manager.py free of PySide6 dependencies (testable without Qt).
-Workers follow the same pattern as WikidataWorker, etc.
+Workers follow the same pattern as WikidataWorker, WebSearchWorker, etc.
 """
 
 from PySide6.QtCore import QThread, Signal

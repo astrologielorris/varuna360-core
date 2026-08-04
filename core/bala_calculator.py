@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 # Copyright (C) 2026 Lorris Turpin / 360 Hearts in the Sky
 # Licensed under AGPL-3.0 — see LICENSE file for details.
-# Commercial exception: see NOTICE file.
 """
 Bala Calculator Module - Planetary Strength Calculations
 
@@ -11,9 +10,12 @@ Computes the 3 main Shadbala components:
     3. Chesta (Motion Strength) - Retrograde/speed based (0-60)
 
 Combined Score:
-    DEC Bala = ∛(Digbala × Uccha × Chesta) - Geometric Mean
+    DUC Bala = (Digbala + Uccha + Chesta) / 3 (arithmetic mean).
+    (D)ig (U)ccha (C)hesta; each component contributes an equal 1/3 share.
 
-All formulas verified against reference charts (Dec 2025).
+All formulas verified against reference charts (Dec 2025). The geometric->
+arithmetic change and the equal-ratio range verification are documented in
+the DecBala range report (SPEC-WZA-001).
 
 Uccha supports DUAL ZODIAC SYSTEMS via aditya_mode parameter:
 - "aditya" (default): Aditya Circle exaltation degrees (shifted -30° from traditional)
@@ -331,7 +333,7 @@ def calculate_uccha(planet_longitude, planet_name, aditya_mode="aditya"):
     return max(0.0, min(60.0, uccha))
 
 # ============================================================
-# CHESTA (Motion Strength) - Copied from test_all_chesta.py
+# CHESTA (Motion Strength) - Mirrors the reference implementation
 # ============================================================
 
 def calculate_sun_chesta(sun_longitude):
@@ -651,19 +653,25 @@ def calculate_chesta(planet_name, planet_long_or_pdata, sun_long=None, speed=Non
         return 30.0
 
 # ============================================================
-# DEC BALA (Combined Score)
+# DUC BALA (Combined Score)
 # ============================================================
 
-def calculate_dec_bala(digbala, uccha, chesta):
+def calculate_duc_bala(digbala, uccha, chesta):
     """
-    Calculate DEC Bala (Direction-Energy-Confidence combined score).
+    Calculate DUC Bala (Dig, Uccha, Chesta combined score).
 
-    Uses Geometric Mean: ∛(Digbala × Uccha × Chesta)
+    Uses the Arithmetic Mean: (Digbala + Uccha + Chesta) / 3
 
     Rationale:
-        - Penalizes if ANY single bala is weak
-        - A planet needs all 3 strengths to be truly effective
-        - Range: 0-60 (same as individual balas)
+        - Each of the three balas contributes an equal 1/3 share; the partial
+          derivative of DUC Bala with respect to each component is exactly 1/3,
+          so no single bala dominates or is over-penalized.
+        - Replaces the former geometric mean (cube root of the product), which
+          collapsed toward zero whenever a single component was weak. The
+          equal-ratio intent is justified by the real attainable range of each
+          component (each fills 0-60 comparably), verified in
+          the DecBala range report (SPEC-WZA-001 §4.1).
+        - Range: 0-60 (same as individual balas).
 
     Args:
         digbala: Directional strength (0-60)
@@ -671,17 +679,13 @@ def calculate_dec_bala(digbala, uccha, chesta):
         chesta: Motion strength (0-60)
 
     Returns:
-        DEC Bala value (0-60)
+        DUC Bala value (0-60)
     """
-    # Handle zero/negative values to avoid math errors
-    d = max(0.001, digbala)
-    u = max(0.001, uccha)
-    c = max(0.001, chesta)
+    duc = (digbala + uccha + chesta) / 3.0
 
-    # Geometric mean: cube root of product
-    dec = (d * u * c) ** (1/3)
-
-    return max(0.0, min(60.0, dec))
+    # Defensive clamp: keep the documented 0-60 contract even if a component
+    # arrives slightly out of range.
+    return max(0.0, min(60.0, duc))
 
 # ============================================================
 # MAIN INTERFACE
@@ -689,7 +693,7 @@ def calculate_dec_bala(digbala, uccha, chesta):
 
 def get_all_bala_data(chart_or_data, aditya_mode=None, hsys="C"):
     """
-    Calculate all 3 Balas + DEC Bala for all 7 classical planets.
+    Calculate all 3 Balas + DUC Bala for all 7 classical planets.
 
     Accepts a libaditya Chart object (preferred) or a legacy dict.
 
@@ -704,7 +708,7 @@ def get_all_bala_data(chart_or_data, aditya_mode=None, hsys="C"):
     Returns:
         Dict with structure:
         {
-            'Sun': {'digbala': 36.0, 'uccha': 11.3, 'chesta': 23.0, 'dec_bala': 21.5},
+            'Sun': {'digbala': 36.0, 'uccha': 11.3, 'chesta': 23.0, 'duc_bala': 23.4},
             'Moon': {...},
             ...
         }
@@ -792,14 +796,14 @@ def _bala_from_pdata(pdata, aditya_mode, hsys="C"):
         uccha = calculate_uccha(planet_long, planet_name, aditya_mode)
         chesta = calculate_chesta(planet_name, pdata, julian_day=julian_day)
 
-        # Calculate combined DEC Bala
-        dec_bala = calculate_dec_bala(digbala, uccha, chesta)
+        # Calculate combined DUC Bala
+        duc_bala = calculate_duc_bala(digbala, uccha, chesta)
 
         result[planet_name] = {
             'digbala': round(digbala, 1),
             'uccha': round(uccha, 1),
             'chesta': round(chesta, 1),
-            'dec_bala': round(dec_bala, 1),
+            'duc_bala': round(duc_bala, 1),
         }
 
     return result
@@ -855,13 +859,13 @@ def _bala_from_chart(chart, aditya_mode):
                                     armc=armc, eps=eps, hsys=hsys)
         uccha = calculate_uccha(planet_long, planet_name, aditya_mode)
         chesta = calculate_chesta(planet_name, planet_long, sun_long, speed, julian_day=jd)
-        dec_bala = calculate_dec_bala(digbala, uccha, chesta)
+        duc_bala = calculate_duc_bala(digbala, uccha, chesta)
 
         result[planet_name] = {
             'digbala': round(digbala, 1),
             'uccha': round(uccha, 1),
             'chesta': round(chesta, 1),
-            'dec_bala': round(dec_bala, 1),
+            'duc_bala': round(duc_bala, 1),
         }
 
     return result
