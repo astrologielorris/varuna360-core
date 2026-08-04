@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 # Copyright (C) 2026 Lorris Turpin / 360 Hearts in the Sky
 # Licensed under AGPL-3.0 — see LICENSE file for details.
-# Commercial exception: see NOTICE file.
 """
 Text-to-CHTK Parser — Extract birth data from free-form French/English text.
 
@@ -1070,10 +1069,12 @@ def resolve_location(city: str, country: str,
     birth_dt = datetime(year, month, day)
     tz_info = get_timezone_for_coordinates(lat, lon, birth_dt)
 
-    # Get IANA timezone name for get_all_planets_data()
-    from timezonefinder import TimezoneFinder
-    tf = TimezoneFinder()
-    tz_name = tf.timezone_at(lat=lat, lng=lon) or "UTC"
+    # Get IANA timezone name for get_all_planets_data().
+    # SPEC-MAP-001 INV-7: the shared finder. This was a SECOND fresh
+    # TimezoneFinder() for a coordinate get_timezone_for_coordinates() had just
+    # looked up — 788 ms each, so ~1.6 s per chart between the two.
+    from core.tz_finder import timezone_at
+    tz_name = timezone_at(lat, lon) or "UTC"
 
     return {
         "lat": lat, "lon": lon,
@@ -1286,8 +1287,8 @@ TEST_CASES = [
     # =========================================================================
     (21, "Marie 15 janv 1988 Paris",
      "Marie", (1988, 1, 15), None, "Paris", "FR abbrev janv"),
-    (22, "Lorris Turpin 22 fev 1991 10:30",
-     "Lorris Turpin", (1991, 2, 22), (10, 30), None, "FR abbrev fev"),
+    (22, "Marie Dupont 15 fev 1985 14:30",
+     "Marie Dupont", (1985, 2, 15), (14, 30), None, "FR abbrev fev"),
     (23, "Paul 7 mars 2001 Lyon",
      "Paul", (2001, 3, 7), None, "Lyon", "FR abbrev mars"),
     (24, "Claire 3 avr 1995 Nantes",

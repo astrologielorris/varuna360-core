@@ -1,6 +1,5 @@
 # Copyright (C) 2026 Lorris Turpin / 360 Hearts in the Sky
 # Licensed under AGPL-3.0 — see LICENSE file for details.
-# Commercial exception: see NOTICE file.
 """
 Tajika Aspects — Western-style orb-based aspects in the Indian tradition.
 =========================================================================
@@ -16,7 +15,7 @@ Key Differences from Graha Sphuta Drishti:
 - Includes outer planets (Uranus, Neptune, Pluto) + Ascendant
 - No Rahu/Ketu
 
-Reference: Ernst Wilhelm's Tajika aspect/orb tables (docs/tajika_prasna/).
+Reference: Ernst Wilhelm's Tajika aspect/orb tables.
 """
 
 # ============================================================================
@@ -24,8 +23,8 @@ Reference: Ernst Wilhelm's Tajika aspect/orb tables (docs/tajika_prasna/).
 # ============================================================================
 
 # Planet-specific orbs (Deeptamsas) in degrees
-# Traditional 7 planets: from Ernst Wilhelm's PDF tables
-# Ascendant: 9° (validated against reference charts; not in PDF, 15° was too large)
+# Traditional 7 planets: from Ernst Wilhelm's published orb tables
+# Ascendant: 9° (validated against reference charts; 15° was too large)
 # Outer planets: 8° each (validated against reference charts; no traditional values exist)
 DEEPTAMSAS = {
     "Sun": 15, "Moon": 12, "Mars": 8, "Mercury": 7, "Jupiter": 9,
@@ -46,7 +45,7 @@ TAJIKA_SHORT_NAMES = {
     "Uranus": "Ur", "Neptune": "Ne", "Pluto": "Pl",
 }
 
-# Exact aspect angles and their peak virupas (from PDF interpolation table)
+# Exact aspect angles and their peak virupas (from the interpolation table)
 ASPECT_POINTS = {
     0: 60, 60: 40, 90: 15, 120: 45, 180: 60,
     240: 45, 270: 15, 300: 10,
@@ -201,7 +200,7 @@ def calculate_tajika_strength(distance: float) -> float:
     """
     Calculate Tajika aspect strength using 12-segment piecewise linear interpolation.
 
-    Each 30° segment linearly interpolates between endpoint values from the PDF table.
+    Each 30° segment linearly interpolates between endpoint values from the interpolation table.
     Returns 0-60 virupas.
 
     Key asymmetry: Sextile at 60° = 40 VR, but Sextile at 300° = 10 VR.

@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 # Copyright (C) 2026 Lorris Turpin / 360 Hearts in the Sky
 # Licensed under AGPL-3.0 — see LICENSE file for details.
-# Commercial exception: see NOTICE file.
 """
 Time Adjust Widget
 Time adjustment buttons for birth time or transit time navigation.
@@ -44,6 +43,19 @@ TIME_INCREMENTS = [
     ("10y", {"days": 3650}),  # Approximate 10 years
     ("50y", {"days": 18250}),  # Approximate 50 years
 ]
+
+def nudged_jd(base_jd: float, onesec_jd: float, delta_seconds: float) -> float:
+    """The adjusted instant. Extracted so it can be tested without Qt.
+
+    Inline in _adjust_time this arithmetic was unreachable headlessly, so the
+    smoke gate could only grep the source for it — and a source grep cannot
+    tell `base + delta * onesec` from `base`. A mutation that dropped the
+    delta entirely (every time adjustment silently discarded, then written to
+    disk by Save As) passed the whole suite. Scenario P asserts on this
+    function against anchored values instead.
+    """
+    return base_jd + delta_seconds * onesec_jd
+
 
 class TimeAdjustWidget(QWidget):
     """
@@ -309,7 +321,7 @@ class TimeAdjustWidget(QWidget):
             old_jd = ctx.timeJD
 
             # Nudge JD (EphContext is frozen → replace)
-            new_jd_float = old_jd.jd + delta_seconds * old_jd.onesecjd
+            new_jd_float = nudged_jd(old_jd.jd, old_jd.onesecjd, delta_seconds)
             new_timeJD = JulianDay(new_jd_float, utcoffset=old_jd.utcoffset)
             _chart = Chart(dc_replace(ctx, timeJD=new_timeJD))
 
@@ -327,13 +339,21 @@ class TimeAdjustWidget(QWidget):
                 'second': s, 'timedec': hour_float,
                 'latitude': ctx.location.lat,
                 'longitude': ctx.location.long,
+                # td-nbl8, second channel: without this the STALE julian_day
+                # from old_bd rides along in source_params, and a later
+                # Save As writes a .toml whose [civil] block holds the
+                # adjusted time while [moment].jd holds the original — the
+                # revert made permanent on disk, reachable without ever
+                # touching the memory panel. new_jd_float IS the adjusted
+                # instant, so carry it rather than clearing it.
+                'julian_day': new_jd_float,
             })
             self.gui.state.dispatch(SetActiveChart(chart=_chart, source_params=make_source_params(
                 chtk_path=sp.get("chtk_path"),
                 birth_data=new_bd,
                 mode=sp.get("mode", self.gui.state.aditya_mode),
                 ayanamsa=sp.get("ayanamsa",
-                                getattr(self.gui, 'chart_sidereal_ayanamsa_id', 1)),
+                                getattr(self.gui, 'chart_sidereal_ayanamsa_id', 100)),
                 house_system=sp.get("house_system", "campanus"),
                 is_human_design=sp.get("is_human_design", False),
             )))
@@ -449,8 +469,12 @@ class TimeAdjustWidget(QWidget):
                 entry['_chart'] = active
                 entry['_built_mode'] = self.gui.state.aditya_mode
                 entry['_built_ayanamsa'] = getattr(
-                    self.gui, 'chart_sidereal_ayanamsa_id', 1
+                    self.gui, 'chart_sidereal_ayanamsa_id', 100
                 )
+                # Store the house system too, or get_or_build_chart serves this
+                # freshly-built chart under a stale _built_hsys to Transit/Solar
+                # Return (td-5lr1). Same source the consumers read as current_hsys.
+                entry['_built_hsys'] = getattr(self.gui.state, 'house_system', 'campanus')
                 saved = True
 
                 if hasattr(self.gui, 'edit_chart_panel') and self.gui.edit_chart_panel:

@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 # Copyright (C) 2026 Lorris Turpin / 360 Hearts in the Sky
 # Licensed under AGPL-3.0 — see LICENSE file for details.
-# Commercial exception: see NOTICE file.
 """
 Sign Variation Dialog
 Popup dialog for browsing and selecting zodiac sign icon variations.
@@ -24,7 +23,7 @@ from PySide6.QtGui import QFont, QPixmap, QImage, QColor
 from ui.qt_theme import (
     BG, SURFACE, TEXT_PRIMARY, TEXT_SECONDARY, TEXT_TERTIARY, GOLD,
     ACCENTS, FONT_PRIMARY, FONT_MONO, BORDER, STATUS, get_theme_colors,
-    scaled_area_font, scaled_area_px,
+    scaled_area_font, scaled_area_px, desat_image,
 )
 
 # Import rotating widget from planet dialog
@@ -384,9 +383,9 @@ class SignVariationDialog(QDialog):
 
         # Try the 2048x2048 original. Core ships exactly one file per sign
         # (the single default retained by the 2026-04-08 cleanup), so this
-        # is the only path the Core build can hit. The proprietary edition
+        # is the only path the Core build can hit. The paid edition
         # may add more variants via an overlay path; see the variation
-        # system rebuild TODO in the proprietary tree.
+        # system rebuild TODO in the paid edition's tree.
         img_path = PROJECT_ROOT / f"img/sign/{self.sign_name}{var_num}.webp"
 
         if img_path.exists():
@@ -403,6 +402,7 @@ class SignVariationDialog(QDialog):
                     Qt.AspectRatioMode.KeepAspectRatio,
                     Qt.TransformationMode.SmoothTransformation
                 )
+                scaled = desat_image(scaled)
                 pixmap = QPixmap.fromImage(scaled)
                 pixmap.setDevicePixelRatio(dpr)
 

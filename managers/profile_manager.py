@@ -1,6 +1,5 @@
 # Copyright (C) 2026 Lorris Turpin / 360 Hearts in the Sky
 # Licensed under AGPL-3.0 — see LICENSE file for details.
-# Commercial exception: see NOTICE file.
 """
 Profile Manager - Manage multiple user profiles with avatars (PySide6 version)
 
@@ -16,6 +15,8 @@ import os
 import shutil
 from datetime import datetime
 from pathlib import Path
+
+from core.fs_safety import is_reserved_windows_name
 
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
@@ -85,6 +86,11 @@ class ProfileManager:
         """
         self.app = app
 
+        # True when the profiles dir could not be initialised. Set properly by
+        # _ensure_default_profile() below; predefined so every read is safe
+        # even if construction is interrupted before that point.
+        self.storage_degraded = False
+
         if profiles_dir:
             self.profiles_dir = Path(profiles_dir)
         else:
@@ -101,8 +107,62 @@ class ProfileManager:
         # Ensure default profile exists
         self._ensure_default_profile()
 
+        # If the app closed while in the Favorites profile, startup
+        # restores its session.json directly (restore_session_silently
+        # bypasses _on_profile_selected). Re-sync from favorites.json
+        # here so the restored list is current (SPEC-FAV-001 S5.2).
+        # ProfileManager is constructed before session restore.
+        if self.get_current_profile() == "favorites":
+            # Guarded for the same reason as _ensure_default_profile: this
+            # runs inside __init__ and writes to disk, so an unwritable dir
+            # here would take the whole window down at startup.
+            try:
+                from managers.favorites_manager import sync_favorites_profile
+                sync_favorites_profile(self.profiles_dir)
+            except OSError as e:
+                self.storage_degraded = True
+                debug_print(f"[PROFILE] Favorites sync skipped: {e}")
+
     def _ensure_default_profile(self):
-        """Ensure the default profile exists."""
+        """Ensure the default profile exists, without ever raising.
+
+        SPEC-SES-001 INV-2: an unwritable profiles directory must degrade the
+        app, not prevent it from starting. This method is called from
+        __init__, so an unguarded OSError here propagates out of the
+        ProfileManager constructor and out of ChartGUI.__init__ - the user
+        gets a traceback and no window at all, on a machine where the only
+        thing actually wrong is that one folder cannot be written to.
+
+        That is a realistic case, not a defensive nicety: a macOS user who
+        denies the Files and Folders prompt for ~/Documents, a Windows folder
+        redirected into a locked OneDrive, a data dir on a disconnected
+        external disk. SessionManager relocates to a writable fallback for
+        exactly this reason, and core_gui_qt passes us its post-relocation
+        path, so reaching the except branch means even the fallback failed.
+        In that case the app still opens and the session health banner tells
+        the user what is wrong - which is far more useful than a crash.
+
+        Only OSError is caught. A TypeError or ValueError in here is a bug in
+        this code and should still be loud.
+        """
+        try:
+            self._ensure_default_profile_unsafe()
+            self.storage_degraded = False
+        except OSError as e:
+            self.storage_degraded = True
+            debug_print(f"[PROFILE] Cannot initialise profiles dir "
+                        f"{self.profiles_dir}: {e}")
+            try:
+                from core.diagnostics import get_logger
+                get_logger("profile").error(
+                    "profiles dir unusable (%s): %s; running degraded",
+                    self.profiles_dir, e,
+                )
+            except Exception:
+                pass
+
+    def _ensure_default_profile_unsafe(self):
+        """Real body of _ensure_default_profile. May raise OSError."""
         default_dir = self.profiles_dir / "default"
         default_dir.mkdir(parents=True, exist_ok=True)
 
@@ -120,6 +180,25 @@ class ProfileManager:
             }
             with open(profile_json, 'w', encoding='utf-8') as f:
                 json.dump(profile_data, f, indent=2)
+
+        # Ensure the built-in Favorites profile exists (SPEC-FAV-001 S5.1).
+        # Its session.json is regenerated from favorites.json on each
+        # switch-in, so only profile.json needs to exist here.
+        favorites_dir = self.profiles_dir / "favorites"
+        favorites_json = favorites_dir / "profile.json"
+        if not favorites_json.exists():
+            favorites_dir.mkdir(parents=True, exist_ok=True)
+            with open(favorites_json, 'w', encoding='utf-8') as f:
+                json.dump({
+                    "name": "Favorites",
+                    "avatar": "img/planets/Venus.webp",
+                    "created": datetime.now().isoformat(),
+                    "last_used": "",
+                    "preferences": {
+                        "default_aditya_mode": "aditya",
+                        "default_background": 1
+                    }
+                }, f, indent=2)
 
         # Set as active if no active profile
         if not self.active_profile_file.exists():
@@ -204,9 +283,28 @@ class ProfileManager:
             )
             return None
 
-        # Generate profile ID from name
+        # Generate profile ID from name.
         profile_id = name.lower().replace(" ", "_")
         profile_id = "".join(c for c in profile_id if c.isalnum() or c == "_")
+
+        # Two ways the stripping above produces an unusable directory name:
+        #
+        #   1. A name made entirely of punctuation ("???", "***") strips to "".
+        #      profiles_dir / "" IS profiles_dir, which always exists, so the
+        #      uniqueness loop below silently renamed it to "_1" — and
+        #      list_profiles() skips anything starting with "_", so the
+        #      profile was created and then invisible forever.
+        #   2. Windows refuses a directory named CON, PRN, AUX, NUL, COM1-9 or
+        #      LPT1-9. A profile called "Con" therefore fails to mkdir there
+        #      and works fine here, which is the worst kind of bug to find.
+        #
+        # A leading "_" is also stripped so a name like "_hidden" cannot make
+        # itself invisible.
+        profile_id = profile_id.lstrip("_")
+        if is_reserved_windows_name(profile_id):
+            profile_id = f"{profile_id}_profile"
+        if not profile_id:
+            profile_id = "profile"
 
         # Ensure unique ID
         base_id = profile_id
@@ -270,8 +368,9 @@ class ProfileManager:
         Returns:
             True if deleted, False otherwise
         """
-        if profile_id == "default":
-            QMessageBox.warning(self.app, "Cannot Delete", "Cannot delete the default profile.")
+        if profile_id in ("default", "favorites"):
+            QMessageBox.warning(self.app, "Cannot Delete",
+                                f"Cannot delete the built-in '{profile_id}' profile.")
             return False
 
         profile_dir = self.profiles_dir / profile_id
@@ -293,9 +392,16 @@ class ProfileManager:
         if result != QMessageBox.StandardButton.Yes:
             return False
 
-        # If this was the active profile, switch to default
+        # If this was the active profile, switch to default.
+        #
+        # _on_profile_selected, not switch_profile: switch_profile only flips
+        # the pointer, so the memory panel would keep the DELETED profile's
+        # charts while current_profile already read "default" — and the next
+        # autosave tick, 30 s later, would write them into default's
+        # session.json on top of whatever was there. Same cross-profile loss
+        # as the switch race, reached by a different door (SPEC-SES-001 §8).
         if self.get_current_profile() == profile_id:
-            self.switch_profile("default")
+            self._on_profile_selected("default")
 
         # Delete profile directory
         try:
@@ -313,10 +419,17 @@ class ProfileManager:
         CRITICAL: Pauses auto-save during switch to prevent race conditions.
         The sequence is:
         1. Pause auto-save
-        2. Save current session
+        2. Save current session (forced — see below)
         3. Update active profile file
         4. Update session manager's profile reference
         5. Resume auto-save
+
+        The pause this method opens covers only steps 2-4. It is NOT enough on
+        its own: when the caller goes on to clear the panel and restore the new
+        profile (_on_profile_selected), that work also has to be inside a
+        pause, because restore pumps the Qt event loop. Callers that restore
+        must therefore open their OWN pause around the whole operation — the
+        pause depth is a counter precisely so the two nest (SPEC-SES-001 §8).
 
         Args:
             profile_id: ID of profile to switch to
@@ -337,9 +450,15 @@ class ProfileManager:
             self.app.session_manager.pause_auto_save()
 
         try:
-            # Save current session before switching
+            # Save current session before switching.
+            #
+            # force=True: this is the ONE save that must happen while paused.
+            # It runs before current_profile is reassigned, so the panel's
+            # charts and the target profile still agree — the exact condition
+            # the pause guard exists to require. Every other save reached
+            # during a switch is suppressed by that guard.
             if hasattr(self.app, 'session_manager') and self.app.session_manager:
-                self.app.session_manager.save_session(mark_closed=True)
+                self.app.session_manager.save_session(mark_closed=True, force=True)
 
             # Update active profile file
             with open(self.active_profile_file, 'w') as f:
@@ -457,19 +576,56 @@ class ProfileManager:
         menu.exec(pos)
 
     def _on_profile_selected(self, profile_id):
-        """Handle profile selection from menu."""
-        if self.switch_profile(profile_id):
+        """Handle profile selection from menu.
+
+        Auto-save stays paused for the WHOLE switch — flip AND restore — not
+        just for switch_profile()'s own steps (SPEC-SES-001 §8).
+
+        Why: switch_profile() sets session_manager.current_profile to the new
+        profile and then, in its `finally`, resumes auto-save. Everything below
+        runs afterwards, so the app spends the entire clear-and-restore with
+        current_profile pointing at the NEW profile while the memory panel
+        holds the OLD profile's charts, then an empty list, then a partially
+        rebuilt one. Restore pumps the Qt event loop (SetZodiacMode dispatch,
+        select_chart via LoadingManager, the bulk chart load), so the 30 s
+        autosave timer really can fire in there — and whatever the panel
+        happened to hold at that instant would be written into the new
+        profile's session.json, destroying it.
+        """
+        from contextlib import nullcontext
+
+        session_manager = getattr(self.app, 'session_manager', None)
+        # nullcontext keeps the no-session-manager path (CLI harnesses, tests)
+        # behaving exactly as before instead of taking a separate branch that
+        # would quietly skip the panel clear and the avatar reload.
+        #
+        # The context manager, not a pause/resume pair: its `finally`
+        # guarantees the resume even if restore_session raises. Leaving
+        # auto-save paused forever would stop ALL saving for the rest of the
+        # run — worse than the race it is guarding.
+        guard = (session_manager.auto_save_paused() if session_manager
+                 else nullcontext())
+        with guard:
+            if not self.switch_profile(profile_id):
+                return
+
+            # Favorites profile: regenerate its session.json from
+            # favorites.json BEFORE restore (SPEC-FAV-001 S5.2)
+            if profile_id == "favorites":
+                from managers.favorites_manager import sync_favorites_profile
+                sync_favorites_profile(self.profiles_dir)
+
             # Clear display WITHOUT saving (avoid overwriting new profile's session)
             if hasattr(self.app, 'memory_panel') and self.app.memory_panel:
                 self.app.memory_panel._clear_display_only()  # CRITICAL: Don't save!
 
             # Restore new profile's session
-            if hasattr(self.app, 'session_manager') and self.app.session_manager:
-                self.app.session_manager.restore_session()
+            if session_manager:
+                session_manager.restore_session()
 
-            # Reload profile avatar for the button
-            if hasattr(self.app, '_load_profile_avatar'):
-                QTimer.singleShot(100, self.app._load_profile_avatar)
+        # Reload profile avatar for the button
+        if hasattr(self.app, '_load_profile_avatar'):
+            QTimer.singleShot(100, self.app._load_profile_avatar)
 
     def show_create_profile_dialog(self):
         """Show dialog to create a new profile."""

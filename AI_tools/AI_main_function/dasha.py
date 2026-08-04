@@ -1,6 +1,5 @@
 # Copyright (C) 2026 Lorris Turpin / 360 Hearts in the Sky
 # Licensed under AGPL-3.0 — see LICENSE file for details.
-# Commercial exception: see NOTICE file.
 """
 Dasha calculation module for CLI and AI tools.
 ================================================
@@ -235,19 +234,42 @@ def parse_chtk_tz_offset(timezone_str, time_change_flag=0, year=None, month=None
 
 def load_birth_data_for_dasha(chtk_path):
     """
-    Load birth data from a CHTK file — same path as the GUI.
+    Load birth data from a chart file (.chtk or .toml) — same path as the GUI.
 
-    Uses CHTKReader.read_chtk_file() which returns LOCAL time.
+    SPEC-IMPORT-001 §6.1: dispatch via BirthDataManager.create_birth_data_from_file
+    so .toml charts work here too (previously CHTKReader.read_chtk_file, .chtk-only).
+
+    The canonical dict carries LOCAL civil time under local_* keys and the
+    DST-adjusted TOTAL offset under utc_offset_hours. get_dasha_params() (and the
+    GUI managers that share it) read the legacy flat keys year/month/day/hour/
+    minute/second + utcoffset + time_change_flag, so we project the canonical dict
+    back onto those keys at this boundary. get_dasha_params is left UNCHANGED
+    (it is called with several other dict shapes across the GUI). utcoffset is set
+    to the TOTAL offset and time_change_flag to 0 so get_dasha_params does NOT
+    re-add DST (the flag-add branch only fires when utcoffset is None).
 
     Args:
-        chtk_path: Path to .chtk file
+        chtk_path: Path to a .chtk or .toml chart file
 
     Returns:
-        dict with keys: name, year, month, day, hour, minute, second,
-                        city, country, birth_place, timezone, time_change_flag, ...
+        canonical birth_data dict, with legacy flat keys added for get_dasha_params.
     """
-    reader = CHTKReader()
-    return reader.read_chtk_file(chtk_path)
+    from managers.birth_data_manager import BirthDataManager
+
+    bd = BirthDataManager.create_birth_data_from_file(str(chtk_path))
+
+    # Project canonical -> legacy flat keys consumed by get_dasha_params().
+    # LOCAL civil time (dasha builds birth_jd_local then subtracts tz_offset).
+    bd['year'] = bd['local_year']
+    bd['month'] = bd['local_month']
+    bd['day'] = bd['local_day']
+    bd['hour'] = bd['local_hour']
+    bd['minute'] = bd['local_minute']
+    bd['second'] = bd['local_second']
+    # TOTAL offset already includes DST; flag=0 prevents a second DST add.
+    bd['utcoffset'] = bd['utc_offset_hours']
+    bd['time_change_flag'] = 0
+    return bd
 
 
 # =============================================================================

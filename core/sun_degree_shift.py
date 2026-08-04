@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 # Copyright (C) 2026 Lorris Turpin / 360 Hearts in the Sky
 # Licensed under AGPL-3.0 — see LICENSE file for details.
-# Commercial exception: see NOTICE file.
 """
 Sun Degree Shift Calculator
 Shifts a birth chart by moving the Sun by N degrees (1° = 1 "astrological day").
@@ -146,14 +145,22 @@ def load_chart_with_jd(chtk_path, mode="aditya"):
     from managers.birth_data_manager import BirthDataManager
     from core.chart_factory import build_chart_from_params
 
-    bd = BirthDataManager.create_birth_data_from_chtk(str(chtk_path))
+    # SPEC-IMPORT-001 §6.1: format-agnostic dispatch (.chtk or .toml).
+    bd = BirthDataManager.create_birth_data_from_file(str(chtk_path))
 
     lat = bd['latitude']
     lon = bd['longitude']
 
-    hour_decimal = bd['utc_hour'] + bd['utc_minute'] / 60.0 + bd['utc_second'] / 3600.0
-    birth_jd = swe.julday(bd['utc_year'], bd['utc_month'], bd['utc_day'], hour_decimal,
-                          get_calendar_flag(bd['utc_year'], bd['utc_month'], bd['utc_day']))
+    # SPEC-IMPORT-001 §5.3 ("jd wins"): a .toml carries an authoritative,
+    # sub-second julian_day. Re-deriving JD from the integer civil fields would
+    # truncate that precision, so prefer the stored value (mirrors chart_manager).
+    _stored_jd = bd.get('julian_day')
+    if _stored_jd is not None:
+        birth_jd = float(_stored_jd)
+    else:
+        hour_decimal = bd['utc_hour'] + bd['utc_minute'] / 60.0 + bd['utc_second'] / 3600.0
+        birth_jd = swe.julday(bd['utc_year'], bd['utc_month'], bd['utc_day'], hour_decimal,
+                              get_calendar_flag(bd['utc_year'], bd['utc_month'], bd['utc_day']))
 
     utcoffset = bd.get('utc_offset_hours', 0.0)
     chart = build_chart_from_params(jd=birth_jd, lat=lat, lon=lon, mode=mode,

@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 # Copyright (C) 2026 Lorris Turpin / 360 Hearts in the Sky
 # Licensed under AGPL-3.0 — see LICENSE file for details.
-# Commercial exception: see NOTICE file.
 """
 Planet Information Dialog
 Popup dialog showing detailed planet information when a planet is clicked.
@@ -31,8 +30,8 @@ from ui.qt_theme import (
     BG, SURFACE, TEXT_PRIMARY, TEXT_SECONDARY, TEXT_TERTIARY, GOLD,
     ACCENTS, FONT_PRIMARY, FONT_MONO, BORDER, HOVER,
     get_theme_colors, get_primary_button_style, get_secondary_button_style,
-    get_3d_button_style, STATUS,
-    scaled_area_font, is_light_theme,
+    get_3d_button_style, STATUS, desat_hex,
+    scaled_area_font, is_light_theme, desat_image,
 )
 
 # Import shared Aditya data
@@ -460,6 +459,7 @@ class PlanetInfoDialog(QDialog):
                         Qt.AspectRatioMode.KeepAspectRatio,
                         Qt.TransformationMode.SmoothTransformation
                     )
+                    scaled = desat_image(scaled)
                     scaled_pixmap = QPixmap.fromImage(scaled)
                     scaled_pixmap.setDevicePixelRatio(dpr)
                 else:
@@ -518,7 +518,7 @@ class PlanetInfoDialog(QDialog):
         # Retrograde
         if self.planet_info.get("retrograde"):
             retro_label = QLabel("⟲ Retrograde")
-            retro_label.setStyleSheet(f"color: {STATUS['error']}; font-weight: bold;")
+            retro_label.setStyleSheet(f"color: {desat_hex(STATUS['error'])}; font-weight: bold;")
             info_layout.addWidget(retro_label)
 
         info_layout.addStretch()
@@ -953,8 +953,8 @@ class PlanetInfoDialog(QDialog):
         # Try main planets folder (2048x2048 originals). Core ships exactly
         # one file per planet (the single default retained by the 2026-04-08
         # cleanup), so this is the only path the Core build can hit. The
-        # proprietary edition may add more variants via an overlay path; see
-        # the variation system rebuild TODO in the proprietary tree.
+        # paid edition may add more variants via an overlay path; see
+        # the variation system rebuild TODO in the paid edition's tree.
         img_path = PROJECT_ROOT / "img" / "planets" / file_suffix
 
         if img_path.exists():
@@ -970,6 +970,7 @@ class PlanetInfoDialog(QDialog):
                     Qt.AspectRatioMode.KeepAspectRatio,
                     Qt.TransformationMode.SmoothTransformation
                 )
+                scaled = desat_image(scaled)
                 pixmap = QPixmap.fromImage(scaled)
                 pixmap.setDevicePixelRatio(dpr)
 

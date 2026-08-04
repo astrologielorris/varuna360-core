@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 # Copyright (C) 2026 Lorris Turpin / 360 Hearts in the Sky
 # Licensed under AGPL-3.0 — see LICENSE file for details.
-# Commercial exception: see NOTICE file.
 """
 North Indian Chart Graphics Items
 Custom QGraphicsItem subclasses for the diamond-style North Indian chart.
@@ -29,7 +28,7 @@ from PySide6.QtGui import (
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 
 # Import theme for consistent colors
-from ui.qt_theme import TEXT_PRIMARY, ACCENTS, get_theme_colors, GOLD
+from ui.qt_theme import TEXT_PRIMARY, ACCENTS, get_theme_colors, GOLD, desat_hex
 
 
 class NorthIndianPlanetClickSignal(QObject):
@@ -79,7 +78,7 @@ class DiamondCellItem(QGraphicsPolygonItem):
 
         # Get element color based on sign
         element = self.ELEMENT_CYCLE[sign_index % 4]
-        self.base_color = QColor(self.ELEMENT_COLORS[element])
+        self.base_color = QColor(desat_hex(self.ELEMENT_COLORS[element]))  # SPEC-SAT-001 WI-3
 
         # Apply fill with gradient
         self._apply_gradient_fill()
@@ -116,7 +115,7 @@ class DiamondCellItem(QGraphicsPolygonItem):
         """Update the sign index and recolor the cell."""
         self.sign_index = sign_index
         element = self.ELEMENT_CYCLE[sign_index % 4]
-        self.base_color = QColor(self.ELEMENT_COLORS[element])
+        self.base_color = QColor(desat_hex(self.ELEMENT_COLORS[element]))  # SPEC-SAT-001 WI-3
         self._apply_gradient_fill()
 
 

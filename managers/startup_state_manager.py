@@ -1,5 +1,9 @@
 """SPEC-SET-002 Phase 2: single startup-apply pass for persisted UI state."""
-VIEW_INDEX = {"south_indian": 0, "wheel": 1, "north_indian": 2}
+# SPEC-COT-001 INV-14: one shared style -> chart_stack index mapping. This
+# module used to own a private copy, which made it the reason a newly-valid view
+# silently reset to South Indian on every restart — this IS the boot-restore
+# path (it reads chart.view_type from settings_manager, not PrefsStore).
+from state.chart_state import VIEW_STACK_INDEX as VIEW_INDEX
 
 
 def apply_persisted_ui_state(gui, settings):
@@ -58,6 +62,18 @@ def apply_persisted_ui_state(gui, settings):
     _apply_panel_tabs(gui, settings)
 
 
+def migrate_aspects_selection(mode, tab):
+    """Remap a persisted (mode, tab) aspects-panel selection across layout moves.
+
+    Nabhasa used to be the 5th Vedic tab (vedic, 4); it now lives at (tajika, 3).
+    Without this remap an upgraded user's saved Nabhasa selection would clamp to
+    Vedic Aspects (tab 0). Pure so it can be unit-tested in isolation.
+    """
+    if mode == "vedic" and tab == 4:
+        return "tajika", 3
+    return mode, tab
+
+
 def _call_indexed(funcs, idx):
     """Call funcs[idx]() if idx is a valid int in range and the entry is callable.
 
@@ -107,26 +123,46 @@ def _apply_panel_tabs(gui, settings):
         # Aspects: set mode + relabel ONCE, then call the mode-aware switcher
         mode = settings.get("ui.panel.aspects_mode", "vedic")
         tab = settings.get("ui.panel.aspects_tab", 0)
+        mode, tab = migrate_aspects_selection(mode, tab)
         gui._aspects_mode = mode
         if mode == "tajika":
-            if not isinstance(tab, int) or tab < 0 or tab > 2:
+            # Tajika row: 0=Aspects Table 1=Relations 2=Yogas(annual) 3=Nabhasa.
+            if not isinstance(tab, int) or tab < 0 or tab > 3:
                 tab = 0
             _relabel(gui, "Aspects T", "Relations", "Yogas")
             if hasattr(gui, 'exchange_tab_btn'):
                 gui.exchange_tab_btn.setVisible(False)
             if hasattr(gui, '_asp_sep3'):
                 gui._asp_sep3.setVisible(False)
+            # The Nabhasa tab is the Tajika row's 4th tab -> visible here.
+            if hasattr(gui, 'nabhasa_tab_btn'):
+                gui.nabhasa_tab_btn.setVisible(True)
+            if hasattr(gui, '_asp_sep4'):
+                gui._asp_sep4.setVisible(True)
             switchers = [getattr(gui, "switch_to_tajika_matrix_tab", None),
                          getattr(gui, "switch_to_tajika_relationships_tab", None),
-                         getattr(gui, "switch_to_tajika_yogas_tab", None)]
+                         getattr(gui, "switch_to_tajika_yogas_tab", None),
+                         getattr(gui, "switch_to_nabhasa_tab", None)]
         else:
+            # Vedic row: 0=Aspects 1=Avastha 2=Shame 3=Exch (Nabhasa is Tajika-only).
             if not isinstance(tab, int) or tab < 0 or tab > 3:
                 tab = 0
-            _relabel(gui, "Aspects V", "Avastha", "Shame")
+            # SPEC-AVA-001: the avastha button label tracks the active refined
+            # view (Duc/Dig/...), so restore it from the controller rather than
+            # hardcoding "Avastha" (which would desync the button from the view).
+            _avastha_label = "Avastha"
+            _ctr = getattr(gui, "avastha_controller", None)
+            if _ctr is not None and hasattr(_ctr, "view_label"):
+                _avastha_label = _ctr.view_label()
+            _relabel(gui, "Aspects V", _avastha_label, "Shame")
             if hasattr(gui, 'exchange_tab_btn'):
                 gui.exchange_tab_btn.setVisible(True)
             if hasattr(gui, '_asp_sep3'):
                 gui._asp_sep3.setVisible(True)
+            if hasattr(gui, 'nabhasa_tab_btn'):
+                gui.nabhasa_tab_btn.setVisible(False)
+            if hasattr(gui, '_asp_sep4'):
+                gui._asp_sep4.setVisible(False)
             switchers = [getattr(gui, "switch_to_aspects_tab", None),
                          getattr(gui, "switch_to_avastha_tab", None),
                          getattr(gui, "switch_to_shame_tab", None),

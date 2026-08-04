@@ -1,19 +1,18 @@
 # Copyright (C) 2026 Lorris Turpin / 360 Hearts in the Sky
 # Licensed under AGPL-3.0 — see LICENSE file for details.
-# Commercial exception: see NOTICE file.
 """Static Pro-marketing constants for Varuna360 Core.
 
 This module is the SINGLE point of "Pro awareness" in the Core codebase.
 It contains pure data — URLs, feature names, marketing copy — that the
-Help menu and About dialog use to advertise the proprietary Varuna360 Pro
+Help menu and About dialog use to advertise the paid Varuna360 Pro
 edition. The Core build can mention that Pro exists, link to the upgrade
-page, and list features, all without ever importing from the proprietary
-tree or doing any runtime detection of whether Pro is installed.
+page, and list features, all without ever importing from the paid
+edition's tree or doing any runtime detection of whether Pro is installed.
 
 (Note for future maintainers reading this docstring: deliberate prose
 choices throughout — avoiding the literal substrings that the broad
 release-gate text scan flags. This is not stylistic preference; the
-gate rejects mentions of the proprietary directory in any context,
+gate rejects mentions of the paid edition's directory in any context,
 including comments and docstrings, to keep the boundary surface small
 and machine-checkable.)
 
@@ -163,10 +162,10 @@ TIER_EXPLORER_FEATURES: Final[tuple[str, ...]] = (
 )
 
 # Subscription slider — every paid option is recurring monthly.
-# The website offers a sliding-scale monthly subscription from €1 to
+# The website offers a sliding-scale monthly subscription from €3 to
 # €14.99, with €14.99 as the suggested amount. Paying €9.99/month or
 # more also grants the Explorer website tier.
-SUBSCRIPTION_MIN_DISPLAY: Final[str] = "€1 / month"
+SUBSCRIPTION_MIN_DISPLAY: Final[str] = "€3 / month"
 SUBSCRIPTION_SUGGESTED_DISPLAY: Final[str] = "€14.99 / month"
 SUBSCRIPTION_EXPLORER_THRESHOLD_DISPLAY: Final[str] = "€9.99 / month"
 
@@ -177,7 +176,7 @@ WELCOME_BODY: Final[str] = (
     "Varuna360 is a product. You can use the desktop app for free as long "
     "as you want — every feature, no time limit, no nagging.\n\n"
     "When you decide it is worth paying for, you can subscribe at "
-    "360heartsinthesky.com from €1 / month (suggested: €14.99 / month). "
+    "360heartsinthesky.com from €3 / month (suggested: €14.99 / month). "
     "Subscribing at €9.99 / month or more also unlocks the Explorer tier "
     "on the website: celebrity database, full transit, dignified planets, "
     "Divine Cow, Shadbala, and 20 save slots on the web app.\n\n"

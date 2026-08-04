@@ -1,6 +1,5 @@
 # Copyright (C) 2026 Lorris Turpin / 360 Hearts in the Sky
 # Licensed under AGPL-3.0 — see LICENSE file for details.
-# Commercial exception: see NOTICE file.
 """
 Trimsamsa panel controller — Phase 4 W2.3.
 
@@ -69,7 +68,7 @@ class TrimsamsaController(PanelControllerBase):
         try:
             from AI_tools.AI_main_function.retinue import get_chart_retinue
             from PySide6.QtGui import QFont, QColor, QBrush
-            from ui.qt_theme import scaled_size, scaled_area_size, is_light_theme
+            from ui.qt_theme import scaled_size, scaled_area_size, is_light_theme, desat_hex
 
             light = is_light_theme()
             being_type_colors = _BEING_TYPE_COLORS_LIGHT if light else _BEING_TYPE_COLORS_DARK
@@ -97,8 +96,8 @@ class TrimsamsaController(PanelControllerBase):
                 btype = r["trimsamsa"]["being_type"]
                 element = r["trimsamsa"]["element"]
                 bg_hex, fg_hex = being_type_colors.get(btype, default_cell)
-                bg = QBrush(QColor(bg_hex))
-                fg = QColor(fg_hex)
+                bg = QBrush(QColor(desat_hex(bg_hex)))  # SPEC-SAT-001 WI-3
+                fg = QColor(desat_hex(fg_hex))
 
                 sym = _PLANET_SYMBOLS.get(r["planet"], "")
                 item0 = QTableWidgetItem(f"{sym} {r['planet']}")
@@ -146,8 +145,8 @@ class TrimsamsaController(PanelControllerBase):
                 dominant,
                 ("#E8EAF6", "#1A237E") if light else ("#1A1A2E", "#E0E0E0"),
             )
-            summary_item.setBackground(QBrush(QColor(dom_bg)))
-            summary_item.setForeground(QColor(dom_fg))
+            summary_item.setBackground(QBrush(QColor(desat_hex(dom_bg))))  # SPEC-SAT-001 WI-3
+            summary_item.setForeground(QColor(desat_hex(dom_fg)))
             gui.trimsamsa_table.setItem(len(planets), 0, summary_item)
             gui.trimsamsa_table.setSpan(len(planets), 0, 1, 4)
 

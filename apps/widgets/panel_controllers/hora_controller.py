@@ -1,6 +1,5 @@
 # Copyright (C) 2026 Lorris Turpin / 360 Hearts in the Sky
 # Licensed under AGPL-3.0 — see LICENSE file for details.
-# Commercial exception: see NOTICE file.
 """
 Hora panel controller — Phase 4 W2.2.
 
@@ -65,7 +64,7 @@ class HoraController(PanelControllerBase):
         try:
             from AI_tools.AI_main_function.retinue import get_chart_retinue
             from PySide6.QtGui import QFont, QColor, QBrush
-            from ui.qt_theme import scaled_size, scaled_area_size, is_light_theme
+            from ui.qt_theme import scaled_size, scaled_area_size, is_light_theme, desat_hex
 
             light = is_light_theme()
             hora_colors = _HORA_COLORS_LIGHT if light else _HORA_COLORS_DARK
@@ -92,8 +91,8 @@ class HoraController(PanelControllerBase):
             for i, r in enumerate(planets):
                 side = r["hora"]["side"]
                 bg_hex, fg_hex = hora_colors.get(side, default_cell)
-                bg = QBrush(QColor(bg_hex))
-                fg = QColor(fg_hex)
+                bg = QBrush(QColor(desat_hex(bg_hex)))  # SPEC-SAT-001 WI-3
+                fg = QColor(desat_hex(fg_hex))
 
                 sym = _PLANET_SYMBOLS.get(r["planet"], "")
                 item0 = QTableWidgetItem(f"{sym} {r['planet']}")
@@ -127,8 +126,8 @@ class HoraController(PanelControllerBase):
             summary_item.setFont(bold_lg)
             sum_bg = "#E8EAF6" if light else "#1A1A2E"
             sum_fg = "#1A237E" if light else "#E0E0E0"
-            summary_item.setBackground(QBrush(QColor(sum_bg)))
-            summary_item.setForeground(QColor(sum_fg))
+            summary_item.setBackground(QBrush(QColor(desat_hex(sum_bg))))  # SPEC-SAT-001 WI-3
+            summary_item.setForeground(QColor(desat_hex(sum_fg)))
             gui.hora_table.setItem(len(planets), 0, summary_item)
             gui.hora_table.setSpan(len(planets), 0, 1, 3)
 

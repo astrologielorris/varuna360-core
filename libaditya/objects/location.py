@@ -16,7 +16,6 @@
 #    along with libaditya.  If not, see <https://www.gnu.org/licenses/>.
 
 import swisseph as swe
-from metar import Metar
 
 from libaditya import constants as const
 
@@ -106,6 +105,7 @@ class Location:
 
         url is taken from get_report.py from python-metar package
         """
+        from metar import Metar
         BASE_URL = "https://tgftp.nws.noaa.gov/data/observations/metar/stations"
         if icao is not None:
             name = icao

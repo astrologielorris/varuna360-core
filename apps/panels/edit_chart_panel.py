@@ -1,6 +1,5 @@
 # Copyright (C) 2026 Lorris Turpin / 360 Hearts in the Sky
 # Licensed under AGPL-3.0 — see LICENSE file for details.
-# Commercial exception: see NOTICE file.
 """
 Edit Chart Panel - Main container with 3 vertical sub-tabs
 
@@ -13,6 +12,8 @@ The panel connects to the Memory Panel to receive chart selections
 and updates the chart data when changes are saved.
 """
 
+import logging
+
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout,
     QMessageBox, QLabel, QApplication
@@ -21,6 +22,29 @@ from PySide6.QtCore import Signal, Slot, Qt, QSize
 
 # Theme imports - use get_theme_colors() for dynamic light/dark support
 from ui.qt_theme import get_theme_colors
+
+logger = logging.getLogger(__name__)
+
+
+def _writer_for(path):
+    """Return the file-format writer instance for ``path`` (SPEC-IMPORT-001 §6.1, B5).
+
+    Pure dispatch on the file extension so the save path NEVER writes UTF-16 CHTK
+    binary over a ``.toml`` file (irreversible corruption). ``.toml`` -> a writer
+    with ``update_*_birth_data(path, birth_data)``; everything else (``.chtk`` and
+    legacy extensionless paths) -> CHTKWriter for backward compatibility.
+
+    Returns a (writer, method_name) tuple. ``method_name`` is the partial-update
+    method to call as ``getattr(writer, method_name)(path, birth_data)``.
+    """
+    from pathlib import Path
+    suffix = Path(str(path)).suffix.lower()
+    if suffix == ".toml":
+        from core.toml_chart import TOMLChartWriter
+        return TOMLChartWriter(), "update_toml_birth_data"
+    from core.chtk_reader import CHTKWriter
+    return CHTKWriter(), "update_chtk_birth_data"
+
 
 class EditChartPanel(QWidget):
     """
@@ -49,6 +73,13 @@ class EditChartPanel(QWidget):
         self.is_modified = False
         self._map_caller = "info"  # "info" or "new_chart" — who requested the map
         self._previous_tab_index = 0
+        # BUG-2 (SPEC-IMPORT-002): pristine _toml_extra snapshot captured at chart
+        # load time. Edit-save cycles re-merge unknown TOML keys from THIS snapshot
+        # rather than re-reading the file (which reflects the previous save and
+        # progressively sheds keys each cycle). Keyed by source path so a stale
+        # snapshot can never bleed onto a different chart.
+        self._loaded_toml_extra = None
+        self._loaded_toml_extra_path = None
 
         self._create_ui()
         self._connect_signals()
@@ -179,9 +210,32 @@ class EditChartPanel(QWidget):
         self.current_chart_data = chart_entry
         self.is_modified = False
 
+        # BUG-2 (SPEC-IMPORT-002): snapshot the pristine _toml_extra NOW, before any
+        # edit-save cycle can rewrite (and shed keys from) the source file. The
+        # save-time re-merge then pulls unknown TOML keys from this snapshot instead
+        # of the on-disk file. Recipe-restored charts carry no _toml_extra (the
+        # recipe drops it), so without this snapshot _source_birth_data would re-read
+        # the possibly-already-degraded file every save.
+        self._loaded_toml_extra = None
+        self._loaded_toml_extra_path = None
+        _src_path = chart_entry.get('chtk_path')
+        if _src_path and str(_src_path).lower().endswith('.toml'):
+            from pathlib import Path as _Path
+            if _Path(str(_src_path)).exists():
+                try:
+                    from core.toml_chart import TOMLChartReader
+                    _pristine = TOMLChartReader().read_toml_file(
+                        str(_src_path), canonicalize=False)
+                    self._loaded_toml_extra = _pristine.get('_toml_extra')
+                    self._loaded_toml_extra_path = str(_src_path)
+                except Exception as exc:  # noqa: BLE001 - never block chart load
+                    logger.warning(
+                        "Could not snapshot _toml_extra at load (%s): %s",
+                        _src_path, exc)
+
         recipe = chart_entry.get('recipe')
         if recipe:
-            from core.chart_factory import timedec_to_hms
+            from core.chart_factory import timedec_to_hms, resolve_recipe_dst_flag
             from core.time_utils import local_to_utc, resolve_total_offset, format_offset
             h, m, s = timedec_to_hms(recipe['timedec'])
             location = {
@@ -190,7 +244,13 @@ class EditChartPanel(QWidget):
                 'timezone': recipe.get('timezone', 'UTC'),
             }
             birth_metadata = chart_entry.get('birth_metadata', {})
-            _tcf = recipe.get('time_change_flag', 0)
+            # td-5w3c.1 guard: sessions saved before the CHTK auto-flag fix
+            # can carry the Kala -1 AUTO sentinel; resolve it (IANA rules
+            # when the recipe holds an IANA name, else 0 + warning) before
+            # the flag feeds local_to_utc and birth_data below.
+            _tcf, _tcf_warnings = resolve_recipe_dst_flag(recipe)
+            for _w in _tcf_warnings:
+                logger.warning("%s (recipe %s)", _w, recipe.get('name', ''))
             _tz_display = recipe.get('timezone', '+00:00')
 
             # Resolve standard offset from timezone string FIRST,
@@ -249,13 +309,46 @@ class EditChartPanel(QWidget):
                 'local_hour': h, 'local_minute': m, 'local_second': s,
                 'utc_year': _utc[0], 'utc_month': _utc[1], 'utc_day': _utc[2],
                 'utc_hour': _utc[3], 'utc_minute': _utc[4], 'utc_second': _utc[5],
-                'utc_offset_hours': _std_offset + (_tcf or 0),
+                # BUG-8 (SPEC-IMPORT-002): recipe['utcoffset'] is the TOTAL offset
+                # (standard+DST) by construction (make_recipe stores jd.utcoffset;
+                # INVARIANT m14). Read it DIRECTLY rather than re-deriving TOTAL as
+                # `_std_offset + _tcf`. That reconstruction is LOSSY for fractional-
+                # DST zones (Lord Howe Island, 0.5h DST): on the IANA and fallback
+                # paths `_std_offset = TOTAL - INTEGER_flag` because
+                # resolve_total_offset subtracts the integer flag, not the float dst
+                # (core/time_utils.py contract), so the integer flag — not the 0.5h
+                # float — is what must be added back. The old expression only
+                # produced the right TOTAL when `_std_offset` was the true float
+                # standard (the rarely-taken offset-string path). Keep it solely as a
+                # defensive fallback for a malformed recipe missing utcoffset.
+                # (Pre-existing, out of scope: line ~251's local_to_utc also takes
+                # the integer flag, so the offset-string path's utc_* fields are 0.5h
+                # off for fractional DST until switched to local_to_utc_total.)
+                'utc_offset_hours': (float(recipe['utcoffset'])
+                                     if recipe.get('utcoffset') is not None
+                                     else _std_offset + (_tcf or 0)),
                 'time_change_flag': _tcf,
                 'latitude': recipe['lat'], 'longitude': recipe['lon'],
                 'city': recipe.get('city', ''), 'country': recipe.get('country', ''),
                 'gender': recipe.get('gender', birth_metadata.get('gender', '')),
                 'iana_timezone': birth_metadata.get('iana_timezone', ''),
+                # SPEC-IMPORT-001 §6.1: carry the additive metadata the recipe
+                # holds (None for CHTK charts) so the edit round-trip does not
+                # drop rodden/tags/notes/julian_day/dst_offset_hours. _toml_extra
+                # is not in the recipe; it is re-read from the source file at save
+                # time (see _source_birth_data).
+                'rodden': recipe.get('rodden'),
+                'tags': recipe.get('tags'),
+                'notes': recipe.get('notes'),
+                'julian_day': recipe.get('julian_day'),
+                'dst_offset_hours': recipe.get('dst_offset_hours'),
+                'source_format': recipe.get('source_format'),
             }
+            # td-5w3c.1: surface guard warnings on the SPEC-TZ-001 8a
+            # channel. Key added ONLY when the -1 guard fired so normal
+            # recipes keep their exact birth_data shape.
+            if _tcf_warnings:
+                birth_data['tz_warnings'] = _tcf_warnings
         else:
             # Legacy fallback for pre-recipe entries
             planets_data = chart_entry.get('planets_data', {})
@@ -364,11 +457,52 @@ class EditChartPanel(QWidget):
             else:
                 form_data = self.info_tab.collect_data()
             if form_data:
+                # SPEC-MAP-002: the basis goes FIRST. set_marker() requests a
+                # band scan, so pushing the basis after it would scan the old
+                # birth time and then accept that stale result.
+                self._push_map_time_basis(form_data)
                 lat = form_data.get('latitude')
                 lon = form_data.get('longitude')
                 if lat is not None and lon is not None:
                     self.map_tab.set_marker(lat, lon)
         self._previous_tab_index = index
+
+    def _push_map_time_basis(self, form_data: dict):
+        """Give the map sub-tab the birth civil time, zodiac mode and labels."""
+        if not hasattr(self.map_tab, 'set_time_basis'):
+            return
+        try:
+            local_fields = {
+                'year': int(form_data['year']), 'month': int(form_data['month']),
+                'day': int(form_data['day']), 'hour': int(form_data.get('hour', 0)),
+                'minute': int(form_data.get('minute', 0)),
+                'second': int(form_data.get('second', 0)),
+            }
+        except (KeyError, TypeError, ValueError):
+            # An incomplete form is not an error here — the picker simply keeps
+            # the Ascendant preview switched off (INV-4).
+            self.map_tab.set_time_basis(None)
+            return
+
+        from core.aditya_mode import displayed_sign_name
+        mode = self.gui.state.aditya_mode
+        # The label set lives on the GUI (zodiac.use_western_names), NOT on
+        # state — and it is orthogonal to the mode (SPEC-ZOD-001). Deriving it
+        # from the mode instead is the inversion SPEC-MODE-001 had to fix once
+        # already; read the real flag.
+        use_western = getattr(self.gui, 'use_western_names', False)
+        language = getattr(self.gui, 'sign_language', 'en')
+        names = [displayed_sign_name(i, mode, use_western, language)
+                 for i in range(12)]
+
+        self.map_tab.set_time_basis(
+            local_fields, mode=mode,
+            ayanamsa=getattr(self.gui, 'chart_sidereal_ayanamsa_id', 100),
+            sign_names=names,
+            # A UTC-entered chart has utc_* == local_* by definition; without
+            # this the preview subtracted the place's offset and showed an
+            # Ascendant a whole UTC offset away from the chart being built.
+            utc_input=(form_data.get('time_mode') == 'UTC'))
 
     # =========================================================================
     # LOCATION UPDATES
@@ -471,7 +605,36 @@ class EditChartPanel(QWidget):
                 (self.current_chart_data.get('chtk_path') if self.current_chart_data else None)
                 or getattr(self.gui, 'current_chart_path', None)
             )
+
+            # SPEC-IMPORT-001 §6.7 (DST ordering fix): the Edit Info form only
+            # exposes the INTEGER dst flag (time_change_flag), never the float
+            # dst_offset_hours. For a non-1h-DST source (e.g. Lord Howe Island
+            # 0.5h) create_from_form_data would otherwise compute UTC from the
+            # integer flag (wrong total offset) and only get the float DST
+            # patched back AFTER, leaving utc_* inconsistent with
+            # dst_offset_hours. Seed the preserved source float DST into the
+            # form dict BEFORE the UTC conversion so the instant is computed
+            # with the correct DST from the start (create_from_form_data reads
+            # form_data.get('dst_offset_hours'), bead .10). Only seed when the
+            # user kept DST ON in the form (flag in (1, 2)): a DST toggle-off or
+            # an explicit integer change must win over the stale source float.
+            if data.get('dst_offset_hours') is None and data.get('dst') in (1, 2):
+                _src_bd = self._source_birth_data(chtk_path)
+                _src_dst = _src_bd.get('dst_offset_hours')
+                if _src_dst is not None:
+                    data['dst_offset_hours'] = float(_src_dst)
+
             birth_data = BirthDataManager.create_from_form_data(data, chtk_path=chtk_path)
+
+            # SPEC-IMPORT-001 §6.7 (interim metadata preservation): the Edit Info
+            # form does NOT expose rodden/tags/notes/julian_day/_toml_extra, so
+            # create_from_form_data() returns them as None. Re-merge them from the
+            # stored canonical birth_data (the source the chart was loaded from)
+            # so a TOML/CHTK round-trip through the editor does not silently drop
+            # uneditable fields. Editing civil time/offset legitimately changes
+            # the instant, so the stale julian_day is dropped when the civil time
+            # or offset moved (recomputed downstream from the new civil fields).
+            self._merge_preserved_metadata(birth_data, chtk_path)
 
             # SPEC-TZ-001 8a: surface timezone warnings, non-blocking
             BirthDataManager.report_tz_warnings(
@@ -486,14 +649,20 @@ class EditChartPanel(QWidget):
                 return
 
             # STEP 5 - Update canonical data stores (mirrors chart_manager.load_chart)
+            # Honor a carried julian_day (TOML JD-canonical) so gui.birth_jd stays
+            # consistent with the Chart built in STEP 4 (SPEC-IMPORT-001 §6.1).
             from core.time_utils import julday
-            hour_decimal = (birth_data['utc_hour']
-                            + birth_data['utc_minute'] / 60.0
-                            + birth_data['utc_second'] / 3600.0)
-            birth_jd = julday(
-                birth_data['utc_year'], birth_data['utc_month'],
-                birth_data['utc_day'], hour_decimal,
-            )
+            _stored_jd = birth_data.get('julian_day')
+            if _stored_jd is not None:
+                birth_jd = float(_stored_jd)
+            else:
+                hour_decimal = (birth_data['utc_hour']
+                                + birth_data['utc_minute'] / 60.0
+                                + birth_data['utc_second'] / 3600.0)
+                birth_jd = julday(
+                    birth_data['utc_year'], birth_data['utc_month'],
+                    birth_data['utc_day'], hour_decimal,
+                )
 
             self.gui.birth_jd = birth_jd
             self.gui.birth_lat = birth_data['latitude']
@@ -527,23 +696,40 @@ class EditChartPanel(QWidget):
                     'city': birth_data.get('city', ''),
                     'country': birth_data.get('country', ''),
                     'timezone': birth_data.get('iana_timezone', '') or data.get('timezone', ''),
+                    # SPEC-IMPORT-001 §6.1/§6.7: keep the recipe (serialization
+                    # spine) consistent with the merged birth_data. update_
+                    # current_chart only writes keys already present in the
+                    # recipe, so for TOML charts these update and for CHTK charts
+                    # they are no-ops. julian_day was invalidated by _merge_
+                    # preserved_metadata when civil/offset changed, so the recipe
+                    # never keeps a stale JD after a time edit. (Full recipe-
+                    # forwarding across all call sites is bead .6.)
+                    'julian_day': birth_data.get('julian_day'),
+                    'dst_offset_hours': birth_data.get('dst_offset_hours'),
+                    'rodden': birth_data.get('rodden'),
+                    'tags': birth_data.get('tags'),
+                    'notes': birth_data.get('notes'),
                 })
 
-            # STEP 8 - CHTK write-back (if chart was loaded from file)
+            # STEP 8 - File write-back (if chart was loaded from file)
+            # SPEC-IMPORT-001 §6.1 (B5 BLOCKER): gate the writer on the file
+            # extension. Calling CHTKWriter unconditionally would write UTF-16
+            # CHTK binary over a .toml file (irreversible data loss).
             chtk_write_ok = True
             if chtk_path:
                 from pathlib import Path
                 p = Path(chtk_path)
                 if p.exists():
+                    writer, method_name = _writer_for(p)
+                    file_label = "TOML" if method_name == "update_toml_birth_data" else "CHTK"
                     try:
-                        from core.chtk_reader import CHTKWriter
-                        writer = CHTKWriter()
-                        writer.update_chtk_birth_data(str(p), birth_data)
+                        getattr(writer, method_name)(str(p), birth_data)
                     except Exception as e:
                         chtk_write_ok = False
                         QMessageBox.warning(
                             self, "File Write Error",
-                            f"In-memory chart updated, but the .chtk file could not be saved:\n{e}",
+                            f"In-memory chart updated, but the {file_label} file "
+                            f"could not be saved:\n{e}",
                         )
 
             # STEP 9 - Refresh UI
@@ -653,6 +839,171 @@ class EditChartPanel(QWidget):
 
         return True
 
+    def _source_birth_data(self, chart_path):
+        """Recover the canonical birth_data the active chart was loaded from.
+
+        SPEC-IMPORT-001 §6.7 interim preservation needs the as-loaded canonical
+        dict to re-supply uneditable metadata (rodden/tags/notes/julian_day/
+        dst_offset_hours/_toml_extra) that the Edit Info form never exposes.
+
+        Source priority:
+          1. ``current_chart_data['birth_data']`` (set by the legacy load path,
+             not yet overwritten at this point in save_changes).
+          2. Rebuilt from ``current_chart_data['recipe']`` (the recipe is the
+             serialization spine; it carries rodden/tags/notes/julian_day/
+             dst_offset_hours but NOT _toml_extra).
+          3. For a .toml source, re-read the file so _toml_extra (unknown keys)
+             can be preserved — the recipe drops it. update_toml_birth_data also
+             re-reads it on write, but seeding it here keeps the in-memory recipe
+             and any downstream consumer consistent.
+
+        Returns a dict (possibly empty) — never None.
+        """
+        src = {}
+        cd = self.current_chart_data or {}
+        stored_bd = cd.get('birth_data')
+        if isinstance(stored_bd, dict) and stored_bd:
+            src = dict(stored_bd)
+        elif cd.get('recipe'):
+            try:
+                from core.chart_factory import birth_data_from_recipe
+                src = dict(birth_data_from_recipe(cd['recipe']) or {})
+            except Exception as exc:  # noqa: BLE001 - degrade, never crash save
+                logger.warning("Could not rebuild birth_data from recipe: %s", exc)
+
+        # _toml_extra never travels through the recipe; pull it from the source
+        # .toml file so unknown keys round-trip (interim preservation, §6.7).
+        from pathlib import Path
+        if chart_path and Path(str(chart_path)).suffix.lower() == ".toml":
+            # BUG-2 (SPEC-IMPORT-002): prefer the pristine _toml_extra snapshot
+            # captured at chart load time over a fresh file read. The file reflects
+            # the previous save and progressively sheds unknown TOML keys each
+            # edit-save cycle; the snapshot is frozen at load and never degrades.
+            if (src.get('_toml_extra') is None
+                    and self._loaded_toml_extra is not None
+                    and self._loaded_toml_extra_path == str(chart_path)):
+                src['_toml_extra'] = self._loaded_toml_extra
+            if src.get('_toml_extra') is None:
+                # No usable snapshot (chart not opened via the editor, the original
+                # had no unknown keys, or the load-time read failed) -> fall back to
+                # the file. Also backstops the recipe-carried keys.
+                try:
+                    from core.toml_chart import TOMLChartReader
+                    reread = TOMLChartReader().read_toml_file(
+                        str(chart_path), canonicalize=False)
+                    for _k in ('_toml_extra', 'rodden', 'tags', 'notes',
+                               'julian_day', 'dst_offset_hours'):
+                        if src.get(_k) is None and reread.get(_k) is not None:
+                            src[_k] = reread[_k]
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "Could not re-read .toml source for metadata "
+                        "preservation (%s): %s", chart_path, exc)
+        return src
+
+    def _merge_preserved_metadata(self, birth_data: dict, chart_path):
+        """Re-supply uneditable metadata onto form-derived ``birth_data`` (§6.7).
+
+        The Edit Info form does not expose rodden/tags/notes/julian_day/
+        dst_offset_hours/_toml_extra/source_format, so create_from_form_data()
+        emits them as None. Merge them back from the as-loaded canonical dict so
+        the edit round-trip is non-destructive.
+
+        Hardening:
+          - julian_day: dropped (recomputed downstream) when the edit changed the
+            local civil time OR the UTC offset, so civil and JD stay consistent.
+            An offset-only edit (date/time unchanged but offset moved) therefore
+            also triggers recompute.
+          - source_format: preserved from the source / inferred from the path so
+            the canonical dict's format tag matches the file it will be written to.
+          - _toml_extra: when the path is None or the source file is missing, it
+            cannot be re-read here (update_toml_birth_data also cannot) — log a
+            warning that unknown keys may not be preserved; never crash.
+        """
+        src = self._source_birth_data(chart_path)
+
+        # Only re-fill keys the form genuinely cannot carry (None == "not edited").
+        for key in ('rodden', 'tags', 'notes', 'dst_offset_hours', '_toml_extra'):
+            if birth_data.get(key) is None and src.get(key) is not None:
+                birth_data[key] = src[key]
+
+        # source_format: trust the actual file extension when we have a path,
+        # else keep whatever the source carried (default 'chtk' from the form).
+        from pathlib import Path
+        if chart_path:
+            suffix = Path(str(chart_path)).suffix.lower()
+            if suffix == ".toml":
+                birth_data['source_format'] = 'toml'
+            elif suffix == ".chtk":
+                birth_data['source_format'] = 'chtk'
+            elif src.get('source_format'):
+                birth_data['source_format'] = src['source_format']
+        elif src.get('source_format'):
+            birth_data['source_format'] = src['source_format']
+
+        # julian_day: keep the source JD ONLY when the instant is unchanged
+        # (same local civil fields AND same total offset). Any civil/offset edit
+        # invalidates it -> leave it None so the recalc recomputes from civil.
+        src_jd = src.get('julian_day')
+        if src_jd is not None and self._same_instant(src, birth_data):
+            birth_data['julian_day'] = src_jd
+        else:
+            birth_data['julian_day'] = None
+
+        # _toml_extra guard (Wave-1 Codex): a .toml edit with no usable source
+        # path means unknown keys cannot be preserved on write.
+        is_toml = bool(chart_path) and \
+            Path(str(chart_path)).suffix.lower() == ".toml"
+        if is_toml and birth_data.get('_toml_extra') is None:
+            if not chart_path or not Path(str(chart_path)).exists():
+                logger.warning(
+                    "Editing a .toml chart with no readable source file "
+                    "(path=%r): unknown TOML keys (_toml_extra) cannot be "
+                    "preserved on save.", chart_path)
+
+    @staticmethod
+    def _same_instant(src: dict, edited: dict) -> bool:
+        """True when ``edited`` has the same local civil time AND total offset.
+
+        Compares the canonical local_* fields and utc_offset_hours (TOTAL offset,
+        the convention create_from_form_data uses). A different offset at the same
+        wall-clock is a different instant, so a stored JD must not be reused
+        (mirrors TOMLChartWriter._same_civil). Source dicts rebuilt from a recipe
+        use timedec/year/utcoffset instead of local_*; fall back to those.
+        """
+        def _local(d):
+            if 'local_year' in d:
+                return (
+                    int(d.get('local_year', 0)), int(d.get('local_month', 0)),
+                    int(d.get('local_day', 0)), int(d.get('local_hour', 0)),
+                    int(d.get('local_minute', 0)), int(d.get('local_second', 0)),
+                )
+            # Recipe-shaped source dict (birth_data_from_recipe): year/month/day
+            # + timedec (decimal local hours).
+            from core.chart_factory import timedec_to_hms
+            td = d.get('timedec')
+            if td is None:
+                return None
+            h, m, s = timedec_to_hms(float(td))
+            return (
+                int(d.get('year', 0)), int(d.get('month', 0)),
+                int(d.get('day', 0)), h, m, s,
+            )
+
+        def _offset(d):
+            o = d.get('utc_offset_hours')
+            if o is None:
+                o = d.get('utcoffset')
+            return None if o is None else round(float(o), 9)
+
+        sl, el = _local(src), _local(edited)
+        if sl is None or el is None or sl != el:
+            return False
+        so, eo = _offset(src), _offset(edited)
+        if so is None or eo is None:
+            return False
+        return so == eo
+
     def _recalculate_chart(self, data: dict, birth_data: dict = None):
         """
         Build a new Chart from pre-converted birth_data and dispatch it.
@@ -684,13 +1035,24 @@ class EditChartPanel(QWidget):
                     status_bar=self.gui.statusBar() if self.gui else None,
                     context="Edit Chart")
 
-            hour_decimal = (birth_data['utc_hour']
-                            + birth_data['utc_minute'] / 60.0
-                            + birth_data['utc_second'] / 3600.0)
-            jd = julday(
-                birth_data['utc_year'], birth_data['utc_month'],
-                birth_data['utc_day'], hour_decimal,
-            )
+            # SPEC-IMPORT-001 §6.1/§6.7: honor a carried julian_day (TOML charts
+            # are JD-canonical; civil time is advisory). _merge_preserved_metadata
+            # has already dropped a stale JD when the civil time or offset changed,
+            # so a JD present here is consistent with the (possibly edited) civil
+            # fields. When absent (CHTK, or civil/offset edited) recompute from
+            # the UTC civil fields as before, preserving sub-second precision only
+            # when the file supplied it.
+            stored_jd = birth_data.get('julian_day')
+            if stored_jd is not None:
+                jd = float(stored_jd)
+            else:
+                hour_decimal = (birth_data['utc_hour']
+                                + birth_data['utc_minute'] / 60.0
+                                + birth_data['utc_second'] / 3600.0)
+                jd = julday(
+                    birth_data['utc_year'], birth_data['utc_month'],
+                    birth_data['utc_day'], hour_decimal,
+                )
             mode = self.gui.state.aditya_mode
             _chart = build_chart_from_params(
                 jd=jd,
@@ -699,7 +1061,7 @@ class EditChartPanel(QWidget):
                 mode=mode,
                 name=birth_data.get('name', ''),
                 utcoffset=birth_data.get('utc_offset_hours', 0.0),
-                ayanamsa=getattr(self.gui, 'chart_sidereal_ayanamsa_id', 1),
+                ayanamsa=getattr(self.gui, 'chart_sidereal_ayanamsa_id', 100),
                 hsys=self.gui.state.house_system_code,
             )
             QApplication.processEvents()

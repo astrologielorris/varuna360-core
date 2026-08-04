@@ -1,6 +1,6 @@
-"""Chart tab widget that accepts drag-and-drop of CHTK files and folders.
+"""Chart tab widget that accepts drag-and-drop of chart files and folders.
 
-Dropping one or more .chtk files loads each via ChartManager.load_chart; the
+Dropping one or more .chtk or .toml files loads each via ChartManager.load_chart; the
 last one becomes the active chart (mirrors the menu's Open Chart behavior
 with multi-select). Dropping a folder reuses the Chart Memory Panel's
 load_folder_charts_from_path, the same core used by the "📁 Load Folder"
@@ -34,7 +34,9 @@ class ChartDropTab(QWidget):
             p = Path(url.toLocalFile())
             if p.is_dir():
                 folders.append(p)
-            elif p.is_file() and p.suffix.lower() == ".chtk":
+            elif p.is_file() and p.suffix.lower() in (".chtk", ".toml"):
+                # SPEC-IMPORT-001 §6.1: accept .toml too. ChartManager.load_chart
+                # dispatches by extension (create_birth_data_from_file).
                 chtk_files.append(p)
 
         if not chtk_files and not folders:

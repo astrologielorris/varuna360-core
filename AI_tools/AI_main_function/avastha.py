@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 # Copyright (C) 2026 Lorris Turpin / 360 Hearts in the Sky
 # Licensed under AGPL-3.0 — see LICENSE file for details.
-# Commercial exception: see NOTICE file.
 """
 Drishti Yuti Avastha — Aspect Relationship Table
 =================================================
@@ -18,7 +17,7 @@ Key concept:
 This module does NOT duplicate aspect math — it reuses calculate_all_aspects()
 from AI_aspects.py and adds relationship metadata on top.
 
-Reference: docs/Lajitadi_lorris.csv for reference output comparison
+Reference: a Lajitadi reference CSV for output comparison
 """
 
 import sys
@@ -461,12 +460,15 @@ def format_drishti_yuti_table(chart, person_name="", use_colors=None,
     def _cell(aspecting, aspected):
         """Return (text, relationship_or_None) for a cell."""
         if aspecting == aspected:
-            # Diagonal: dignity only (shame is independent)
+            # Diagonal: self-conjunction base 60 x dignity multiplier
+            # (SPEC-AVA-001 rev3: EX=120, MK=105, OH=90, none/debilitated=60).
+            from core.avastha_totals import SELF_BASE, dignity_multiplier
             dig = dignity_data.get(aspecting)
+            val = SELF_BASE * dignity_multiplier(dig["virupas"] if dig else 0)
             if dig:
-                return (f"{dig['virupas']:>5.1f}  ", "PROUD")
+                return (f"{val:>5.1f}  ", "PROUD")
             else:
-                return ("    -   ", None)
+                return (f"{val:>5.1f}  ", None)
         entry = matrix.get((aspecting, aspected))
         if entry is None:
             return ("    .   ", None)
@@ -543,25 +545,12 @@ def format_drishti_yuti_table(chart, person_name="", use_colors=None,
     # Bottom totals row
     totals_label = f" {'TOTAL':<{LW - 1}}"
     totals_row = V + totals_label + V
+    # Shared totals math (core.avastha_totals) — the same spine the GUI panel,
+    # dialogs, and web payload use, so the CLI cannot drift from them.
+    from core.avastha_totals import planet_total
     for aspected in ASPECTING_PLANETS:
-        col_total = 0.0
-        dig = dignity_data.get(aspected)
-        if dig:
-            col_total += dig["virupas"]
-        for aspecting in ASPECTING_PLANETS:
-            if aspecting == aspected:
-                continue
-            entry = matrix.get((aspecting, aspected))
-            if entry and entry["virupas"] > 0:
-                # Check shame: shame always subtracts -60
-                if (aspecting, aspected) in shame_pairs:
-                    col_total -= 60
-                elif entry["relationship"] == "DUAL":
-                    pass
-                elif entry["relationship"] == "FRIEND":
-                    col_total += entry["virupas"]
-                elif entry["relationship"] == "ENEMY":
-                    col_total -= entry["virupas"]
+        col_total = planet_total(
+            aspected, list(ASPECTING_PLANETS), matrix, dignity_data, shame_pairs)
         totals_row += f"{col_total:>7.0f} " + V
     lines.append(totals_row)
 
@@ -582,7 +571,8 @@ def format_drishti_yuti_table(chart, person_name="", use_colors=None,
     # Legend
     lines.append("* = Special aspects (Mars: 4/8, Jupiter: 5/9, Saturn: 3/10)")
     lines.append("+ Friend (green)  - Enemy (red)  ~ Neutral (blue)  \u00b1 Dual (yellow)")
-    lines.append("60.0 = Yuti/Lordship   Diagonal: EX=60 MK=45 OH=30 (magenta = proud)")
+    lines.append("60.0 = Yuti/Lordship   Diagonal: own 60 x dignity "
+                 "(EX=120 MK=105 OH=90, magenta = proud)")
     lines.append("! = Lajjita shame (deep red bold)   Bold red labels = shamed planet")
     lines.append("Direction: A row \u2192 B column = what B thinks of A")
     lines.append("")

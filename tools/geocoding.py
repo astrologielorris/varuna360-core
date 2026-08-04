@@ -5,10 +5,10 @@ Extracted from AI_tools/chart_generation/web_birth_data_to_chtk.py during
 the browser-code cleanup (Phase 2). No selenium dependency.
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Dict, Optional, Any
 
-from core.time_utils import format_offset
+from core.time_utils import format_offset, resolve_total_offset
 
 
 # Known city coordinates for common birthplaces (fallback when API fails)
@@ -67,43 +67,31 @@ def geocode_city(city: str, country: str = "") -> Optional[Dict[str, float]]:
     Returns:
         Dict with 'latitude' and 'longitude', or None if not found
     """
-    import time
-
     # Check known cities first (handles cases where geopy returns wrong location)
     known = _get_known_city_coords(city, country)
     if known:
         return known
 
+    # SPEC-MAP-001 D-13: this used to run an unconditional `time.sleep(1.2)`
+    # before every request — including when the answer came from the table
+    # above and no request was made at all, and including when the last real
+    # call was minutes ago. Nominatim's policy is one request per second
+    # BETWEEN ACTUAL REQUESTS, which is what geocode_service enforces; in
+    # practice the wait is now zero. That sleep was over half of the ~2 s
+    # Add Chart delay.
     try:
-        from geopy.geocoders import Nominatim
-        from geopy.exc import GeocoderTimedOut, GeocoderServiceError
+        from core.geocode_service import forward
 
-        geolocator = Nominatim(
-            user_agent="Varuna360/1.0 (Vedic Astrology App; astrologielorris@gmail.com)",
-            timeout=10)
-
-        # Rate limiting: sleep before request
-        time.sleep(1.2)  # Nominatim requires 1 second between requests
-
-        # Try with country first for better accuracy
         query = f"{city}, {country}" if country else city
-        location = geolocator.geocode(query)
+        result = forward(query)
+        if result is not None:
+            return {'latitude': result.lat, 'longitude': result.lon}
 
-        if location:
-            return {
-                'latitude': location.latitude,
-                'longitude': location.longitude
-            }
-
-        # Fallback: try city only with delay
+        # Fallback: city alone (a wrong or unknown region should not sink it).
         if country:
-            time.sleep(1.2)
-            location = geolocator.geocode(city)
-            if location:
-                return {
-                    'latitude': location.latitude,
-                    'longitude': location.longitude
-                }
+            result = forward(city)
+            if result is not None:
+                return {'latitude': result.lat, 'longitude': result.lon}
 
     except ImportError:
         print("[WARN] geopy not installed. Run: pip install geopy")
@@ -139,34 +127,30 @@ def get_timezone_for_coordinates(lat: float, lon: float, birth_date: datetime = 
     if birth_date is None:
         raise ValueError("birth_date is required for historical timezone accuracy")
     try:
-        from timezonefinder import TimezoneFinder
-        from zoneinfo import ZoneInfo
+        # SPEC-MAP-001 INV-7: the shared finder. Constructing one here cost
+        # 788 ms, and resolve_location() then constructed a SECOND one for the
+        # same coordinate — 1.6 s of pure waste per chart.
+        from core.tz_finder import timezone_at
 
-        tf = TimezoneFinder()
-        tz_name = tf.timezone_at(lat=lat, lng=lon)
+        tz_name = timezone_at(lat, lon)
 
         if tz_name:
-            tz = ZoneInfo(tz_name)
-            dt_with_tz = birth_date.replace(tzinfo=tz)
-            utc_offset = dt_with_tz.utcoffset()
-            dst_delta = dt_with_tz.dst()
+            # Canonical IANA-rules DST detection (SPEC-TZ-001,
+            # decompose-from-total): returned std + flag equals the pytz
+            # TOTAL offset at the birth instant. Replaces the old ZoneInfo
+            # dst() + 1h idiom, which picked the DST reading on fold-overlap
+            # instants; the resolver takes the standard-time reading.
+            # longitude gives city-accurate LMT for pre-standardization dates.
+            std_hours, dst_flag = resolve_total_offset(
+                tz_name, birth_date.year, birth_date.month, birth_date.day,
+                birth_date.hour, birth_date.minute, longitude=lon)
 
-            if utc_offset is not None:
-                # Deliberate change from subtracting dst_delta: std = total
-                # minus 1h when DST active (decompose-from-total rule,
-                # SPEC-TZ-001; differs for fractional-DST zones like Lord Howe).
-                dst_active = dst_delta is not None and dst_delta.total_seconds() > 0
-                if dst_active:
-                    standard_offset = utc_offset - timedelta(hours=1)
-                else:
-                    standard_offset = utc_offset
+            total_minutes = int(round(std_hours * 60))
+            sign = 1 if total_minutes >= 0 else -1
+            am = abs(total_minutes)
+            offset_str = format_offset(sign * (am // 60), sign * (am % 60))
 
-                total_sec = int(standard_offset.total_seconds())
-                sign = 1 if total_sec >= 0 else -1
-                a = abs(total_sec)
-                offset_str = format_offset(sign * (a // 3600), sign * ((a % 3600) // 60))
-
-                return {'offset': offset_str, 'dst_active': dst_active}
+            return {'offset': offset_str, 'dst_active': bool(dst_flag)}
 
     except ImportError:
         print("[WARN] timezonefinder not installed. Run: pip install timezonefinder")

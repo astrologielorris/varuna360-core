@@ -1,6 +1,5 @@
 # Copyright (C) 2026 Lorris Turpin / 360 Hearts in the Sky
 # Licensed under AGPL-3.0 — see LICENSE file for details.
-# Commercial exception: see NOTICE file.
 """
 Varga code definitions and utilities.
 """
@@ -51,6 +50,30 @@ def get_varga_name(varga_number: int) -> str:
 
 def is_varga_implemented(varga_number: int) -> bool:
     return varga_number in VARGA_NAMES
+
+
+_LIBADITYA_TO_GUI_VARGA = {v: k for k, v in _GUI_TO_LIBADITYA_VARGA.items()}
+
+# The GUI shows two vargas under a suffixed name: the reverse variants, which
+# carry sentinel numbers (1010, 2424) rather than real divisions.
+_VARGA_DISPLAY_LABEL = {1010: "10R", 2424: "24R"}
+
+
+def from_libaditya_varga_code(varga_code) -> int:
+    """Inverse of to_libaditya_varga_code. None (the rashi) maps to 1."""
+    if varga_code is None:
+        return 1
+    return _LIBADITYA_TO_GUI_VARGA.get(varga_code, varga_code)
+
+
+def varga_display_label(gui_varga_number: int) -> str:
+    """What the user sees for this varga: "9", "10R", "60".
+
+    Single source of truth for the suffixed reverse variants — the varga
+    column used to spell them inline, and the center-box label needs the
+    same strings or the column and the chart would disagree.
+    """
+    return _VARGA_DISPLAY_LABEL.get(gui_varga_number, str(gui_varga_number))
 
 
 def to_libaditya_varga_code(gui_varga_number: int) -> int:

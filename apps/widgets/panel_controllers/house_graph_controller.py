@@ -1,6 +1,5 @@
 # Copyright (C) 2026 Lorris Turpin / 360 Hearts in the Sky
 # Licensed under AGPL-3.0 — see LICENSE file for details.
-# Commercial exception: see NOTICE file.
 """
 House Graph panel controller — retinue house connection density bar chart.
 """
@@ -17,7 +16,9 @@ from PySide6.QtGui import (
 
 from state import PanelControllerBase
 from state.user_data import get_settings_path as _get_settings_path
-from ui.qt_theme import is_light_theme, scaled_area_size
+from ui.qt_theme import (
+    is_light_theme, scaled_area_size, scaled_area_px, desat_image, sat_key, desat_hex,
+)
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
@@ -53,12 +54,22 @@ class _HouseBarWidget(QWidget):
         super().__init__(parent)
         self._gui_ref = gui_ref
         self._icon_cache: dict[str, QPixmap | None] = {}
-        self.setMinimumHeight(280)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+
+    def sizeHint(self):
+        result = self._get_tally()
+        if result is None:
+            return QSize(self.width(), 120)
+        active, absent = result
+        total_rows = len(active) + (1 if absent else 0) + len(absent)
+        row_h = max(16, scaled_area_px('tables') + 4)
+        chrome_h = 4 + 20 + 4 + 18  # top_margin + subtitle + gap + compact_summary
+        ideal_h = (total_rows * row_h) + chrome_h
+        return QSize(self.width(), max(120, ideal_h))
 
     def _load_planet_icon(self, planet_name: str, size: int = 20) -> QPixmap | None:
         """Load planet WebP icon scaled to size, with a colored shadow/glow."""
-        cache_key = f"{planet_name}_{size}"
+        cache_key = f"{planet_name}_{size}{sat_key()}"
         if cache_key in self._icon_cache:
             return self._icon_cache[cache_key]
 
@@ -86,6 +97,7 @@ class _HouseBarWidget(QWidget):
 
         img = img.scaled(size, size, Qt.AspectRatioMode.KeepAspectRatio,
                          Qt.TransformationMode.SmoothTransformation)
+        img = desat_image(img)
         icon_px = QPixmap.fromImage(img)
 
         result = QPixmap(icon_px.size())
@@ -174,9 +186,11 @@ class _HouseBarWidget(QWidget):
 
         total_rows = len(active) + (1 if absent else 0) + len(absent)
         subtitle_h = 20
-        summary_h = 52
-        available_h = h - summary_h - subtitle_h - 8
-        row_h = min(24, max(14, available_h // max(total_rows, 1)))
+        summary_h = 18
+        chrome_h = 4 + subtitle_h + 4 + summary_h  # top_margin + subtitle + gap + compact_summary
+        font_row_h = max(16, scaled_area_px('tables') + 4)
+        space_row_h = max(12, (h - chrome_h) // max(total_rows, 1))
+        row_h = min(font_row_h, space_row_h)
 
         light = is_light_theme()
         text_color = QColor("#333333") if light else QColor("#E0E0E0")
@@ -187,7 +201,7 @@ class _HouseBarWidget(QWidget):
         planet_left = bar_left + bar_max_w + count_w + 6
 
         font = QFont()
-        font.setPixelSize(max(10, row_h - 6))
+        font.setPixelSize(max(10, scaled_area_px('tables')))
 
         y = 4
 
@@ -204,7 +218,7 @@ class _HouseBarWidget(QWidget):
 
         # --- Active houses ---
         for idx, (house_num, count, planet_entries) in enumerate(active):
-            bar_color = QColor(_BAR_COLORS[idx % len(_BAR_COLORS)])
+            bar_color = QColor(desat_hex(_BAR_COLORS[idx % len(_BAR_COLORS)]))  # SPEC-SAT-001
 
             # House label
             painter.setFont(font)
@@ -227,7 +241,7 @@ class _HouseBarWidget(QWidget):
 
             # Count
             bold_font = QFont()
-            bold_font.setPixelSize(max(10, row_h - 5))
+            bold_font.setPixelSize(max(10, min(scaled_area_px('tables'), row_h - 5)))
             bold_font.setBold(True)
             painter.setFont(bold_font)
             painter.setPen(text_color)
@@ -246,7 +260,7 @@ class _HouseBarWidget(QWidget):
                     gx += px.width() + 3
                 else:
                     fallback_font = QFont()
-                    fallback_font.setPixelSize(max(10, row_h - 4))
+                    fallback_font.setPixelSize(max(10, min(scaled_area_px('tables'), row_h - 4)))
                     fallback_font.setBold(True)
                     painter.setFont(fallback_font)
                     painter.setPen(QColor(_PLANET_COLORS.get(planet_name, "#AAAAAA")))
@@ -267,7 +281,7 @@ class _HouseBarWidget(QWidget):
             y += 4
 
             absent_font = QFont()
-            absent_font.setPixelSize(max(10, row_h - 4))
+            absent_font.setPixelSize(max(10, min(scaled_area_px('tables'), row_h - 4)))
             absent_font.setBold(True)
             painter.setFont(absent_font)
             painter.setPen(QColor("#EF5350"))
@@ -288,7 +302,7 @@ class _HouseBarWidget(QWidget):
                                  f"H{house_num}")
 
                 zero_font = QFont()
-                zero_font.setPixelSize(max(10, row_h - 5))
+                zero_font.setPixelSize(max(10, min(scaled_area_px('tables'), row_h - 5)))
                 zero_font.setBold(True)
                 painter.setFont(zero_font)
                 painter.setPen(QColor("#EF5350"))
@@ -298,32 +312,48 @@ class _HouseBarWidget(QWidget):
                 painter.setFont(font)
                 y += row_h
 
-        # --- Summary footer ---
-        y = h - summary_h + 4
+        # --- Compact summary footer (1 line) ---
+        y = h - summary_h + 2
         sf = QFont()
-        sf.setPointSize(scaled_area_size('tables'))
-        sf.setBold(True)
+        sf.setPixelSize(max(9, scaled_area_px('tables') - 1))
         painter.setFont(sf)
 
-        dominant = [h for h, c, _ in active if active and c == active[0][1]]
-        sparse = [h for h, c, _ in active if c == 1]
+        dominant = [hh for hh, c, _ in active if active and c == active[0][1]]
+        sparse_houses = [hh for hh, c, _ in active if c == 1]
 
-        painter.setPen(QColor("#4CAF50"))
-        dom_str = ", ".join(f"H{hh}({next(c for h2, c, _ in active if h2 == hh)})" for hh in dominant)
-        painter.drawText(QRectF(8, y, w - 16, 15),
-                         Qt.AlignmentFlag.AlignLeft, f"▸ Dominant: {dom_str}")
-        y += 16
+        parts = []
+        dom_str = " ".join(
+            f"H{hh}({next(c for h2, c, _ in active if h2 == hh)})"
+            for hh in dominant)
+        parts.append(("Dom: " + dom_str, QColor("#4CAF50")))
 
-        painter.setPen(QColor("#EF5350"))
-        abs_str = ", ".join(f"H{hh}" for hh in absent) if absent else "None"
-        painter.drawText(QRectF(8, y, w - 16, 15),
-                         Qt.AlignmentFlag.AlignLeft, f"▸ Absent: {abs_str}")
-        y += 16
+        abs_str = " ".join(f"H{hh}" for hh in absent) if absent else "None"
+        parts.append(("Abs: " + abs_str, QColor("#EF5350")))
 
-        painter.setPen(QColor("#FFA726"))
-        sparse_str = ", ".join(f"H{hh}" for hh in sparse) if sparse else "None"
-        painter.drawText(QRectF(8, y, w - 16, 15),
-                         Qt.AlignmentFlag.AlignLeft, f"▸ Sparse: {sparse_str}")
+        if sparse_houses and set(sparse_houses) != set(dominant):
+            spr_str = " ".join(f"H{hh}" for hh in sparse_houses)
+            parts.append(("Spr: " + spr_str, QColor("#FFA726")))
+
+        painter.setClipRect(QRectF(0, y, w, summary_h))
+        x = 8
+        fm = painter.fontMetrics()
+        for i, (text, color) in enumerate(parts):
+            if x > w - 16:
+                break
+            if i > 0:
+                painter.setPen(text_color)
+                painter.drawText(
+                    QRectF(x, y, 12, summary_h - 2),
+                    Qt.AlignmentFlag.AlignCenter, "·")
+                x += 12
+            painter.setPen(color)
+            tw = fm.horizontalAdvance(text)
+            painter.drawText(
+                QRectF(x, y, tw + 4, summary_h - 2),
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                text)
+            x += tw + 4
+        painter.setClipping(False)
 
         painter.end()
 
@@ -347,3 +377,10 @@ class HouseGraphController(PanelControllerBase):
         bar = getattr(self._gui, "house_graph_bars", None)
         if bar:
             bar.update()
+
+    def clear_icon_cache(self):
+        """Drop cached planet pixmaps on the bar widget so they re-render at
+        the current UI saturation (SPEC-SAT-001 WI-4). Hasattr-guarded."""
+        bar = getattr(self._gui, "house_graph_bars", None)
+        if bar is not None and hasattr(bar, "_icon_cache"):
+            bar._icon_cache.clear()

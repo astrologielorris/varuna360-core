@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 # Copyright (C) 2026 Lorris Turpin / 360 Hearts in the Sky
 # Licensed under AGPL-3.0 — see LICENSE file for details.
-# Commercial exception: see NOTICE file.
 """
 Help Manual Dialog — Full documentation viewer with sidebar TOC.
 
@@ -41,11 +40,18 @@ MANUAL_SECTIONS = [
     ("planet-placements", "Planet Placements"),
     ("chart-search", "Chart Search"),
     ("settings", "Settings"),
-    ("chtk-files", "CHTK File Import/Export"),
+    ("faq", "Common Questions"),
+    ("troubleshooting", "When Something Goes Wrong"),
+    ("reporting", "Reporting a Problem"),
+    ("ask-an-ai", "Ask an AI About This Manual"),
+    ("modify-yourself", "Modifying Varuna360 Yourself"),
+    ("chtk-files", "Chart Files: CHTK and TOML"),
     ("keyboard-shortcuts", "Keyboard Shortcuts"),
     ("search-navigation", "Search & Navigation"),
     ("zodiac-modes", "Zodiac Modes"),
     ("ernst-wilhelm", "About Ernst Wilhelm's System"),
+    ("glossary", "Glossary"),
+    ("ai-instructions", "Notes for an AI Assistant"),
 ]
 
 
@@ -55,7 +61,7 @@ class HelpDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.theme = get_theme_colors()
-        self.setWindowTitle("Varuna 360 — Help Manual")
+        self.setWindowTitle("Varuna360 — Help Manual")
         self.resize(950, 720)
         self.setMinimumSize(600, 400)
         self._setup_ui()
@@ -112,6 +118,32 @@ class HelpDialog(QDialog):
         toolbar.addWidget(self.search_input)
 
         toolbar.addStretch()
+
+        # Export the manual as one .zip the reader can hand to an AI assistant.
+        # Placed on the existing toolbar's spare width rather than in a row of
+        # its own (standing layout rule: no new chrome rows).
+        # Named for what the reader WANTS, not for what the code does. "Export
+        # manual" describes the mechanism and answers a question nobody asked;
+        # somebody stuck on a panel is looking for a way to ask a question.
+        self.export_btn = QPushButton("\U0001F4E6 Answer my question with AI")
+        self.export_btn.setStyleSheet(get_secondary_button_style())
+        self.export_btn.setToolTip(
+            "Stuck? Let an AI answer for you.\n"
+            "\n"
+            "This saves the whole manual, text and screenshots, as one .zip "
+            "file.\n"
+            "Drag that file into ChatGPT, Claude or another AI assistant and "
+            "ask\n"
+            "your question in plain language. No need to unzip it.\n"
+            "\n"
+            "The assistant answers from this manual instead of from whatever "
+            "it\n"
+            "happens to remember about astrology software, so it will not "
+            "invent\n"
+            "buttons that do not exist.")
+        self.export_btn.clicked.connect(self._on_export_manual)
+        toolbar.addWidget(self.export_btn)
+
         main_layout.addLayout(toolbar)
 
         # === SPLITTER: TOC (left) + Content (right) ===
@@ -226,15 +258,74 @@ class HelpDialog(QDialog):
         title = item.text().strip()
 
         doc = self.content_browser.document()
+        # Find the HEADING, not merely the first place the words appear. A plain
+        # doc.find() lands on prose: "Settings > Chart Display" occurs dozens of
+        # times before the Settings heading, and a sentence pointing the reader
+        # at the Glossary occurs before the Glossary itself. Both sent the
+        # reader to a random paragraph. A heading is a block whose entire text
+        # IS the title, so walk the matches until one satisfies that.
         cursor = doc.find(title)
-        if not cursor.isNull():
-            cursor.movePosition(cursor.MoveOperation.StartOfBlock)
-            self.content_browser.setTextCursor(cursor)
-            rect = self.content_browser.cursorRect(cursor)
-            scrollbar = self.content_browser.verticalScrollBar()
+        while not cursor.isNull() and cursor.block().text().strip() != title:
+            cursor = doc.find(title, cursor)
+        scrollbar = self.content_browser.verticalScrollBar()
+        if cursor.isNull():
+            # No heading carries this exact text, so there is nothing to scroll
+            # to. That is the case for the first entry, whose section is titled
+            # by the manual's <h1> rather than by its own heading. Go to the top
+            # rather than doing nothing: a contents entry that visibly ignores
+            # the click reads as a broken viewer.
             if scrollbar:
-                scroll_pos = scrollbar.value() + rect.top() - 20
-                scrollbar.setValue(max(0, scroll_pos))
+                scrollbar.setValue(0)
+            return
+        cursor.movePosition(cursor.MoveOperation.StartOfBlock)
+        self.content_browser.setTextCursor(cursor)
+        rect = self.content_browser.cursorRect(cursor)
+        if scrollbar:
+            scroll_pos = scrollbar.value() + rect.top() - 20
+            scrollbar.setValue(max(0, scroll_pos))
+
+    def _on_export_manual(self):
+        """Save the manual as one .zip the reader can give to an AI assistant.
+
+        Defaults to the Desktop when there is one, because the point of the
+        file is to be dragged into a chat window, and a file the user cannot
+        find is a file they will not use.
+        """
+        from PySide6.QtWidgets import QFileDialog, QMessageBox
+        from core import manual_export
+
+        if not manual_export.manual_available():
+            QMessageBox.warning(
+                self, "Manual not found",
+                "The manual files could not be located, so there is nothing "
+                "to export.")
+            return
+
+        desktop = Path.home() / "Desktop"
+        start_dir = desktop if desktop.is_dir() else Path.home()
+        suggested = str(start_dir / manual_export.default_filename())
+
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save the manual for an AI assistant", suggested,
+            "Zip archive (*.zip)")
+        if not path:
+            return
+
+        ok, message, _stats = manual_export.build_manual_zip(path)
+        if not ok:
+            QMessageBox.warning(self, "Export failed", message)
+            return
+
+        QMessageBox.information(
+            self, "Manual saved",
+            f"{message}\n\n"
+            "Drag this file straight into ChatGPT, Claude or another AI "
+            "assistant and ask your question in plain language. There is no "
+            "need to unzip it first: the assistant opens the archive itself.\n\n"
+            "It will answer from the manual rather than from what it happens "
+            "to remember about astrology software.\n\n"
+            "There is a suggested prompt inside the archive, in "
+            "READ-ME-FIRST.txt.")
 
     def _on_link_clicked(self, url):
         """Open external links in the system's default browser."""

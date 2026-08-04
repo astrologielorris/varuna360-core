@@ -1,6 +1,5 @@
 # Copyright (C) 2026 Lorris Turpin / 360 Hearts in the Sky
 # Licensed under AGPL-3.0 — see LICENSE file for details.
-# Commercial exception: see NOTICE file.
 """
 Edit CHTK Sub-tab - Complete CHTK file editor
 
@@ -32,7 +31,7 @@ from PySide6.QtCore import Signal, Slot, Qt
 from PySide6.QtGui import QFont
 
 # Theme imports - use dynamic colors for proper light/dark support
-from ui.qt_theme import get_theme_colors
+from ui.qt_theme import get_theme_colors, scaled_area_px
 
 # Canonical timezone helpers (SPEC-TZ-001)
 from core.time_utils import format_offset, invert_chtk_timezone, resolve_total_offset
@@ -167,7 +166,7 @@ class EditCHTKSubTab(QWidget):
         # === Title ===
         self._title_label = QLabel("Complete CHTK File Editor")
         self._title_label.setStyleSheet(f"""
-            font-size: 18px;
+            font-size: {scaled_area_px('panel_titles')}px;
             font-weight: bold;
             color: {text_color};
             padding: 10px 0;
@@ -648,7 +647,20 @@ class EditCHTKSubTab(QWidget):
             self.load_from_file(file_path)
 
     def _save_to_file(self):
-        """Save current content to CHTK file"""
+        """Save current content to CHTK file.
+
+        SPEC-IMPORT-001 \u00a76.1 (F1, scope-out + B5 guard): this sub-tab is a RAW
+        CHTK line editor (the 28-line CHTK structure: DMS coordinates, inverted
+        timezone, notes/muhurtas/residence sections). It has no representation of
+        the Open Astrology Chart .toml format, so editing .toml here is explicitly
+        OUT OF SCOPE for SPEC-IMPORT-001 (metadata-editing UI is deferred to
+        SPEC-IMPORT-002). The only requirement here is the B5 safety guard: never
+        write UTF-16 CHTK binary over a .toml path (irreversible corruption). The
+        load/save dialogs already filter to *.chtk, but a .toml could still reach
+        current_file_path via "All Files (*)" or a future caller, so refuse it.
+        """
+        from pathlib import Path
+
         if not self.current_file_path:
             file_path, _ = QFileDialog.getSaveFileName(
                 self,
@@ -659,6 +671,16 @@ class EditCHTKSubTab(QWidget):
             if not file_path:
                 return
             self.current_file_path = file_path
+
+        # B5 guard: refuse to overwrite a .toml file with CHTK binary.
+        if Path(str(self.current_file_path)).suffix.lower() == ".toml":
+            QMessageBox.critical(
+                self, "Unsupported Format",
+                "This is the raw CHTK editor and cannot save Open Astrology "
+                "Chart (.toml) files. Saving CHTK content over a .toml file "
+                "would corrupt it. Use the Edit Info tab to edit .toml charts.",
+            )
+            return
 
         try:
             content = self._build_chtk_content()
@@ -1039,7 +1061,7 @@ class EditCHTKSubTab(QWidget):
 
         # Re-style title label
         if hasattr(self, '_title_label'):
-            self._title_label.setStyleSheet(f"font-size: 18px; font-weight: bold; color: {theme['secondary_text']}; padding: 10px 0;")
+            self._title_label.setStyleSheet(f"font-size: {scaled_area_px('panel_titles')}px; font-weight: bold; color: {theme['secondary_text']}; padding: 10px 0;")
 
         # Re-style QGroupBox sections
         group_style = f"""

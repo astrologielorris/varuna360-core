@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 # Copyright (C) 2026 Lorris Turpin / 360 Hearts in the Sky
 # Licensed under AGPL-3.0 — see LICENSE file for details.
-# Commercial exception: see NOTICE file.
 """
 Aditya Circle Data Module
 =========================
@@ -54,7 +53,7 @@ ADITYA_REF_NAMES = {
 
 # =============================================================================
 # PLANET DIGNITY DATA (exaltation, mulatrikona, own sign, debilitation)
-# Copied from wheel chart for consistent behavior
+# Mirrors wheel chart for consistent behavior
 # =============================================================================
 ADITYA_DIGNITIES = {
     "Sun": {
@@ -65,7 +64,7 @@ ADITYA_DIGNITIES = {
     },
     "Moon": {
         "exaltation": ("Aryama", 0, 3),  # 0-3° Aryama only
-        "mulatrikona": [("Aryama", 3, 27)],
+        "mulatrikona": [("Aryama", 3, 30)],  # 3° to end of sign (matches libaditya is_mt)
         "own_sign": [("Varuna", 0, 30)],  # Whole Varuna
         "debilitation": ("Vishnu", 0, 30),  # 180° opposite exaltation
     },
@@ -231,6 +230,65 @@ ELEMENT_COLORS = {
     9: "#A67C52",   # Bhaga (Capricorn) - Earth - Brown/tan
     10: "#F0C75E",  # Pusha (Aquarius) - Air - Golden yellow
     11: "#1E4D8C",  # Parjanya (Pisces) - Water - Deep blue
+}
+
+
+# =============================================================================
+# BODY GRAPH VIEW (SPEC-BODY-001)
+# =============================================================================
+# Body-zone bounding rectangles for the Body Graph chart view (4th view).
+# Maps Aditya index (0-11) to (x, y, width, height) in the BodyGraphView's
+# 1920x1920 scene, which matches the dimensions of the background silhouette
+# images (img/background/body_graph_dark.webp / body_graph_light.webp).
+#
+# Coordinates were measured from the luminous silhouette in
+# img/background/body_graph_dark_master.png (the AI master, 1920x1920) by
+# scanning the bright-pixel extent per horizontal band. The body is centered
+# (~x=953) with arms extended fully horizontal (T-pose) at shoulder height,
+# which is why Mitra (Arms, index 2) is a wide band spanning nearly the full
+# width. View-layer coordinates live in this data module by the same
+# precedent as ELEMENT_COLORS (also consumed by the view layer).
+#
+# These are calibrated starting values; fine-tune visually (SPEC-BODY-001
+# Phase 5) by loading a chart and pressing F2 to the Body Graph view.
+BODY_ZONE_COORDS = {
+    0:  (835,   15, 250, 120),   # Dhata - Head, Skull
+    1:  (850,  135, 220, 135),   # Aryama - Face, Neck
+    2:  (35,   280, 1852, 155),  # Mitra - Arms (thin horizontal band at arm height)
+    3:  (735,  435, 440, 165),   # Varuna - Chest (raised to cover the breast)
+    4:  (775,  600, 360, 150),   # Indra - Abdominal Cavity, Vital Organs
+    5:  (760,  750, 390, 135),   # Vivasvan - Hips, Intestines
+    # Pelvic trio — NOT rectangles (see BodyGraphView). Coords give position.
+    # Anatomy note: the buttocks (Amzu) sit HIGHER on the body than the
+    # genitals (Vishnu), so Amzu is placed at the Tvasta balance level and
+    # Vishnu just below the beam, even though Amzu is the later sign.
+    6:  (770,  890, 376,  24),   # Tvasta - sacral balance line (Libra centre)
+    7:  (915,  918,  90,  90),   # Vishnu - focal circle, just below the beam
+    8:  (768,  838, 384, 120),   # Amzu - buttocks, wide translucent "behind" ellipse
+    # Bhaga (thighs) begins UP at the Tvasta balance line and runs to the
+    # Pusha boundary, so it overlaps the pelvic signs (Tvasta/Amzu/Vishnu) at
+    # its top — intentional. Pusha (calves) is the kneecap-to-ankle span.
+    9:  (799,  890, 310, 350),   # Bhaga - Thighs / femur (begins at Tvasta)
+    10: (805, 1240, 296, 425),   # Pusha - Shanks, Calves
+    11: (820, 1665, 270, 234),   # Parjanya - Feet
+}
+
+# Which side of the body each Aditya's planet label column sits on.
+# Alternating sides avoid crowding and keep leader lines short. Adjust for
+# visual balance after testing (SPEC-BODY-001 Phase 5).
+BODY_LABEL_SIDES = {
+    0:  "right",   # Dhata
+    1:  "left",    # Aryama
+    2:  "right",   # Mitra
+    3:  "left",    # Varuna
+    4:  "right",   # Indra
+    5:  "left",    # Vivasvan
+    6:  "right",   # Tvasta
+    7:  "left",    # Vishnu
+    8:  "right",   # Amzu
+    9:  "left",    # Bhaga
+    10: "right",   # Pusha
+    11: "left",    # Parjanya
 }
 
 

@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 # Copyright (C) 2026 Lorris Turpin / 360 Hearts in the Sky
 # Licensed under AGPL-3.0 — see LICENSE file for details.
-# Commercial exception: see NOTICE file.
 """
 South Indian View Widget
 Extracted from core_gui_qt.py for modularity
@@ -31,10 +30,21 @@ PROJECT_ROOT = Path(__file__).parent.parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+# The ONE center-mini renderer (SPEC-VGC-001 INV-1). This module used to
+# carry two copies of it inline — one for the transit overlay and a
+# line-for-line duplicate for the mini North Indian chart — and both baked a
+# fixed-resolution pixmap into a view that zooms to 3.0x. center_mini
+# imports no view, so importing it here creates no cycle.
+from apps.widgets.center_mini import (
+    CenterMiniCache,
+    CenterMiniItem,
+    record_center_pixmap,
+)
+
 # Import centralized theme
 from ui.qt_theme import (
     BG, SURFACE, TEXT_PRIMARY, TEXT_SECONDARY, TEXT_TERTIARY,
-    GOLD, ACCENTS, FONT_CHART, get_theme_colors,
+    GOLD, ACCENTS, FONT_CHART, get_theme_colors, desat_image, sat_key, desat_hex,
 )
 
 # Import settings manager for chart display customization
@@ -421,8 +431,6 @@ class SouthIndianView(QGraphicsView):
         self._planets = None  # dict of planet objects from rashi/varga
         self._cusps = None    # cusps from rashi/varga
         self._has_chart = False
-        # Deprecated — kept for set_planets_data() compat until Issue 11
-        self.planets_data = None
         self.aditya_mode = "aditya"
         self.ayanamsa_offset = 0.0
 
@@ -443,6 +451,17 @@ class SouthIndianView(QGraphicsView):
         self._transit_overlay_active = False
         self._transit_manager = None
         self._mini_transit_si_view = None
+
+        # SPEC-VGC-001: the divisional chart drawn INSIDE the center box
+        # while the outer grid stays on D-1. None = no center varga.
+        self._center_varga_code = None
+
+        # One cache per CHART TYPE, not per source (SPEC-VGC-001 INV-7).
+        # Transit and the center varga are both South Indian charts, so they
+        # share the SI mini and its cache; the mini North Indian is a
+        # different class and keeps its own.
+        self._center_si_cache = CenterMiniCache()
+        self._center_ni_cache = CenterMiniCache()
 
         # Hover system - preview stays until user hovers different cell
         self.hover_signal = HoverSignal()
@@ -476,9 +495,10 @@ class SouthIndianView(QGraphicsView):
 
         # Lazy off-screen NorthIndianView used as the rendering source for
         # Mode 2 (the mini chart in the 2x2 center). Created on first use,
-        # reused thereafter. We render its scene to a pixmap rather than
-        # embedding the QGraphicsView itself — embedding via
-        # QGraphicsProxyWidget gives flaky sizing inside another QGraphicsView.
+        # reused thereafter. We record its scene as paint commands rather
+        # than embedding the QGraphicsView itself — embedding via
+        # QGraphicsProxyWidget gives flaky sizing inside another
+        # QGraphicsView.
         self._mini_north_indian_view = None
 
         # REMOVED: All reference lists caused dual ownership with Qt scene
@@ -504,16 +524,7 @@ class SouthIndianView(QGraphicsView):
                      (mini North Indian) for the time-adjustment overlay.
         """
         self.time_adjust_mode = enabled
-        if enabled:
-            self._hide_center_preview()
-            self._hide_mini_north_indian()
-            self._hide_transit_overlay()
-            self.current_hover_sign = None
-        else:
-            if self._transit_overlay_active and self._transit_manager:
-                self._show_transit_overlay(self._transit_manager)
-            elif self.selected_z6b_sign is not None:
-                self._show_mini_north_indian(self.selected_z6b_sign - 1)
+        self._apply_center_precedence()
 
     def _compute_fit_zoom(self):
         """Return zoom factor that fits the full chart in the current viewport."""
@@ -791,6 +802,12 @@ class SouthIndianView(QGraphicsView):
             Qt.TransformationMode.SmoothTransformation
         )
 
+        # Desaturate AFTER scale (SPEC-SAT-001 WI-4; no-op at 100). fast=True:
+        # backgrounds are large OPAQUE textures (chart_size up to 2048px) — the
+        # per-pixel walk costs ~4s each and freezes boot; the QPainter path is
+        # ~50ms and safe here (no alpha edges).
+        scaled_image = desat_image(scaled_image, fast=True)
+
         # Convert to QPixmap and set devicePixelRatio
         pixmap = QPixmap.fromImage(scaled_image)
         pixmap.setDevicePixelRatio(dpr)
@@ -816,8 +833,9 @@ class SouthIndianView(QGraphicsView):
         if isinstance(bg_identifier, int):
             bg_identifier = f"celestial_{bg_identifier:02d}"
 
-        # Cache key
-        cache_key = bg_identifier
+        # Cache key includes saturation (SPEC-SAT-001 WI-4; sat_key is '' at
+        # 100 so keys stay byte-identical to today)
+        cache_key = f"{bg_identifier}{sat_key()}"
 
         if cache_key in self.background_cache:
             self.background_pixmap = self.background_cache[cache_key]
@@ -852,6 +870,11 @@ class SouthIndianView(QGraphicsView):
                     x_offset, y_offset,
                     logical_size, logical_size
                 )
+
+            # Step 2b: Desaturate AFTER scale (SPEC-SAT-001 WI-4; no-op at 100).
+            # fast=True: opaque background texture at chart_size (up to 2048px) —
+            # per-pixel walk froze boot ~4s/view; QPainter path is ~50ms.
+            scaled_image = desat_image(scaled_image, fast=True)
 
             # Step 3: Convert to QPixmap - NO setDevicePixelRatio!
             # fitInView + SmoothPixmapTransform will handle display scaling
@@ -959,6 +982,8 @@ class SouthIndianView(QGraphicsView):
         """
         western_name = self.WESTERN_NAMES[zodiac_index]
         self.variation_settings[western_name] = variation_num
+        self._center_si_cache.invalidate()
+        self._center_ni_cache.invalidate()
 
         # Save to file
         self._save_variation_settings()
@@ -1039,6 +1064,8 @@ class SouthIndianView(QGraphicsView):
             variation_num: Variation number to use
         """
         self.planet_variation_settings[planet_name] = variation_num
+        self._center_si_cache.invalidate()
+        self._center_ni_cache.invalidate()
 
         # Save to file
         self._save_planet_variation_settings()
@@ -1112,7 +1139,8 @@ class SouthIndianView(QGraphicsView):
         variation = self.get_selected_variation(zodiac_index)
 
         # Cache key - NO DPR since we're not using HiDPI here
-        cache_key = f"zodiac_{zodiac_index}_v{variation}_{size}"
+        # (+ saturation, SPEC-SAT-001 WI-4; sat_key is '' at 100)
+        cache_key = f"zodiac_{zodiac_index}_v{variation}_{size}{sat_key()}"
 
         if cache_key in self.zodiac_icons:
             return self.zodiac_icons[cache_key]
@@ -1125,9 +1153,9 @@ class SouthIndianView(QGraphicsView):
             # Fallback to variation 1 if the selected variation doesn't exist.
             # Core always ships {Sign}1.webp for every sign (the single default
             # the 2026-04-08 cleanup kept), so this fallback is guaranteed to
-            # succeed in a healthy Core build. The proprietary edition may
+            # succeed in a healthy Core build. The paid edition may
             # add more variants via an overlay path; see the variation system
-            # rebuild TODO in the proprietary tree.
+            # rebuild TODO in the paid edition's tree.
             icon_path = PROJECT_ROOT / f"img/sign/{western_name}1.webp"
 
         if not icon_path.exists():
@@ -1147,6 +1175,9 @@ class SouthIndianView(QGraphicsView):
             Qt.AspectRatioMode.KeepAspectRatio,
             Qt.TransformationMode.SmoothTransformation
         )
+
+        # Step 2b: Desaturate AFTER scale (SPEC-SAT-001 WI-4; no-op at 100)
+        qimage = desat_image(qimage)
 
         # Step 3: Convert to QPixmap - NO setDevicePixelRatio!
         # fitInView + SmoothPixmapTransform will handle display scaling
@@ -1410,8 +1441,9 @@ class SouthIndianView(QGraphicsView):
         # Get selected variation for this planet
         variation = self.get_planet_variation(planet_name)
 
-        # Cache key includes variation
-        cache_key = f"{planet_name}_v{variation}_{size}"
+        # Cache key includes variation + saturation (SPEC-SAT-001 WI-4;
+        # sat_key is '' at 100 so keys stay byte-identical to today)
+        cache_key = f"{planet_name}_v{variation}_{size}{sat_key()}"
 
         if cache_key in self.planet_icons:
             return self.planet_icons[cache_key]
@@ -1449,6 +1481,9 @@ class SouthIndianView(QGraphicsView):
                 Qt.TransformationMode.SmoothTransformation
             )
 
+            # Step 2b: Desaturate AFTER scale (SPEC-SAT-001 WI-4; no-op at 100)
+            qimage = desat_image(qimage)
+
             # Step 3: Convert to QPixmap - NO setDevicePixelRatio!
             # fitInView + SmoothPixmapTransform will handle display scaling
             pixmap = QPixmap.fromImage(qimage)
@@ -1460,13 +1495,6 @@ class SouthIndianView(QGraphicsView):
             self.planet_icons[cache_key] = None
             return None
 
-    def set_planets_data(self, planets_data, aditya_mode="aditya", use_western_names=False, ayanamsa_offset=0.0):
-        """Deprecated — use update_from_chart(). Kept until Issue 11."""
-        self.planets_data = planets_data
-        self.aditya_mode = aditya_mode
-        self.use_western_names = use_western_names
-        self.ayanamsa_offset = ayanamsa_offset
-
     def update_from_chart(self, chart, varga_code=None, use_western_names=False,
                           aditya_mode=None, **_kw):
         """Render from a libaditya Chart object (primary entry point)."""
@@ -1474,14 +1502,24 @@ class SouthIndianView(QGraphicsView):
         self._chart = chart
         self._varga_code = varga_code
         self._has_chart = True
-        self.planets_data = True
         self.aditya_mode = aditya_mode or (
             "aditya" if chart.context.circle == Circle.ADITYA else "tropical_classic"
         )
+        previous_chart = self._chart
         source = chart.varga(varga_code) if varga_code and varga_code != 1 else chart.rashi()
         self._planets = source.planets()
         self._cusps = source.cusps()
         self.use_western_names = use_western_names
+        # The center signatures key on id(chart), and CPython reuses the ids
+        # of collected objects — so a NEW chart can land on the previous
+        # one's id and replay its placements. The event is the real guard;
+        # the signature only catches what has no event. Scoped to an actual
+        # chart change, because this method is also the outer grid's
+        # re-render path for varga switches and view syncs, and invalidating
+        # there re-records the mini on every one of them.
+        if chart is not previous_chart:
+            self._center_si_cache.invalidate()
+            self._center_ni_cache.invalidate()
         self.draw_full_chart()
 
     def ensure_visible(self):
@@ -1497,6 +1535,31 @@ class SouthIndianView(QGraphicsView):
         self.scale(self.zoom_factor, self.zoom_factor)
         self.centerOn(self.chart_size / 2, self.chart_size / 2)
 
+    def clear_icon_cache(self):
+        """Drop cached planet/zodiac pixmaps and backgrounds so they are
+        rebuilt at the current UI saturation (SPEC-SAT-001 WI-4). Called by the
+        saturation-change handler before the theme fan-out re-renders."""
+        if hasattr(self, 'planet_icons'):
+            self.planet_icons.clear()
+        if hasattr(self, 'zodiac_icons'):
+            self.zodiac_icons.clear()
+        if hasattr(self, 'background_cache'):
+            self.background_cache.clear()
+
+    def clear_chart(self):
+        """Clear the chart display to the empty grid.
+
+        Mirrors WheelView.clear_chart / NorthIndianView.clear_chart (this view
+        was the only one of the three without it). draw_full_chart early-returns
+        after the grid when no Chart is set, which yields the empty state.
+        """
+        self._chart = None
+        self._varga_code = None
+        self._planets = None
+        self._cusps = None
+        self._has_chart = False
+        self.draw_full_chart()
+
     def refresh_theme(self):
         """Re-apply theme colors to the chart view (SPEC-THM-001 W1).
 
@@ -1511,6 +1574,12 @@ class SouthIndianView(QGraphicsView):
         self.text_color = QColor(theme["secondary_text"])
         self.preview_bg_color = QColor(theme["secondary"])
         self.scene.setBackgroundBrush(QBrush(self.bg_color))
+        # The center minis are recorded with the theme baked in — the SI one
+        # flips to a contrasting stone by bg lightness, the NI one inherits
+        # text colours — so a theme switch must drop both recordings or the
+        # center box keeps the old theme (SPEC-VGC-001 pre-mortem F-5).
+        self._center_si_cache.invalidate()
+        self._center_ni_cache.invalidate()
         # Redraw chart so existing planet/text items get new colors.
         if self._chart is not None:
             try:
@@ -1583,13 +1652,7 @@ class SouthIndianView(QGraphicsView):
         self.scene.update()
         self.viewport().update()
 
-        if not self.center_box_enabled:
-            pass
-        elif self._transit_overlay_active and not self.time_adjust_mode \
-                and self._transit_manager:
-            self._show_transit_overlay(self._transit_manager)
-        elif self.selected_z6b_sign is not None and not self.time_adjust_mode:
-            self._show_mini_north_indian(self.selected_z6b_sign - 1)
+        self._apply_center_precedence()
 
     def set_ascendant_effect_settings(self, settings: dict):
         """Set ascendant effect settings for element-themed glow.
@@ -1685,15 +1748,15 @@ class SouthIndianView(QGraphicsView):
             gradient = QRadialGradient(cell_center_x, cell_center_y, glow_radius)
 
             # Inner color (element primary)
-            inner_color = QColor(colors["primary"])
+            inner_color = QColor(desat_hex(colors["primary"]))
             inner_color.setAlphaF(opacity * 0.6)
 
             # Middle color (element glow)
-            mid_color = QColor(colors["glow"])
+            mid_color = QColor(desat_hex(colors["glow"]))
             mid_color.setAlphaF(opacity * 0.4)
 
             # Outer color (fade to transparent)
-            outer_color = QColor(colors["outer"])
+            outer_color = QColor(desat_hex(colors["outer"]))
             outer_color.setAlphaF(opacity * 0.15)
 
             transparent = QColor(0, 0, 0, 0)
@@ -1719,9 +1782,9 @@ class SouthIndianView(QGraphicsView):
             # Add inner bright ring for emphasis (scales with size)
             ring_size = base_radius + 15
             ring_gradient = QRadialGradient(cell_center_x, cell_center_y, ring_size)
-            ring_inner = QColor(colors["glow"])
+            ring_inner = QColor(desat_hex(colors["glow"]))
             ring_inner.setAlphaF(opacity * 0.8)
-            ring_outer = QColor(colors["primary"])
+            ring_outer = QColor(desat_hex(colors["primary"]))
             ring_outer.setAlphaF(0)
 
             ring_gradient.setColorAt(0.85, ring_outer)
@@ -1742,9 +1805,9 @@ class SouthIndianView(QGraphicsView):
             # Golden glow regardless of element
             gradient = QRadialGradient(cell_center_x, cell_center_y, glow_radius)
 
-            gold_inner = QColor("#FFD700")
+            gold_inner = QColor(desat_hex("#FFD700"))
             gold_inner.setAlphaF(opacity * 0.5)
-            gold_mid = QColor("#FFA500")
+            gold_mid = QColor(desat_hex("#FFA500"))
             gold_mid.setAlphaF(opacity * 0.3)
             transparent = QColor(0, 0, 0, 0)
 
@@ -1766,7 +1829,7 @@ class SouthIndianView(QGraphicsView):
 
         elif effect_type == "Double Border":
             # Draw double border around cell (scales with size)
-            border_color = QColor(colors["glow"])
+            border_color = QColor(desat_hex(colors["glow"]))
             border_color.setAlphaF(opacity)
 
             # Calculate border offsets based on size ratio
@@ -1805,12 +1868,12 @@ class SouthIndianView(QGraphicsView):
         elif effect_type == "Radiant Burst":
             # Sunburst rays radiating from the cell center
             import math
-            ray_color = QColor(colors["glow"])
+            ray_color = QColor(desat_hex(colors["glow"]))
             ray_color.setAlphaF(opacity * 0.7)
 
             # Outer glow first (soft background)
             outer_gradient = QRadialGradient(cell_center_x, cell_center_y, glow_radius * 1.2)
-            outer_glow = QColor(colors["primary"])
+            outer_glow = QColor(desat_hex(colors["primary"]))
             outer_glow.setAlphaF(opacity * 0.25)
             transparent = QColor(0, 0, 0, 0)
             outer_gradient.setColorAt(0.4, transparent)
@@ -1855,7 +1918,7 @@ class SouthIndianView(QGraphicsView):
             # Center bright spot (scales with size)
             center_size = 20 * size_ratio
             center_gradient = QRadialGradient(cell_center_x, cell_center_y, center_size)
-            center_bright = QColor(colors["outer"])
+            center_bright = QColor(desat_hex(colors["outer"]))
             center_bright.setAlphaF(opacity * 0.6)
             center_gradient.setColorAt(0.0, center_bright)
             center_gradient.setColorAt(1.0, transparent)
@@ -1875,7 +1938,7 @@ class SouthIndianView(QGraphicsView):
             from PySide6.QtCore import QPointF
             from PySide6.QtWidgets import QGraphicsPolygonItem
 
-            sparkle_color = QColor(colors["glow"])
+            sparkle_color = QColor(desat_hex(colors["glow"]))
             sparkle_color.setAlphaF(opacity * 0.9)
 
             sparkle_size = (8 + (spread / 10)) * size_ratio  # Scale with spread and size
@@ -1918,7 +1981,7 @@ class SouthIndianView(QGraphicsView):
                     QPointF(cx - inner_sparkle_size, cy)
                 ])
 
-                inner_color = QColor(colors["outer"])
+                inner_color = QColor(desat_hex(colors["outer"]))
                 inner_color.setAlphaF(opacity)
 
                 inner_sparkle = QGraphicsPolygonItem(inner_diamond)
@@ -1930,7 +1993,7 @@ class SouthIndianView(QGraphicsView):
             # Add subtle glow behind the whole cell
             glow_size_scaled = base_radius * 1.6
             cell_glow = QRadialGradient(cell_center_x, cell_center_y, glow_size_scaled)
-            glow_color = QColor(colors["primary"])
+            glow_color = QColor(desat_hex(colors["primary"]))
             glow_color.setAlphaF(opacity * 0.2)
             transparent = QColor(0, 0, 0, 0)
             cell_glow.setColorAt(0.0, transparent)
@@ -2012,11 +2075,11 @@ class SouthIndianView(QGraphicsView):
         # (Element Glow is most common, implement all 5 effect types)
         if effect_type == "Element Glow":
             gradient = QRadialGradient(cell_center_x, cell_center_y, glow_radius)
-            inner_color = QColor(colors["primary"])
+            inner_color = QColor(desat_hex(colors["primary"]))
             inner_color.setAlphaF(opacity * 0.6)
-            mid_color = QColor(colors["glow"])
+            mid_color = QColor(desat_hex(colors["glow"]))
             mid_color.setAlphaF(opacity * 0.4)
-            outer_color = QColor(colors["outer"])
+            outer_color = QColor(desat_hex(colors["outer"]))
             outer_color.setAlphaF(opacity * 0.15)
             transparent = QColor(0, 0, 0, 0)
 
@@ -2038,9 +2101,9 @@ class SouthIndianView(QGraphicsView):
             # Inner ring
             ring_size = base_radius + 15
             ring_gradient = QRadialGradient(cell_center_x, cell_center_y, ring_size)
-            ring_inner = QColor(colors["glow"])
+            ring_inner = QColor(desat_hex(colors["glow"]))
             ring_inner.setAlphaF(opacity * 0.8)
-            ring_outer = QColor(colors["primary"])
+            ring_outer = QColor(desat_hex(colors["primary"]))
             ring_outer.setAlphaF(0)
             ring_gradient.setColorAt(0.85, ring_outer)
             ring_gradient.setColorAt(0.92, ring_inner)
@@ -2058,11 +2121,11 @@ class SouthIndianView(QGraphicsView):
         elif effect_type == "Golden Aura":
             # Golden gradient regardless of element
             gradient = QRadialGradient(cell_center_x, cell_center_y, glow_radius)
-            gold_inner = QColor("#FFD700")
+            gold_inner = QColor(desat_hex("#FFD700"))
             gold_inner.setAlphaF(opacity * 0.7)
-            gold_mid = QColor("#FFA500")
+            gold_mid = QColor(desat_hex("#FFA500"))
             gold_mid.setAlphaF(opacity * 0.4)
-            gold_outer = QColor("#FF8C00")
+            gold_outer = QColor(desat_hex("#FF8C00"))
             gold_outer.setAlphaF(opacity * 0.1)
             transparent = QColor(0, 0, 0, 0)
 
@@ -2084,12 +2147,12 @@ class SouthIndianView(QGraphicsView):
         elif effect_type == "Radiant Burst":
             # Sunburst rays radiating from the cell center
             import math
-            ray_color = QColor(colors["glow"])
+            ray_color = QColor(desat_hex(colors["glow"]))
             ray_color.setAlphaF(opacity * 0.7)
 
             # Outer glow first (soft background)
             outer_gradient = QRadialGradient(cell_center_x, cell_center_y, glow_radius * 1.2)
-            outer_glow = QColor(colors["primary"])
+            outer_glow = QColor(desat_hex(colors["primary"]))
             outer_glow.setAlphaF(opacity * 0.25)
             transparent = QColor(0, 0, 0, 0)
             outer_gradient.setColorAt(0.4, transparent)
@@ -2134,7 +2197,7 @@ class SouthIndianView(QGraphicsView):
             # Center bright spot (scales with size)
             center_size = 20 * size_ratio
             center_gradient = QRadialGradient(cell_center_x, cell_center_y, center_size)
-            center_bright = QColor(colors["outer"])
+            center_bright = QColor(desat_hex(colors["outer"]))
             center_bright.setAlphaF(opacity * 0.6)
             center_gradient.setColorAt(0.0, center_bright)
             center_gradient.setColorAt(1.0, transparent)
@@ -2152,7 +2215,7 @@ class SouthIndianView(QGraphicsView):
             # Draw double border around cell (scales with size)
             from PySide6.QtWidgets import QGraphicsRectItem
 
-            border_color = QColor(colors["glow"])
+            border_color = QColor(desat_hex(colors["glow"]))
             border_color.setAlphaF(opacity)
 
             # Calculate border offsets based on size ratio
@@ -2194,7 +2257,7 @@ class SouthIndianView(QGraphicsView):
             from PySide6.QtCore import QPointF
             from PySide6.QtWidgets import QGraphicsPolygonItem
 
-            sparkle_color = QColor(colors["glow"])
+            sparkle_color = QColor(desat_hex(colors["glow"]))
             sparkle_color.setAlphaF(opacity * 0.9)
 
             sparkle_size = (8 + (spread / 10)) * size_ratio  # Scale with spread and size
@@ -2237,7 +2300,7 @@ class SouthIndianView(QGraphicsView):
                     QPointF(cx - inner_sparkle_size, cy)
                 ])
 
-                inner_color = QColor(colors["outer"])
+                inner_color = QColor(desat_hex(colors["outer"]))
                 inner_color.setAlphaF(opacity)
 
                 inner_sparkle = QGraphicsPolygonItem(inner_diamond)
@@ -2249,7 +2312,7 @@ class SouthIndianView(QGraphicsView):
             # Add subtle glow behind the whole cell
             glow_size_scaled = base_radius * 1.6
             cell_glow = QRadialGradient(cell_center_x, cell_center_y, glow_size_scaled)
-            glow_color = QColor(colors["primary"])
+            glow_color = QColor(desat_hex(colors["primary"]))
             glow_color.setAlphaF(opacity * 0.2)
             transparent = QColor(0, 0, 0, 0)
             cell_glow.setColorAt(0.0, transparent)
@@ -2270,9 +2333,9 @@ class SouthIndianView(QGraphicsView):
             # Subtle background glow
             glow_size_scaled = base_radius * 0.9
             cell_glow = QRadialGradient(cell_center_x, cell_center_y, glow_size_scaled)
-            glow_center = QColor(colors["outer"])
+            glow_center = QColor(desat_hex(colors["outer"]))
             glow_center.setAlphaF(opacity * 0.3)
-            glow_edge = QColor(colors["primary"])
+            glow_edge = QColor(desat_hex(colors["primary"]))
             glow_edge.setAlphaF(0)
             cell_glow.setColorAt(0.0, glow_center)
             cell_glow.setColorAt(1.0, glow_edge)
@@ -2317,7 +2380,7 @@ class SouthIndianView(QGraphicsView):
         x2 = x1 + self.cell_size
 
         # Get element color for this sign
-        color_hex = self.ELEMENT_COLORS.get(sign_index, "#CC0000")
+        color_hex = desat_hex(self.ELEMENT_COLORS.get(sign_index, "#CC0000"))  # SPEC-SAT-001
         stripe_color = QColor(color_hex)
         stripe_color.setAlpha(80)  # 31% opacity (80/255 ≈ 0.31)
 
@@ -2957,6 +3020,8 @@ class SouthIndianView(QGraphicsView):
             return
         if self._transit_overlay_active:
             return
+        if self._center_varga_code is not None:
+            return
         if self.selected_z6b_sign is not None:
             return
 
@@ -3128,17 +3193,44 @@ class SouthIndianView(QGraphicsView):
         #   Mode 2 -> Mode 2  : clears the previous mini-chart pixmap, fixing
         #                       the "planet placements stack on each click" bug
         #   Mode 2 -> Mode 1  : clears the mini chart so hover can re-arm
-        self._hide_center_preview()
-        self._hide_mini_north_indian()
+        self._apply_center_precedence()
 
-        if sign_index_1based is None:
-            return
-        if self.time_adjust_mode:
-            return
-        if self._transit_overlay_active:
-            return
+    def set_center_varga(self, varga_code):
+        """Draw `varga_code` in the 2x2 center while the outer grid stays D-1.
 
-        self._show_mini_north_indian(sign_index_1based - 1)
+        SPEC-VGC-001. `None` clears it. Same domain check as the vector
+        child so a malformed call cannot fail differently in each theme
+        (SPEC-SIC-002 INV-12).
+        """
+        valid = (varga_code is None
+                 or (isinstance(varga_code, int)
+                     and not isinstance(varga_code, bool)
+                     and varga_code != 0))
+        if not valid:
+            print("[SI CLASSIC] Ignoring invalid center varga: "
+                  f"{varga_code!r} (expected a libaditya varga code or None)")
+            return
+        if varga_code == self._center_varga_code:
+            return
+        self._center_varga_code = varga_code
+        self._center_si_cache.invalidate()
+        # INV-10: Mode 2 renders the SELECTED varga, and that just changed.
+        self._center_ni_cache.invalidate()
+        # The classic view had NO release path for its off-screen mini at
+        # all — an unparented QGraphicsView with a full scene, kept for the
+        # host's lifetime once anything used the center box.
+        if varga_code is None and not self._transit_overlay_active:
+            self._release_center_si_mini()
+        self._apply_center_precedence()
+
+    def _release_center_si_mini(self):
+        """Drop the off-screen South Indian mini and its recording, so it
+        exists only while the center box is actually showing something."""
+        self._center_si_cache.invalidate()
+        mini = self._mini_transit_si_view
+        self._mini_transit_si_view = None
+        if mini is not None:
+            mini.deleteLater()
 
     def notify_zodiac_changed(self):
         """Re-render Mode 2 when the Z4 zodiac radio (aditya_mode) changes.
@@ -3147,10 +3239,70 @@ class SouthIndianView(QGraphicsView):
         'zodiac' / 'classic' / 'sidereal'. Idempotent and a no-op when
         Mode 2 is not active.
         """
-        if self.selected_z6b_sign is None or self.time_adjust_mode:
+        self._center_ni_cache.invalidate()
+        self._apply_center_precedence()
+
+    def _apply_center_precedence(self):
+        """SPEC-VGC-001 §3.2, in ONE place.
+
+        The classic center box used to carry its precedence in five separate
+        guard chains — the rebuild gate, the hover handler,
+        set_z6b_selection, set_time_adjust_mode and update_transit_overlay —
+        each with a slightly different subset of the conditions. Adding a
+        sixth center mode to five chains is exactly how they drift apart, so
+        every one of them now routes here instead.
+
+        Highest priority first:
+          1 time adjust   -> empty, its widget owns the area
+          2 transit       -> mini transit chart (always D-1 rashi)
+          3 center varga  -> mini varga chart, outer grid stays D-1
+          4 no chart      -> empty, even with a mode enabled
+          5 z6b selection -> mini North Indian
+          (hover is handled in _show_center_preview, which cannot be
+           re-armed from here because it is per-sign)
+        """
+        if not self.center_box_enabled:
             return
+
+        self._hide_center_preview()
+        self._hide_center_si_mini()
         self._hide_mini_north_indian()
-        self._show_mini_north_indian(self.selected_z6b_sign - 1)
+        self.current_hover_sign = None
+
+        if self.time_adjust_mode or not self._chart:
+            return
+
+        if self._transit_overlay_active and self._transit_manager:
+            self._show_transit_overlay(self._transit_manager)
+        elif self._center_varga_code is not None:
+            self._show_center_varga()
+        elif self.selected_z6b_sign is not None:
+            self._show_mini_north_indian(self.selected_z6b_sign - 1)
+
+    def _center_target_size(self):
+        """The 2x2 center box is square; this is its side in scene units."""
+        return float(self.cell_size) * 2.0
+
+    def _place_center_item(self, picture, tag, z, label=None):
+        """Put a recorded mini in the 2x2 center box.
+
+        setPos ONLY. The two renderers this replaces rendered at the mini's
+        own `chart_size` and then setScale()d the pixmap down; the recording
+        is made at the target size instead, so keeping that scale would be a
+        silent 2x geometry bug (SPEC-VGC-001 pre-mortem F-2)."""
+        size = self._center_target_size()
+        # The mini is flipped to a contrasting stone, so the label takes the
+        # mini's OWN text colour rather than the outer chart's — on a light
+        # stone the outer chart's pale text would be invisible.
+        item = CenterMiniItem(picture, size, label=label,
+                              label_color=QColor(GOLD))
+        item.setPos(self.cell_size, self.cell_size)
+        item.setZValue(z)
+        item.setData(Qt.ItemDataRole.UserRole, tag)
+        self.scene.addItem(item)
+        del item  # Rule #18: Qt now owns it; drop the Python ref.
+        self.scene.update()
+        self.viewport().update()
 
     def _show_mini_north_indian(self, lagna_zodiac_idx):
         """Render Mode 2: a mini North Indian chart in the 2x2 center.
@@ -3161,43 +3313,37 @@ class SouthIndianView(QGraphicsView):
         if not self._chart:
             return
 
-        if self._mini_north_indian_view is None:
-            from apps.widgets.north_indian_view import NorthIndianView
-            self._mini_north_indian_view = NorthIndianView()
+        self._hide_mini_north_indian()
 
-        miniview = self._mini_north_indian_view
-        miniview.use_western_names = self.use_western_names
-        miniview.ascendant_override = lagna_zodiac_idx
-        miniview.update_from_chart(self._chart, varga_code=self._varga_code,
-                                   use_western_names=self.use_western_names)
+        # SPEC-VGC-001 INV-10: the mini follows the SELECTED varga, not the
+        # outer grid's. With the center-varga mode on, the outer grid sits at
+        # D-1 and `self._varga_code` is None, so reading it here would
+        # silently downgrade this shipped feature from "sign n as lagna in
+        # D-10" to "...in D-1".
+        varga_code = (self._center_varga_code
+                      if self._center_varga_code is not None
+                      else self._varga_code)
 
-        from PySide6.QtCore import QRectF
-        from PySide6.QtGui import QPixmap, QPainter
-        render_size = miniview.chart_size
-        pixmap = QPixmap(int(render_size), int(render_size))
-        pixmap.fill(Qt.GlobalColor.transparent)
-        painter = QPainter(pixmap)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
-        source_rect = QRectF(0.0, 0.0, float(render_size), float(render_size))
-        target_rect = QRectF(0.0, 0.0, float(render_size), float(render_size))
-        miniview.scene.render(painter, target_rect, source_rect)
-        painter.end()
+        signature = (id(self._chart), varga_code, lagna_zodiac_idx,
+                     bool(self.use_western_names))
+        picture = self._center_ni_cache.get(signature)
+        if picture is None:
+            if self._mini_north_indian_view is None:
+                from apps.widgets.north_indian_view import NorthIndianView
+                self._mini_north_indian_view = NorthIndianView()
 
-        from PySide6.QtWidgets import QGraphicsPixmapItem
-        x1 = self.cell_size
-        y1 = self.cell_size
-        target_size = self.cell_size * 2
-        scale_factor = target_size / render_size
+            miniview = self._mini_north_indian_view
+            miniview.use_western_names = self.use_western_names
+            miniview.ascendant_override = lagna_zodiac_idx
+            miniview.update_from_chart(self._chart, varga_code=varga_code,
+                                       use_western_names=self.use_western_names)
+            picture = self._center_ni_cache.put(
+                record_center_pixmap(miniview, self._center_target_size()),
+                signature)
+        if picture is None:
+            return
 
-        pixmap_item = QGraphicsPixmapItem(pixmap)
-        pixmap_item.setPos(x1, y1)
-        pixmap_item.setScale(scale_factor)
-        pixmap_item.setZValue(50)
-        pixmap_item.setTransformationMode(Qt.TransformationMode.SmoothTransformation)
-        pixmap_item.setData(Qt.ItemDataRole.UserRole, "center_mode2")
-        self.scene.addItem(pixmap_item)
-        del pixmap_item  # Rule #18: Qt now owns it; drop the Python ref.
+        self._place_center_item(picture, "center_mode2", 50)
 
     def _hide_mini_north_indian(self):
         """Remove all Mode 2 items using Qt's item tagging."""
@@ -3215,23 +3361,44 @@ class SouthIndianView(QGraphicsView):
     def update_transit_overlay(self, manager):
         """Receive transit state from TransitOverlayManager via mediator."""
         self._transit_manager = manager
-        if manager.transit_enabled:
-            self._transit_overlay_active = True
-            self._hide_center_preview()
-            self._hide_mini_north_indian()
-            self._show_transit_overlay(manager)
-        else:
-            self._transit_overlay_active = False
-            self._hide_transit_overlay()
-            if self.selected_z6b_sign is not None:
-                self._show_mini_north_indian(self.selected_z6b_sign - 1)
+        # SPEC-VGC-001 INV-4, and the same test the vector child uses: a
+        # manager can sit ENABLED with no usable chart after a failed
+        # recompute (transit_overlay_manager.py clears the planets but
+        # leaves transit_chart None). Testing transit_enabled alone made the
+        # classic child clear a selected center varga and draw nothing,
+        # while the vector child kept drawing it — the same manager, two
+        # different center boxes, which is exactly what the host's fan-out
+        # promises cannot happen.
+        self._transit_overlay_active = bool(
+            getattr(manager, "transit_enabled", False)
+            and getattr(manager, "transit_chart", None) is not None)
+        if not self._transit_overlay_active and self._center_varga_code is None:
+            self._release_center_si_mini()
+        self._apply_center_precedence()
 
     def _show_transit_overlay(self, manager):
         """Render a mini transit SI chart in the 2x2 center box."""
-        if manager.transit_chart is None:
+        chart = getattr(manager, "transit_chart", None)
+        if chart is None:
             return
+        self._draw_center_si_mini(chart, None, "center_transit")
 
-        self._hide_transit_overlay()
+    def _show_center_varga(self):
+        """Render the selected divisional chart in the 2x2 center box while
+        the outer grid stays on D-1 (SPEC-VGC-001)."""
+        if not self._chart or self._center_varga_code is None:
+            return
+        self._draw_center_si_mini(self._chart, self._center_varga_code,
+                                  "center_varga")
+
+    def _draw_center_si_mini(self, chart, varga_code, tag):
+        """Render (or reuse) a South Indian mini and place it in the center.
+
+        Source-agnostic (SPEC-VGC-001 INV-1): transit passes its own chart
+        with no varga because transit is always D-1 rashi (SPEC-TRN-001
+        §4.2); the varga mode passes the natal chart with the selected code.
+        Both reuse ONE off-screen mini and one cache (INV-7)."""
+        self._hide_center_si_mini()
 
         if self._mini_transit_si_view is None:
             self._mini_transit_si_view = SouthIndianView(
@@ -3241,55 +3408,84 @@ class SouthIndianView(QGraphicsView):
                 Qt.WidgetAttribute.WA_DontShowOnScreen
             )
 
-        miniview = self._mini_transit_si_view
-
+        # The mini is flipped to a contrasting stone so it cannot be misread
+        # as the natal chart around it. This is part of the cache key: a
+        # theme switch changes it with no other input changing, and a
+        # signature without it would serve the dark mini on a light theme
+        # (SPEC-VGC-001 pre-mortem F-5).
         is_dark = self.bg_color.lightnessF() < 0.5
-        if is_dark:
-            miniview._load_background("stone_01")
-            miniview.bg_color = QColor("#F5F5F5")
-            miniview.text_color = QColor("#1A1A2E")
-        else:
-            miniview._load_background("stone_06")
-            miniview.bg_color = QColor("#1A1A2E")
-            miniview.text_color = QColor("#E0E0E0")
 
-        miniview.update_from_chart(
-            manager.transit_chart,
-            aditya_mode=self.aditya_mode,
-            use_western_names=self.use_western_names,
-        )
+        # Everything that changes what the mini DRAWS belongs here. The
+        # display flags arrive as plain attribute writes with no event to
+        # hook, so they can only be caught by comparison; the icon
+        # variations DO have events, and invalidate there as well, because
+        # a dict is not hashable and comparing it every draw is the wrong
+        # trade.
+        signature = (id(chart), varga_code, is_dark, self.aditya_mode,
+                     bool(self.use_western_names),
+                     getattr(self, "sign_language", "en"),
+                     bool(getattr(self, "show_outer_planets", True)),
+                     bool(getattr(self, "show_planet_names", False)))
+        picture = self._center_si_cache.get(signature)
+        if picture is None:
+            miniview = self._mini_transit_si_view
+            # SPEC-VGC-001 §4.4: the inner chart must never contradict the
+            # outer one. The pre-refactor renderer never copied these, so a
+            # classic center mini has always ignored F8/F11/language — the
+            # bug predates the cache, but caching would have frozen it.
+            miniview.sign_language = getattr(self, "sign_language", "en")
+            miniview.show_outer_planets = getattr(
+                self, "show_outer_planets", True)
+            miniview.show_planet_names = getattr(
+                self, "show_planet_names", False)
+            miniview.variation_settings = dict(self.variation_settings)
+            miniview.planet_variation_settings = dict(
+                self.planet_variation_settings)
+            if is_dark:
+                miniview._load_background("stone_01")
+                miniview.bg_color = QColor("#F5F5F5")
+                miniview.text_color = QColor("#1A1A2E")
+            else:
+                miniview._load_background("stone_06")
+                miniview.bg_color = QColor("#1A1A2E")
+                miniview.text_color = QColor("#E0E0E0")
 
-        from PySide6.QtCore import QRectF
-        from PySide6.QtGui import QPixmap, QPainter
-        render_size = miniview.chart_size
-        pixmap = QPixmap(int(render_size), int(render_size))
-        pixmap.fill(Qt.GlobalColor.transparent)
-        painter = QPainter(pixmap)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
-        source_rect = QRectF(0.0, 0.0, float(render_size), float(render_size))
-        target_rect = QRectF(0.0, 0.0, float(render_size), float(render_size))
-        miniview.scene.render(painter, target_rect, source_rect)
-        painter.end()
+            try:
+                miniview.update_from_chart(
+                    chart,
+                    varga_code=varga_code,
+                    aditya_mode=self.aditya_mode,
+                    use_western_names=self.use_western_names,
+                )
+            except Exception as e:  # a chart can be half-built
+                print(f"[SI CLASSIC] Center mini render skipped: {e}")
+                return
+            picture = self._center_si_cache.put(
+                record_center_pixmap(miniview, self._center_target_size()),
+                signature)
+        if picture is None:
+            return
 
-        from PySide6.QtWidgets import QGraphicsPixmapItem
-        x1 = self.cell_size
-        y1 = self.cell_size
-        target_size = self.cell_size * 2
-        scale_factor = target_size / render_size
+        label = None
+        if varga_code is not None:
+            from core.varga_codes import (
+                from_libaditya_varga_code,
+                varga_display_label,
+            )
+            label = f"D-{varga_display_label(from_libaditya_varga_code(varga_code))}"
+        self._place_center_item(picture, tag, 52, label=label)
 
-        pixmap_item = QGraphicsPixmapItem(pixmap)
-        pixmap_item.setPos(x1, y1)
-        pixmap_item.setScale(scale_factor)
-        pixmap_item.setZValue(52)
-        pixmap_item.setTransformationMode(
-            Qt.TransformationMode.SmoothTransformation
-        )
-        pixmap_item.setData(Qt.ItemDataRole.UserRole, "center_transit")
-        self.scene.addItem(pixmap_item)
-        del pixmap_item
-        self.scene.update()
-        self.viewport().update()
+    def _hide_center_si_mini(self):
+        """Remove both South Indian center minis — transit and varga share
+        the box, so showing one must clear the other."""
+        self._hide_transit_overlay()
+        self._hide_center_varga()
+
+    def _hide_center_varga(self):
+        """Remove the center varga mini using Qt's item tagging."""
+        for item in [i for i in self.scene.items()
+                     if i.data(Qt.ItemDataRole.UserRole) == "center_varga"]:
+            self.scene.removeItem(item)
 
     def _hide_transit_overlay(self):
         """Remove all transit overlay items using Qt's item tagging."""

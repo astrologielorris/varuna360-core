@@ -31,11 +31,16 @@ from cache.chart_index_cache import ChartIndexCache
 from ui.qt_theme import (
     get_theme_colors, get_primary_button_style,
     get_secondary_button_style, STATUS,
-    FONT_PRIMARY,
+    FONT_PRIMARY, desat_hex,
     scaled_area_px, scaled_area_size, scaled_area_font
 )
 
-
+_VERIFY_PLUGIN = False
+_fcp = None
+try:
+    pass  # plugin detection placeholder
+except (ImportError, Exception):
+    pass
 
 
 class IndexBuildWorker(QThread):
@@ -51,8 +56,11 @@ class IndexBuildWorker(QThread):
 
     def run(self):
         try:
+            _THROTTLE = 50
+
             def _progress_callback(current, total, filepath, is_cached, stats):
-                self.progress.emit(current, total, filepath, is_cached, stats)
+                if current == total or current % _THROTTLE == 0:
+                    self.progress.emit(current, total, filepath, is_cached, stats)
 
             self.cache.build_index(self.folder_paths, progress_callback=_progress_callback)
             self.finished.emit(len(self.cache.index))
@@ -119,17 +127,27 @@ class ChartSortWorker(QThread):
         from pathlib import Path
 
         unsorted = Path(self.unsorted_dir)
-        chtk_files = list(unsorted.glob("*.chtk"))
+        # SPEC-IMPORT-001 §6.5 change 4: include .toml (Open Astrology Chart)
+        # alongside .chtk so imported charts also count toward the sort flow.
+        chtk_files = list(unsorted.glob("*.chtk")) + list(unsorted.glob("*.toml"))
         if not chtk_files:
             self.error.emit("No unsorted charts found")
             return
 
-        # 1. Read chart names from CHTK files (line 1 = name, UTF-16-LE)
+        # 1. Read chart names. CHTK: line 1 = name, UTF-16-LE. TOML (Open
+        #    Astrology Chart): UTF-8 with a top-level name = "..." key, so the
+        #    UTF-16-LE decode above must NOT be applied to it.
         chart_info = []
         for f in chtk_files:
             try:
-                content = f.read_bytes().decode('utf-16-le', errors='ignore')
-                name = content.split('\n')[0].strip().strip('\ufeff')
+                if f.suffix.lower() == '.toml':
+                    # canonicalize=False: reading a name must not write [moment].jd
+                    from core.toml_chart import TOMLChartReader
+                    raw = TOMLChartReader().read_toml_file(str(f), canonicalize=False)
+                    name = (raw.get('name') or '').strip() or f.stem
+                else:
+                    content = f.read_bytes().decode('utf-16-le', errors='ignore')
+                    name = content.split('\n')[0].strip().strip('\ufeff')
                 chart_info.append({"name": name, "file": str(f), "filename": f.name})
             except Exception:
                 chart_info.append({"name": f.stem, "file": str(f), "filename": f.name})
@@ -281,7 +299,6 @@ class ChartSortWorker(QThread):
         self.finished.emit(results)
 
 
-
 class FindChartPanel(QWidget):
     """Find Chart tab - search CHTK database with multi-folder support."""
 
@@ -316,6 +333,7 @@ class FindChartPanel(QWidget):
         # Worker thread state
         self._web_worker = None
         self._sort_worker = None
+        self._verify_worker = None
         self._index_worker = None
         from managers.settings_manager import get_settings
         chart_folders = get_settings().get_chart_folders()
@@ -556,7 +574,7 @@ class FindChartPanel(QWidget):
             remove_btn.setFixedSize(28, 28)
             remove_btn.setStyleSheet(f"""
                 QPushButton {{
-                    background-color: {STATUS['error']};
+                    background-color: {desat_hex(STATUS['error'])};
                     color: white;
                     border: none;
                     border-radius: 14px;
@@ -617,7 +635,7 @@ class FindChartPanel(QWidget):
         if folder:
             entry_widget.setText(folder)
             self._save_folder_paths()
-            self._build_index_async()
+            self.index_status.setText("Folder added. Click REBUILD INDEX to index it.")
 
     def _create_planet_filters_section(self, parent_layout):
         """Create planetary filter dropdowns section (collapsible)."""
@@ -705,7 +723,7 @@ class FindChartPanel(QWidget):
         self.clear_filters_btn.setMinimumHeight(28)
         self.clear_filters_btn.setStyleSheet(f"""
             QPushButton {{
-                background-color: {STATUS['error']};
+                background-color: {desat_hex(STATUS['error'])};
                 color: white;
                 border: none;
                 border-radius: 4px;
@@ -1082,7 +1100,7 @@ class FindChartPanel(QWidget):
             sort_banner_layout = QHBoxLayout(self.sort_banner)
             sort_banner_layout.setContentsMargins(8, 6, 8, 6)
             self.sort_count_label = QLabel("")
-            self.sort_count_label.setStyleSheet(f"color: {STATUS['warning']}; font-weight: bold; font-size: {scaled_area_px('status')}px;")
+            self.sort_count_label.setStyleSheet(f"color: {desat_hex(STATUS['warning'])}; font-weight: bold; font-size: {scaled_area_px('status')}px;")
             self.sort_btn = QPushButton("Sort with DeepSeek")
             self.sort_btn.setStyleSheet(get_primary_button_style())
             self.sort_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -1093,7 +1111,7 @@ class FindChartPanel(QWidget):
             self.sort_banner.setStyleSheet(f"""
                 QWidget {{
                     background-color: {theme['secondary']};
-                    border: 1px solid {STATUS['warning']};
+                    border: 1px solid {desat_hex(STATUS['warning'])};
                     border-radius: 4px;
                 }}
             """)
@@ -1126,7 +1144,7 @@ class FindChartPanel(QWidget):
         dl_layout.addWidget(self.web_status_label)
 
         self.web_result_label = QLabel("")
-        self.web_result_label.setStyleSheet(f"color: {STATUS['success']}; font-size: {scaled_area_px('status')}px; font-weight: bold;")
+        self.web_result_label.setStyleSheet(f"color: {desat_hex(STATUS['success'])}; font-size: {scaled_area_px('status')}px; font-weight: bold;")
         self.web_result_label.hide()
         dl_layout.addWidget(self.web_result_label)
 
@@ -1188,7 +1206,7 @@ class FindChartPanel(QWidget):
         load_action = menu.addAction("Load chart")
         menu.addSeparator()
         trash_action = menu.addAction("Move to trash")
-        self.results_table.selectRow(row)  # Highlight the right-clicked row
+        self.results_table.selectRow(row)
 
         action = menu.exec(self.results_table.viewport().mapToGlobal(position))
         if action == load_action:
@@ -1219,10 +1237,18 @@ class FindChartPanel(QWidget):
             shutil.move(str(src), str(dst))
             QMessageBox.information(self, "Moved to Trash",
                                     f"'{src.name}' moved to trash folder.")
-            # Refresh results to remove the trashed chart
-            QTimer.singleShot(500, lambda: self._build_index_async(silent=True))
+            if (self.cache
+                    and (self._index_worker is None
+                         or not self._index_worker.isRunning())):
+                if filepath in self.cache.index:
+                    del self.cache.index[filepath]
+                    self.cache._save_cache()
+                self._refresh_results()
         except Exception as e:
             QMessageBox.warning(self, "Error", f"Failed to move to trash: {e}")
+
+
+
 
     def _get_checked_folders(self):
         """Get list of folder paths that are checked."""
@@ -1355,8 +1381,10 @@ class FindChartPanel(QWidget):
         if force_recount or self._cached_unsorted_count < 0:
             try:
                 if os.path.isdir(self._unsorted_dir):
+                    # SPEC-IMPORT-001 §6.5 change 4: count .toml charts too.
                     self._cached_unsorted_count = len(
-                        [f for f in os.listdir(self._unsorted_dir) if f.endswith('.chtk')]
+                        [f for f in os.listdir(self._unsorted_dir)
+                         if f.endswith('.chtk') or f.endswith('.toml')]
                     )
                 else:
                     self._cached_unsorted_count = 0
@@ -1385,7 +1413,7 @@ class FindChartPanel(QWidget):
         self.web_search_inline_btn.setEnabled(False)
         if self.web_search_btn:
             self.web_search_btn.setEnabled(False)
-        self.web_status_label.setText(f"Searching {source}...")
+        self.web_status_label.setText("Searching web...")
         self.web_result_label.hide()
 
         worker = WebDownloadWorker(query, source, self._unsorted_dir)
@@ -1437,8 +1465,7 @@ class FindChartPanel(QWidget):
         # Update sort banner (new unsorted file — force recount)
         self._update_sort_banner(force_recount=True)
 
-        # Incremental update so the new chart appears in future searches
-        QTimer.singleShot(1500, lambda: self._build_index_async(silent=True))
+        # SPEC-FIND-003: no auto-rebuild. User clicks REBUILD INDEX when ready.
 
     def _on_sort_clicked(self):
         """Start batch sorting of unsorted charts via DeepSeek."""
@@ -1485,8 +1512,7 @@ class FindChartPanel(QWidget):
         # Refresh after a moment to update banner
         QTimer.singleShot(2000, lambda: self._update_sort_banner(force_recount=True))
 
-        # Incremental update to reflect moved files
-        QTimer.singleShot(1500, lambda: self._build_index_async(silent=True))
+        # SPEC-FIND-003: no auto-rebuild. User clicks REBUILD INDEX when ready.
 
     def _on_aditya_mode_changed(self, mode):
         """Refresh filter dropdowns and results table when mode/names change."""
@@ -1638,7 +1664,7 @@ class FindChartPanel(QWidget):
             print("[FIND_CHART] Preload: no cache, skipping build")
 
     def _load_cached_index(self):
-        """Load index from disk cache, then silently refresh in the background."""
+        """Load index from disk cache. SPEC-FIND-003: no auto-rebuild."""
         if self.cache is None:
             print("[FIND_CHART] Loading cached index from disk...")
             self.cache = ChartIndexCache()
@@ -1648,35 +1674,30 @@ class FindChartPanel(QWidget):
             self.index_status.setText(f"Loaded {count} charts from cache")
             print(f"[FIND_CHART] Loaded {count} charts from cache")
             self._refresh_results()
-            QTimer.singleShot(3000, lambda: self._build_index_async(silent=True))
         else:
             folders = [e.text() for e in self.folder_entries if e.text().strip()]
             if folders:
-                print("[FIND_CHART] No cached index, auto-building...")
-                self.index_status.setText("Building index...")
-                self._build_index_async(silent=False)
+                self.index_status.setText("No index. Click REBUILD INDEX to build it.")
+                print("[FIND_CHART] No cached index. User must click REBUILD INDEX.")
             else:
                 self.index_status.setText("No folders configured")
                 print("[FIND_CHART] No cached index and no folders configured")
 
-    def _build_index_async(self, silent=False):
-        """Build index in a background thread.
+    def _build_index_async(self, *, _user_initiated=False):
+        """Build index in a background thread. SPEC-FIND-003: user consent required."""
+        if not _user_initiated:
+            print("[FIND_CHART] WARNING: _build_index_async() called without "
+                  "_user_initiated=True. SPEC-FIND-003 violation. Ignoring.")
+            return
 
-        Args:
-            silent: If True, don't show loading overlay (for automatic rebuilds).
-        """
         if self._index_worker is not None and self._index_worker.isRunning():
             return
 
-        # Don't start index rebuild while a chart is loading: processEvents()
-        # during chart load would process thousands of index progress signals,
-        # causing the UI to freeze.
         if (hasattr(self, 'gui') and hasattr(self.gui, 'chart_manager')
                 and getattr(self.gui.chart_manager, '_loading_chart', False)):
-            QTimer.singleShot(2000, lambda: self._build_index_async(silent=True))
+            self.index_status.setText("Chart is loading, try again after.")
             return
 
-        # Lazy init cache (avoid loading 6MB JSON at app startup)
         if self.cache is None:
             print("[FIND_CHART] Creating ChartIndexCache (lazy init)...")
             self.cache = ChartIndexCache()
@@ -1687,14 +1708,12 @@ class FindChartPanel(QWidget):
             self.index_status.setText("No folders configured")
             return
 
-        # Filter out subfolders to avoid redundant indexing
         filtered_paths = self._filter_redundant_subfolders(folder_paths)
 
-        self._rebuilding = True  # Lock out _refresh_results during rebuild
-        self._silent_rebuild = silent
+        self._rebuilding = True
         self.index_status.setText("Building index...")
 
-        if not silent and hasattr(self, 'gui') and hasattr(self.gui, 'loading_manager'):
+        if hasattr(self, 'gui') and hasattr(self.gui, 'loading_manager'):
             self.gui.loading_manager.start("Building chart index...")
 
         self._index_worker = IndexBuildWorker(self.cache, filtered_paths)
@@ -1709,19 +1728,16 @@ class FindChartPanel(QWidget):
         fresh = stats['calculated_count']
         status = "cached" if is_cached else "calculating"
         self.index_status.setText(f"[{current}/{total}] {status} ({cached} cached, {fresh} new)")
-        if not getattr(self, '_silent_rebuild', False):
-            if hasattr(self, 'gui') and hasattr(self.gui, 'loading_manager'):
-                self.gui.loading_manager.set_progress(current, total)
+        if hasattr(self, 'gui') and hasattr(self.gui, 'loading_manager'):
+            self.gui.loading_manager.set_progress(current, total)
 
     def _on_index_finished(self, count):
         """Handle index build completion (main thread)."""
         self._rebuilding = False
         self.index_status.setText(f"Indexed {count} charts")
         self._refresh_results()
-        if not getattr(self, '_silent_rebuild', False):
-            if hasattr(self, 'gui') and hasattr(self.gui, 'loading_manager'):
-                self.gui.loading_manager.finish()
-        self._silent_rebuild = False
+        if hasattr(self, 'gui') and hasattr(self.gui, 'loading_manager'):
+            self.gui.loading_manager.finish()
         self._index_worker = None
         print(f"[FIND_CHART] Index build complete: {count} charts")
 
@@ -1730,16 +1746,14 @@ class FindChartPanel(QWidget):
         self._rebuilding = False
         self.index_status.setText("Index build failed")
         print(f"[FIND_CHART] Index build error: {error_msg}")
-        if not getattr(self, '_silent_rebuild', False):
-            if hasattr(self, 'gui') and hasattr(self.gui, 'loading_manager'):
-                self.gui.loading_manager.force_finish()
-        self._silent_rebuild = False
+        if hasattr(self, 'gui') and hasattr(self.gui, 'loading_manager'):
+            self.gui.loading_manager.force_finish()
         self._index_worker = None
 
-    def _rebuild_index(self, silent=False):
+    def _rebuild_index(self):
         """Refresh the index: keeps cached entries, recalculates new/changed files."""
         self._save_folder_paths()
-        self._build_index_async(silent=silent)
+        self._build_index_async(_user_initiated=True)
 
     def _show_rebuild_context_menu(self, pos):
         """Right-click menu on REBUILD INDEX button."""
@@ -1757,7 +1771,7 @@ class FindChartPanel(QWidget):
         if self.cache:
             self.cache.clear_cache()
         self._save_folder_paths()
-        self._build_index_async(silent=False)
+        self._build_index_async(_user_initiated=True)
 
     def _load_folder_paths(self):
         """Load chart folder paths via SettingsManager (single source of truth)."""
@@ -1790,7 +1804,8 @@ class FindChartPanel(QWidget):
 
     def closeEvent(self, event):
         """Stop all background workers on close to prevent crashes."""
-        for worker in (self._web_worker, self._sort_worker, self._index_worker):
+        for worker in (self._web_worker, self._sort_worker, self._verify_worker,
+                       self._index_worker):
             if worker is not None and worker.isRunning():
                 worker.quit()
                 worker.wait(3000)
@@ -1916,3 +1931,41 @@ class FindChartPanel(QWidget):
         header_style = self._collapsible_header_style(theme)
         for header_btn in getattr(self, "_collapsible_headers", []):
             header_btn.setStyleSheet(header_style)
+
+        # Sort banner (DeepSeek) + web download section: styled once at
+        # construction, so a live theme switch left the banner frozen on the
+        # OLD theme's secondary surface (white strip in dark themes) and the
+        # button on the OLD primary color (td-v21r). Same expressions as the
+        # construction sites.
+        if getattr(self, "sort_banner", None) is not None:
+            self.sort_count_label.setStyleSheet(
+                f"color: {desat_hex(STATUS['warning'])}; font-weight: bold; "
+                f"font-size: {scaled_area_px('status')}px;")
+            self.sort_btn.setStyleSheet(get_primary_button_style())
+            self.sort_banner.setStyleSheet(f"""
+                QWidget {{
+                    background-color: {theme['secondary']};
+                    border: 1px solid {desat_hex(STATUS['warning'])};
+                    border-radius: 4px;
+                }}
+            """)
+        if getattr(self, "web_search_inline_btn", None) is not None:
+            self.web_search_inline_btn.setStyleSheet(get_secondary_button_style())
+        if getattr(self, "web_download_widget", None) is not None:
+            self.no_results_label.setStyleSheet(
+                f"color: {theme['secondary_text']}; "
+                f"font-size: {scaled_area_px('status')}px;")
+            self.web_search_btn.setStyleSheet(get_primary_button_style())
+            self.web_status_label.setStyleSheet(
+                f"color: {theme['secondary_text']}; "
+                f"font-size: {scaled_area_px('status')}px; font-style: italic;")
+            self.web_result_label.setStyleSheet(
+                f"color: {desat_hex(STATUS['success'])}; "
+                f"font-size: {scaled_area_px('status')}px; font-weight: bold;")
+            self.web_download_widget.setStyleSheet(f"""
+                QWidget {{
+                    background-color: {theme['secondary']};
+                    border: 1px solid {theme['primary']};
+                    border-radius: 6px;
+                }}
+            """)

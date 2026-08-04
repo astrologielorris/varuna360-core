@@ -1,6 +1,5 @@
 # Copyright (C) 2026 Lorris Turpin / 360 Hearts in the Sky
 # Licensed under AGPL-3.0 — see LICENSE file for details.
-# Commercial exception: see NOTICE file.
 """
 Dual Chart Widget - Reusable side-by-side + overlay chart display (PySide6)
 
@@ -23,20 +22,19 @@ from PySide6.QtCore import Qt, Signal
 
 # Chart view widgets
 from apps.widgets.chart_view import SouthIndianView
+from apps.widgets.south_indian_vector_view import create_south_indian_view
 from apps.widgets.wheel_view import WheelView
 from apps.widgets.north_indian_view import NorthIndianView
 
 # Theme imports
 from ui.qt_theme import (
     BG, TEXT_PRIMARY, TEXT_SECONDARY, BORDER,
-    get_theme_colors, get_frame_style, scaled_area_px
+    get_theme_colors, get_frame_style, scaled_area_px, themed_chart_background
 )
-
-# Settings for background sync
-from managers.settings_manager import get_settings
+from ui.themed_style import ThemedStyleMixin
 
 
-class DualChartWidget(QWidget):
+class DualChartWidget(ThemedStyleMixin, QWidget):
     """
     Reusable widget for displaying two charts side-by-side with overlay mode.
 
@@ -141,11 +139,25 @@ class DualChartWidget(QWidget):
         self.combo_style = self._build_combo_style(theme)
 
         # --- LEFT chart ---
-        left_frame = QFrame()
-        left_frame.setStyleSheet(get_frame_style())
-        left_layout = QVBoxLayout(left_frame)
+        # td-iqjb.7 (Wave G): store the frame on self and register it so
+        # refresh_theme() re-applies get_frame_style() on a LIVE switch. It was a
+        # construction-only local before, unreachable from refresh -> white header
+        # strip in dark theme after a light boot. The named attr also lets the
+        # visual harness region-sample this exact strip.
+        self.left_frame = self._register_themed(QFrame(), get_frame_style)
+        left_layout = QVBoxLayout(self.left_frame)
         left_layout.setContentsMargins(8, 8, 8, 8)
         left_layout.setSpacing(4)
+
+        # SPEC-FSV-001 §3.7: the per-side chrome (header row + name/info labels)
+        # lives in a named wrapper so fullscreen can hide it with one call and
+        # restore it exactly — the chart stack stays OUTSIDE the wrapper. The
+        # header-widget slot (set_left_header_widget dropdowns) rides inside the
+        # wrapper, so it hides with the rest and needs no separate handling.
+        self.left_chrome = QWidget()
+        left_chrome_layout = QVBoxLayout(self.left_chrome)
+        left_chrome_layout.setContentsMargins(0, 0, 0, 0)
+        left_chrome_layout.setSpacing(4)
 
         # Left header row
         self.left_header_row = QHBoxLayout()
@@ -160,43 +172,52 @@ class DualChartWidget(QWidget):
         # Placeholder for custom header widget (e.g., dropdown)
         self.left_header_widget_slot = QHBoxLayout()
         self.left_header_row.addLayout(self.left_header_widget_slot)
-        left_layout.addLayout(self.left_header_row)
+        left_chrome_layout.addLayout(self.left_header_row)
 
         # Left chart info — SPEC-THM-001 G11 live theme colors.
         self.left_name_label = QLabel("No chart selected")
         self.left_name_label.setStyleSheet(f"color: {theme['secondary_text']}; font-size: {scaled_area_px('tables')}px; font-weight: bold;")
-        left_layout.addWidget(self.left_name_label)
+        left_chrome_layout.addWidget(self.left_name_label)
 
         self.left_info_label = QLabel("")
         self.left_info_label.setStyleSheet(f"color: {theme['secondary_text']}; font-size: {scaled_area_px('status')}px;")
-        left_layout.addWidget(self.left_info_label)
+        left_chrome_layout.addWidget(self.left_info_label)
+
+        left_layout.addWidget(self.left_chrome)
 
         # Left chart view stack (3 view types)
         self.left_stack = QStackedWidget()
         self.left_stack.setMinimumSize(400, 400)
         self.left_stack.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
-        self.left_south = SouthIndianView()
+        self.left_south = create_south_indian_view()
         self.left_wheel = WheelView()
         self.left_north = NorthIndianView()
 
-        # Sync background with settings
-        settings = get_settings()
-        self.left_south.set_background(settings.get_background())
+        # td-iqjb.8 (Wave H): theme-locked background at construction (NOT the
+        # persisted user texture) so a light BOOT renders light immediately --
+        # same helper the live-switch cascade below uses, so they cannot drift.
+        self.left_south.set_background(themed_chart_background())
 
         self.left_stack.addWidget(self.left_south)   # Index 0
         self.left_stack.addWidget(self.left_wheel)   # Index 1
         self.left_stack.addWidget(self.left_north)   # Index 2
 
         left_layout.addWidget(self.left_stack, 1)
-        self.charts_splitter.addWidget(left_frame)
+        self.charts_splitter.addWidget(self.left_frame)
 
         # --- RIGHT chart ---
-        right_frame = QFrame()
-        right_frame.setStyleSheet(get_frame_style())
-        right_layout = QVBoxLayout(right_frame)
+        # td-iqjb.7 (Wave G): same treatment as left_frame (registered for live re-theme).
+        self.right_frame = self._register_themed(QFrame(), get_frame_style)
+        right_layout = QVBoxLayout(self.right_frame)
         right_layout.setContentsMargins(8, 8, 8, 8)
         right_layout.setSpacing(4)
+
+        # SPEC-FSV-001 §3.7: per-side chrome wrapper (see left side above).
+        self.right_chrome = QWidget()
+        right_chrome_layout = QVBoxLayout(self.right_chrome)
+        right_chrome_layout.setContentsMargins(0, 0, 0, 0)
+        right_chrome_layout.setSpacing(4)
 
         # Right header row
         self.right_header_row = QHBoxLayout()
@@ -221,35 +242,37 @@ class DualChartWidget(QWidget):
         # Placeholder for custom header widget
         self.right_header_widget_slot = QHBoxLayout()
         self.right_header_row.addLayout(self.right_header_widget_slot)
-        right_layout.addLayout(self.right_header_row)
+        right_chrome_layout.addLayout(self.right_header_row)
 
         # Right chart info — SPEC-THM-001 G11 live theme colors.
         self.right_name_label = QLabel("No chart loaded")
         self.right_name_label.setStyleSheet(f"color: {theme['secondary_text']}; font-size: {scaled_area_px('tables')}px; font-weight: bold;")
-        right_layout.addWidget(self.right_name_label)
+        right_chrome_layout.addWidget(self.right_name_label)
 
         self.right_info_label = QLabel("")
         self.right_info_label.setStyleSheet(f"color: {theme['secondary_text']}; font-size: {scaled_area_px('status')}px;")
-        right_layout.addWidget(self.right_info_label)
+        right_chrome_layout.addWidget(self.right_info_label)
+
+        right_layout.addWidget(self.right_chrome)
 
         # Right chart view stack (3 view types)
         self.right_stack = QStackedWidget()
         self.right_stack.setMinimumSize(400, 400)
         self.right_stack.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
-        self.right_south = SouthIndianView()
+        self.right_south = create_south_indian_view()
         self.right_wheel = WheelView()
         self.right_north = NorthIndianView()
 
-        # Sync background with settings
-        self.right_south.set_background(settings.get_background())
+        # td-iqjb.8 (Wave H): theme-locked background at construction (see left).
+        self.right_south.set_background(themed_chart_background())
 
         self.right_stack.addWidget(self.right_south)   # Index 0
         self.right_stack.addWidget(self.right_wheel)   # Index 1
         self.right_stack.addWidget(self.right_north)   # Index 2
 
         right_layout.addWidget(self.right_stack, 1)
-        self.charts_splitter.addWidget(right_frame)
+        self.charts_splitter.addWidget(self.right_frame)
 
         # Force equal split with stretch factors
         self.charts_splitter.setStretchFactor(0, 1)  # Left gets equal stretch
@@ -260,9 +283,9 @@ class DualChartWidget(QWidget):
         self.mode_stack.addWidget(self.charts_splitter)  # Index 0
 
         # --- Mode 1: Overlay view (single wheel with outer rim) ---
-        overlay_container = QFrame()
-        overlay_container.setStyleSheet(get_frame_style())
-        overlay_layout = QVBoxLayout(overlay_container)
+        # td-iqjb.7 (Wave G): registered for live re-theme (was a construction-only local).
+        self.overlay_container = self._register_themed(QFrame(), get_frame_style)
+        overlay_layout = QVBoxLayout(self.overlay_container)
         overlay_layout.setContentsMargins(8, 8, 8, 8)
 
         # Overlay header
@@ -281,7 +304,7 @@ class DualChartWidget(QWidget):
         self.overlay_wheel.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         overlay_layout.addWidget(self.overlay_wheel, 1)
 
-        self.mode_stack.addWidget(overlay_container)  # Index 1
+        self.mode_stack.addWidget(self.overlay_container)  # Index 1
 
         # Add mode stack to main layout
         layout.addWidget(self.mode_stack, 1)
@@ -361,7 +384,9 @@ class DualChartWidget(QWidget):
             self._left_varga_code = None
             self.left_name_label.setText(name if name else "")
             self.left_info_label.setText(info if info else "")
-            self.left_south.scene.clear()
+            # SPEC-SIC-002 §4.1: direct scene manipulation is banned at
+            # adopting sites — clear_chart() fans to BOTH theme children.
+            self.left_south.clear_chart()
             self.left_wheel.clear_chart()
             self.left_north.clear_chart()
         else:
@@ -369,7 +394,9 @@ class DualChartWidget(QWidget):
             self._right_varga_code = None
             self.right_name_label.setText(name if name else "")
             self.right_info_label.setText(info if info else "")
-            self.right_south.scene.clear()
+            # SPEC-SIC-002 §4.1: direct scene manipulation is banned at
+            # adopting sites — clear_chart() fans to BOTH theme children.
+            self.right_south.clear_chart()
             self.right_wheel.clear_chart()
             self.right_north.clear_chart()
 
@@ -383,6 +410,14 @@ class DualChartWidget(QWidget):
         Args:
             view_name: "south_indian", "wheel", or "north_indian"
         """
+        # Body Graph (SPEC-BODY-001) and Cards of Truth (SPEC-COT-001) have no
+        # dual-chart equivalent. Stay on the current view instead of silently
+        # falling back to South Indian — view_map.get(name, 0) below is a wrong
+        # answer for them, not a safe default. The main F2 path
+        # (_cycle_chart_view) already skips this call; this guards any direct
+        # caller, and the Eclipse panel is reached through exactly such a path.
+        if view_name in ("body_graph", "cards_of_truth"):
+            return
         view_map = {
             "south_indian": 0,
             "wheel": 1,
@@ -419,6 +454,90 @@ class DualChartWidget(QWidget):
     def is_overlay_mode(self) -> bool:
         """Check if currently in overlay mode."""
         return self.mode_stack.currentIndex() == 1
+
+    def fullscreen_descriptor(self, owning_layout=None):
+        """SPEC-FSV-001 §3.7 chart-area-only descriptor for this dual widget.
+
+        The rework narrows the reparented target from the WHOLE widget to just
+        ``self.mode_stack`` (the charts), so the top header band (with the
+        windowed Overlay button, Tajika/Varshaphala toggles) stays behind in the
+        panel and the chart gets nearly the whole screen. Because ``mode_stack``
+        is a direct child of this widget's own layout, the owner is
+        ``self.layout()`` — the legacy ``owning_layout`` argument (the panel's
+        body_layout where the DUAL WIDGET sat) is no longer used and is kept only
+        so Transit/SR callers need no change.
+
+        The per-side name/info chrome lives INSIDE ``mode_stack`` (nested in each
+        frame), so narrowing alone does not strip it; on_enter hides the
+        ``left_chrome``/``right_chrome`` wrappers + ``overlay_header`` and on_exit
+        restores each widget's own explicit-hidden intent (isHidden snapshot).
+
+        The Overlay toggle moves to the manager's floating capsule via
+        ``floating_controls`` so it stays reachable without the top band; its
+        ``visible`` predicate mirrors the real button (wheel-view only).
+        views() is mode-aware: overlay -> [overlay_wheel]; else both side views.
+        """
+        state = {}
+        chrome = [w for w in (getattr(self, "left_chrome", None),
+                              getattr(self, "right_chrome", None),
+                              getattr(self, "overlay_header", None))
+                  if w is not None]
+
+        def views():
+            try:
+                if self.mode_stack.currentIndex() == 1:
+                    return [self.overlay_wheel]
+                return [self.left_stack.currentWidget(),
+                        self.right_stack.currentWidget()]
+            except RuntimeError:
+                return []
+
+        def on_enter():
+            try:
+                state["splitter"] = self.charts_splitter.sizes()
+            except RuntimeError:
+                state["splitter"] = None
+            # Snapshot each chrome widget's OWN hidden intent, then hide it so the
+            # chart fills the screen. isHidden(), not isVisible(): the window is
+            # covered by the fullscreen container but still "shown".
+            state["chrome_hidden"] = []
+            for w in chrome:
+                try:
+                    state["chrome_hidden"].append((w, w.isHidden()))
+                    w.setVisible(False)
+                except RuntimeError:
+                    pass
+
+        def on_exit():
+            sizes = state.get("splitter")
+            if sizes:
+                try:
+                    self.charts_splitter.setSizes(sizes)
+                except RuntimeError:
+                    pass
+            for w, was_hidden in state.get("chrome_hidden", []):
+                try:
+                    w.setVisible(not was_hidden)
+                except RuntimeError:
+                    pass
+
+        return {
+            "widget": self.mode_stack,
+            "layout": self.layout(),
+            "views": views,
+            "refit": True,
+            "cycle": False,
+            "refit_signals": [self.overlay_toggled],
+            "on_enter": on_enter,
+            "on_exit": on_exit,
+            "floating_controls": [{
+                "text": f"🔗 {self.overlay_label}",
+                "read": self.is_overlay_mode,
+                "write": self.set_overlay_mode,
+                # Wheel-view only — mirror the real (now-hidden) button.
+                "visible": lambda: self.overlay_btn.isVisible(),
+            }],
+        }
 
     def _toggle_overlay_mode(self):
         """Toggle between side-by-side and overlay modes."""
@@ -462,7 +581,7 @@ class DualChartWidget(QWidget):
             right_varga = getattr(self, '_right_varga_code', None)
             self.overlay_wheel.update_outer_rim_from_chart(right, varga_code=right_varga)
         else:
-            self.overlay_wheel.set_outer_rim_data(None)
+            self.overlay_wheel.clear_outer_rim()
 
         left_name = self.left_name_label.text()
         right_name = self.right_name_label.text()
@@ -516,6 +635,11 @@ class DualChartWidget(QWidget):
         (name labels, info labels, map button, combos via stored style).
         """
         theme = get_theme_colors()
+
+        # td-iqjb.7 (Wave G): replay the registered frame styles FIRST so the
+        # left/right/overlay QFrame backgrounds re-theme on a live switch (they
+        # were construction-only locals unreachable from here before).
+        self._replay_themed()
 
         # Update header labels
         self.left_header_label.setStyleSheet(f"""
@@ -582,14 +706,36 @@ class DualChartWidget(QWidget):
                 if w is not None and w.__class__.__name__ == 'QComboBox':
                     w.setStyleSheet(self.combo_style)
 
-        # SPEC-THM-001 G10: propagate to the embedded SouthIndian/Wheel/NorthIndian
-        # views so their backgrounds and text recolor too.
+        # SPEC-THM-001 G10 + td-iqjb.8 (Wave H): propagate to the embedded
+        # SouthIndian/Wheel/NorthIndian views so their backgrounds and text
+        # recolor too.
+        #
+        # Wave H: these views render a background TEXTURE (draw_empty_grid re-adds
+        # the pixmap, chart_view.py:1060-1063, instead of the solid theme brush),
+        # and refresh_theme() alone only re-adds the SAME pixmap. Construction now
+        # picks the theme-locked stone via themed_chart_background(); re-pick it
+        # here too so a live SWITCH tracks the theme, then let each view redraw.
+        # Same helper as construction + core boot/switch -> no drift (pm-006).
+        themed_bg = themed_chart_background()
         for view_attr in ('left_south', 'left_wheel', 'left_north',
                           'right_south', 'right_wheel', 'right_north',
                           'overlay_wheel'):
             v = getattr(self, view_attr, None)
-            if v is not None and hasattr(v, 'refresh_theme'):
-                v.refresh_theme()
+            if v is None:
+                continue
+            try:
+                if hasattr(v, 'set_background'):
+                    v.set_background(themed_bg)
+                if hasattr(v, 'refresh_theme'):
+                    v.refresh_theme()
+                # SPEC-SIC-002 D-13: the SI host re-applies the classic/vector
+                # theme whenever this widget re-applies display settings.
+                if hasattr(v, 'sync_style'):
+                    v.sync_style()
+            except Exception:
+                # Per-child isolation: one view's redraw failure must not abort
+                # the theme switch for the rest (mirrors eclipse_panel Wave B).
+                pass
 
     def get_left_wheel(self) -> WheelView:
         """Get the left wheel view for direct access if needed."""

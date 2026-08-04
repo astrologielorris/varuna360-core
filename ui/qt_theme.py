@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 # Copyright (C) 2026 Lorris Turpin / 360 Hearts in the Sky
 # Licensed under AGPL-3.0 — see LICENSE file for details.
-# Commercial exception: see NOTICE file.
 """
 PySide6 Theme - Centralized Color Definitions
 ==============================================
@@ -79,8 +78,14 @@ AREA_DEFAULTS = {
     "info_text": 11,
     "buttons": 10,
     "sidebar": 10,
+    "chart_memory": 10,
     "status": 9,
     "tabs": 12,
+    # Glyph/cusp/degree/planet/ASC text painted directly on the chart wheel,
+    # North-Indian chart, and body graph. Default 16 keeps these primary chart
+    # labels readable at roughly their former size (they were 14-18pt hardcoded;
+    # mapping them onto the smaller generic areas had shrunk them ~20-30%).
+    "chart_labels": 16,
 }
 
 _area_overrides = {}   # area_id -> user-chosen base pt size
@@ -628,6 +633,245 @@ def _darken_color(hex_color, factor=0.7):
         return hex_color  # Return unchanged if parsing fails
 
 
+# =============================================================================
+# GLOBAL UI COLOR SATURATION  (SPEC-SAT-001)
+# -----------------------------------------------------------------------------
+# One 0-100 slider desaturates the WHOLE UI live. THE INVARIANT is ONE
+# application point per color (the "double-desaturation trap"): colors that flow
+# through qt-material are desaturated once, at the theme-XML/env level
+# (desaturated_theme_path below), so every get_theme_colors() call site inherits
+# the muted hex for free. desat_hex() is applied ONLY to colors that NEVER pass
+# through qt-material (the frozen fallback constants in get_theme_colors, the
+# _PARI_SEM severity ramp, the element/hora/trimsamsa semantic palettes, and
+# hardcoded hexes). Icons/background images go through desat_image(). Applying
+# BOTH the XML desat AND desat_hex() to the same color multiplies S twice
+# (S*s*s), so 50% would look like 25% — never do both to one color.
+# =============================================================================
+import colorsys
+import math
+
+_UI_SATURATION = 100  # module state, 0-100; 100 == fully saturated (no-op)
+
+
+def set_ui_saturation(pct):
+    """Set the global UI saturation (0-100). Clamped; non-numeric or non-finite
+    ignored. NOTE: json.load accepts Infinity/NaN by default, and the boot caller
+    invokes this OUTSIDE its json try-block, so a corrupt color_saturation value
+    must never raise here (would crash startup)."""
+    global _UI_SATURATION
+    try:
+        pct = float(pct)
+    except (TypeError, ValueError):
+        return
+    if not math.isfinite(pct):
+        return
+    _UI_SATURATION = max(0, min(100, int(round(pct))))
+
+
+def get_ui_saturation():
+    """Return the current global UI saturation (0-100)."""
+    return _UI_SATURATION
+
+
+def sat_key():
+    """Cache-key suffix encoding the current saturation, for icon/image caches.
+
+    Returns '' at 100 so cache keys stay byte-identical to today (SPEC-SAT-001
+    WI-4), else '_s<pct>' so a slider change produces DIFFERENT keys and a stale
+    pixmap can never be served. Append to every string cache key that feeds a
+    desat_image()-processed pixmap; for tuple keys append get_ui_saturation().
+    """
+    return "" if _UI_SATURATION >= 100 else f"_s{_UI_SATURATION}"
+
+
+def desat_hex(hex_color):
+    """Desaturate a hex color toward grey by the global UI saturation.
+
+    HSL model: S' = S * (sat/100); H and L untouched — preserving L keeps the
+    is_light_theme() luminance logic valid. No-op fast path at sat == 100 so the
+    original string is returned byte-identical. Accepts '#RGB', '#RRGGBB' and
+    '#AARRGGBB' (the alpha nibble pair is preserved verbatim). Returns the input
+    unchanged on malformed data so a bad color can never raise inside a
+    stylesheet build.
+    """
+    return _desat_hex_at(hex_color, _UI_SATURATION)
+
+
+_QSS_HEX_RE = None  # compiled lazily on first desat_qss call
+
+
+def desat_qss(qss):
+    """Desaturate EVERY ``#RRGGBB`` hex in a Qt stylesheet string (SPEC-SAT-001).
+
+    Use to wrap a PLAIN (non-f-string) ``setStyleSheet("...")`` argument whose
+    colors are hardcoded literals: ``setStyleSheet(desat_qss("... #4CAF50 ..."))``.
+    No-op fast path at sat == 100 (byte-identical). Greys are unaffected (S=0).
+
+    ONLY safe for stylesheets whose colors are LITERALS — do NOT run it over a
+    string that already interpolates theme colors (``get_theme_colors()`` values
+    are desaturated by the theme XML already; re-desaturating = double-desat).
+    For those, wrap the individual literal hexes with ``desat_hex`` instead.
+    """
+    if _UI_SATURATION >= 100:
+        return qss
+    global _QSS_HEX_RE
+    if _QSS_HEX_RE is None:
+        import re
+        _QSS_HEX_RE = re.compile(r'#[0-9a-fA-F]{6}\b')
+    return _QSS_HEX_RE.sub(lambda m: _desat_hex_at(m.group(0), _UI_SATURATION), qss)
+
+
+def _desat_hex_at(hex_color, sat):
+    """Pure hex desaturation at an EXPLICIT saturation (0-100).
+
+    Shared by desat_hex() (module state) and desaturated_theme_path() (rewrites
+    a theme XML at a given sat without touching the global state).
+    """
+    if sat >= 100:
+        return hex_color
+    s = str(hex_color)
+    if not s.startswith('#'):
+        return hex_color
+    body = s[1:]
+    alpha = ''
+    try:
+        if len(body) == 3:
+            r = int(body[0] * 2, 16); g = int(body[1] * 2, 16); b = int(body[2] * 2, 16)
+        elif len(body) == 6:
+            r = int(body[0:2], 16); g = int(body[2:4], 16); b = int(body[4:6], 16)
+        elif len(body) == 8:
+            alpha = body[0:2]
+            r = int(body[2:4], 16); g = int(body[4:6], 16); b = int(body[6:8], 16)
+        else:
+            return hex_color
+    except ValueError:
+        return hex_color
+    h, l, s_ = colorsys.rgb_to_hls(r / 255.0, g / 255.0, b / 255.0)
+    s_ *= (sat / 100.0)
+    nr, ng, nb = colorsys.hls_to_rgb(h, l, s_)
+    R = max(0, min(255, int(round(nr * 255))))
+    G = max(0, min(255, int(round(ng * 255))))
+    B = max(0, min(255, int(round(nb * 255))))
+    return f"#{alpha}{R:02x}{G:02x}{B:02x}"
+
+
+def desaturated_theme_path(theme_file, sat=None):
+    """Return a path to a desaturated COPY of a qt-material theme XML (WI-2).
+
+    qt-material's ``get_theme()`` accepts an absolute path that exists on disk
+    (``else: theme = theme_name`` branch) and sets every color into the
+    ``QTMATERIAL_*`` env vars FROM the XML. So if we hand ``apply_stylesheet``
+    a desaturated copy, the stylesheet AND every ``get_theme_colors()`` call
+    site inherit the muted palette for free — the single application point for
+    all qt-material chrome (the double-desaturation invariant).
+
+    - No-op: returns ``theme_file`` unchanged when sat >= 100, so 100% behaves
+      exactly like today (built-in theme name passed straight through).
+    - The generated filename PRESERVES the "light"/"dark" substring
+      (``dark_blue.xml`` -> ``dark_blue_sat50.xml``) because qt-material's
+      ``is_light_theme()`` checks ``"light" in QTMATERIAL_THEME`` and
+      ``QTMATERIAL_THEME`` becomes the full path we pass.
+    - On any failure (source XML not found, unwritable dir) returns
+      ``theme_file`` unchanged so the app still themes, just saturated.
+
+    ``theme_file`` is the logical built-in name (e.g. ``dark_blue.xml``); the
+    caller keeps passing that to ``_save_theme_preference``. Only the
+    ``apply_fn(theme=...)`` call uses this returned path.
+    """
+    import re
+    if sat is None:
+        sat = _UI_SATURATION
+    if sat >= 100:
+        return theme_file
+    try:
+        # Resolve the source XML: a built-in name lives under qt_material/themes,
+        # otherwise theme_file may already be an on-disk path.
+        if os.path.exists(theme_file):
+            src = theme_file
+        else:
+            import qt_material
+            src = os.path.join(os.path.dirname(qt_material.__file__), "themes", theme_file)
+        if not os.path.exists(src):
+            return theme_file
+
+        from state.user_data import get_user_data_dir
+        out_dir = os.path.join(str(get_user_data_dir() or "."), "desat_themes")
+        os.makedirs(out_dir, exist_ok=True)
+        base = os.path.basename(theme_file)
+        stem, ext = os.path.splitext(base)  # ("dark_blue", ".xml")
+        out_path = os.path.join(out_dir, f"{stem}_sat{int(sat)}{ext or '.xml'}")
+
+        with open(src, "r", encoding="utf-8") as f:
+            xml = f.read()
+        # Rewrite every #RRGGBB (and #RGB) hex through the pure desaturator.
+        hex_re = re.compile(r"#(?:[0-9a-fA-F]{6}|[0-9a-fA-F]{3})\b")
+        desat_xml = hex_re.sub(lambda m: _desat_hex_at(m.group(0), sat), xml)
+        with open(out_path, "w", encoding="utf-8") as f:
+            f.write(desat_xml)
+        return out_path
+    except Exception:
+        return theme_file
+
+
+def desat_image(qimage, fast=False):
+    """Desaturate a QImage toward grayscale by the global UI saturation,
+    ALPHA-SAFE. No-op fast path at sat == 100 (returns the input unchanged).
+
+    Default (fast=False): per-pixel luma blend on Format_ARGB32 — for each pixel
+    compute Rec.601 luma L = 0.299R + 0.587G + 0.114B and blend
+    out = channel*f + L*(1-f) for R/G/B (f = sat/100); THE ALPHA BYTE IS LEFT
+    UNTOUCHED. convertToFormat(Grayscale8) is WRONG here (it discards alpha ->
+    icons become black squares) and the SourceAtop cross-fade was rejected by
+    review (non-uniform desaturation on semi-transparent edge pixels -> visible
+    color fringe). Use this for ICONS with anti-aliased transparent edges. Apply
+    AFTER the ~48px .scaled(), never at source resolution (pure-Python walk is
+    ~2.6ms at 48px but seconds at 2000px+).
+
+    fast=True: a QPainter grayscale-over-original blend, done in C++ (~50ms at
+    2000px vs seconds). Uses Qt's qGray luma (weights differ slightly from
+    Rec.601 — visually negligible) and treats semi-transparent pixels uniformly,
+    so it is ONLY safe for LARGE, FULLY-OPAQUE surfaces (the antikythera world
+    map). Do NOT use for alpha-edged icons.
+    """
+    if qimage is None:
+        return qimage
+    sat = _UI_SATURATION
+    if sat >= 100 or qimage.isNull():
+        return qimage
+    from PySide6.QtGui import QImage
+    if fast:
+        from PySide6.QtGui import QPainter
+        base = qimage.convertToFormat(QImage.Format.Format_ARGB32)
+        gray = base.convertToFormat(QImage.Format.Format_Grayscale8).convertToFormat(
+            QImage.Format.Format_ARGB32)
+        painter = QPainter(base)
+        painter.setOpacity(1.0 - sat / 100.0)
+        painter.drawImage(0, 0, gray)
+        painter.end()
+        return base
+    # Format_RGBA8888 has a FIXED byte order (R,G,B,A) on every platform, so the
+    # per-pixel walk is endianness-independent (Format_ARGB32's in-memory layout
+    # is B,G,R,A only on little-endian). Codex review finding.
+    img = qimage.convertToFormat(QImage.Format.Format_RGBA8888)
+    f = sat / 100.0
+    inv = 1.0 - f
+    w = img.width()
+    h = img.height()
+    bpl = img.bytesPerLine()
+    mv = img.bits()  # writable memoryview, format 'B'; RGBA8888 == R,G,B,A
+    for y in range(h):
+        row = y * bpl
+        for x in range(w):
+            o = row + x * 4
+            rr = mv[o]; gg = mv[o + 1]; bb = mv[o + 2]
+            luma = 0.299 * rr + 0.587 * gg + 0.114 * bb
+            mv[o]     = int(rr * f + luma * inv + 0.5)
+            mv[o + 1] = int(gg * f + luma * inv + 0.5)
+            mv[o + 2] = int(bb * f + luma * inv + 0.5)
+            # mv[o + 3] (alpha) intentionally untouched
+    return img
+
+
 def is_light_theme():
     """Detect if the current qt-material theme is light or dark.
 
@@ -645,6 +889,27 @@ def is_light_theme():
         return False  # default to dark
 
 
+def themed_chart_background():
+    """The theme-locked chart background TEXTURE identifier: 'stone_01' for a
+    light theme, 'stone_06' for a dark theme.
+
+    SINGLE source of truth (td-iqjb.8 Wave H, pm-006) for every place that a
+    theme-driven chart background is chosen: the main chart at boot
+    (core_gui_qt:489) and on switch (:5281-5284), and every EMBEDDED chart-view
+    host that must track the theme rather than a persisted user texture --
+    dual_chart_widget (Transit + Solar Return), the Personal Eclipse mini-charts,
+    and the Exploration south view. Using ONE helper at construction AND on
+    refresh guarantees they cannot disagree (the boot-vs-switch drift that let a
+    live-switch-only fix pass its gate while a light BOOT still rendered dark).
+
+    Reads is_light_theme() (the live qt-material palette), which is valid at both
+    call sites: the launcher applies the stylesheet before the GUI is built
+    (core_gui_qt:6156) and _on_theme_changed re-applies it (:5193) before the
+    background swap. The main chart's user-selectable background DIALOG flow is
+    unaffected -- it calls set_background() with the user's pick directly."""
+    return "stone_01" if is_light_theme() else "stone_06"
+
+
 def get_theme_colors():
     """
     Get current qt-material theme colors from environment variables.
@@ -656,18 +921,125 @@ def get_theme_colors():
     Returns:
         dict: Theme colors with fallbacks if not using qt-material
     """
-    primary = os.environ.get("QTMATERIAL_PRIMARYCOLOR", BLUE)
+    # SPEC-SAT-001 WI-3: env-var values are ALREADY desaturated by WI-2 (the XML
+    # was rewritten before apply_stylesheet), so they must NOT be desaturated
+    # again here (double-desat trap). Only the FROZEN FALLBACK constants — used
+    # when qt-material was never applied — need desat_hex(). _env_or_desat()
+    # applies it to the fallback branch only. primary_dark is COMPUTED from the
+    # (already-desaturated) primary, so it inherits the mute for free.
+    primary = _env_or_desat("QTMATERIAL_PRIMARYCOLOR", BLUE)
 
     return {
         "primary": primary,
         "primary_dark": _darken_color(primary, 0.7),
-        "primary_light": os.environ.get("QTMATERIAL_PRIMARYLIGHTCOLOR", "#5EADFF"),
-        "primary_text": os.environ.get("QTMATERIAL_PRIMARYTEXTCOLOR", TEXT_PRIMARY),
-        "secondary": os.environ.get("QTMATERIAL_SECONDARYCOLOR", SURFACE),
-        "secondary_dark": os.environ.get("QTMATERIAL_SECONDARYDARKCOLOR", BG),
-        "secondary_light": os.environ.get("QTMATERIAL_SECONDARYLIGHTCOLOR", HOVER),
-        "secondary_text": os.environ.get("QTMATERIAL_SECONDARYTEXTCOLOR", TEXT_PRIMARY),
+        "primary_light": _env_or_desat("QTMATERIAL_PRIMARYLIGHTCOLOR", "#5EADFF"),
+        "primary_text": _env_or_desat("QTMATERIAL_PRIMARYTEXTCOLOR", TEXT_PRIMARY),
+        "secondary": _env_or_desat("QTMATERIAL_SECONDARYCOLOR", SURFACE),
+        "secondary_dark": _env_or_desat("QTMATERIAL_SECONDARYDARKCOLOR", BG),
+        "secondary_light": _env_or_desat("QTMATERIAL_SECONDARYLIGHTCOLOR", HOVER),
+        "secondary_text": _env_or_desat("QTMATERIAL_SECONDARYTEXTCOLOR", TEXT_PRIMARY),
     }
+
+
+def _env_or_desat(env_key, fallback):
+    """Return the qt-material env var verbatim if set (WI-2 already desaturated
+    it at the XML), else the frozen fallback constant run through desat_hex().
+    Guarantees ONE application point per color (SPEC-SAT-001)."""
+    v = os.environ.get(env_key)
+    return v if v is not None else desat_hex(fallback)
+
+
+def hex_to_rgb_str(hex_color):
+    """Convert '#RRGGBB' (or '#RGB') to 'r, g, b' for use inside QSS rgba().
+
+    Returns a mid-grey triple on malformed input so a bad color can never
+    raise inside a stylesheet build.
+    """
+    h = str(hex_color).lstrip('#')
+    if len(h) == 3:
+        h = ''.join(c * 2 for c in h)
+    try:
+        return f"{int(h[0:2], 16)}, {int(h[2:4], 16)}, {int(h[4:6], 16)}"
+    except (ValueError, IndexError):
+        return "128, 128, 128"
+
+
+def dim_text(hex_color, alpha=0.70):
+    """Return a QSS ``rgba(...)`` string that dims a live theme text color.
+
+    The 8-key live palette (``get_theme_colors``) has only ONE foreground
+    (``secondary_text``); it lacks the dim/tertiary tiers the frozen
+    constants (TEXT_SECONDARY #AAAAAA, TEXT_TERTIARY #666666) provided.
+    Applying alpha to the live foreground preserves that visual hierarchy on
+    BOTH themes: 0.70 white on dark reads as light grey, 0.70 black on light
+    reads as dark grey (SPEC-THM-001; td-iqjb F2 central dim policy).
+
+    Use for QSS ``color:`` values. For painted QColor text, use
+    ``QColor(color)`` then ``setAlphaF(alpha)`` instead.
+    """
+    return f"rgba({hex_to_rgb_str(hex_color)}, {alpha})"
+
+
+# =============================================================================
+# PARIVARTANA / FINAL-DISPOSITOR SEVERITY PALETTE  (td-vn65.2)
+# -----------------------------------------------------------------------------
+# Rule 20 SEMANTIC EXCEPTION: these colours ENCODE the strength of an exchange
+# yoga (Maha grace -> double-Dainya affliction), not theme chrome. They are the
+# exchange-panel analogue of the Varshaphala day/night severity map (_VRS_SEM):
+# meaning is carried by hue, so the values are intentionally fixed rather than
+# pulled from the 8-key live palette. The ramp is a continuous progression:
+#   maha (GREEN, grace) -> khala (AMBER) -> dainya6 -> dainya8 -> dainya12 ->
+#   dainya_double (ORANGE deepening into DARK RED, worsening affliction),
+# plus a muted grey `neutral` for a chart with no exchange yoga.
+#
+# Each entry carries `hi` (bright accent: chip border, bar fill, heading),
+# `lo` (a darker gradient stop) and `text` (a label colour that stays legible
+# on the card surface — dark text for the light theme, bright text for dark).
+# Resolved live via pari_sem(), NEVER cached at import: the active qt-material
+# theme can change at runtime, so every call must re-read is_light_theme().
+#
+# H11 (pre-mortem hardening): this map and pari_sem() live ONLY here in ui/ and
+# import NOTHING from pro/. info_panels.py loads the exchange widget
+# unconditionally, so a pro/ dependency here would crash the public Core/lite
+# build. Keep it self-contained.
+# =============================================================================
+_PARI_SEM = {
+    "dark": {
+        "maha":          dict(hi="#5FBF6A", lo="#2F7A38", text="#9FE0A6"),  # fresh green — grace
+        "khala":         dict(hi="#E0B341", lo="#9A7A1E", text="#F2D488"),  # amber — mixed
+        "dainya6":       dict(hi="#E8934A", lo="#A85E22", text="#F4BC8C"),  # orange
+        "dainya8":       dict(hi="#DE6E3C", lo="#9E4520", text="#F0A585"),  # deep orange-red
+        "dainya12":      dict(hi="#D14E3E", lo="#8F2E22", text="#EC9186"),  # red
+        "dainya_double": dict(hi="#B23A34", lo="#7A211D", text="#E58079"),  # dark red — worst
+        "neutral":       dict(hi="#8A8A90", lo="#55555A", text="#B8B8BE"),  # muted grey — no yoga
+    },
+    "light": {
+        "maha":          dict(hi="#3E9E4A", lo="#2A6E33", text="#1F5E28"),
+        "khala":         dict(hi="#B7891A", lo="#8A6410", text="#6E4E08"),
+        "dainya6":       dict(hi="#C46E22", lo="#94500F", text="#7A3E0C"),
+        "dainya8":       dict(hi="#BC5324", lo="#8A3A15", text="#742E0E"),
+        "dainya12":      dict(hi="#B23A2E", lo="#832318", text="#6E2018"),
+        "dainya_double": dict(hi="#962B26", lo="#6E1B18", text="#5E1713"),
+        "neutral":       dict(hi="#6E6E74", lo="#4A4A50", text="#48484E"),
+    },
+}
+
+
+def pari_sem(key):
+    """Resolve one exchange-severity accent set for the *current* theme.
+
+    ``key`` is one of ``maha``, ``khala``, ``dainya6``, ``dainya8``,
+    ``dainya12``, ``dainya_double`` or ``neutral``. Returns a dict with
+    ``hi`` / ``lo`` / ``text`` colours (see ``_PARI_SEM``). Re-reads
+    ``is_light_theme()`` on every call so a live light<->dark theme switch
+    picks up the correct set (never cached at import). Falls back to the
+    ``neutral`` tier for an unknown key.
+    """
+    band = _PARI_SEM["light" if is_light_theme() else "dark"]
+    entry = band.get(key, band["neutral"])
+    # SPEC-SAT-001 WI-3: severity ramp never passes through qt-material, so
+    # desaturate at the resolver. desat_hex is a no-op at 100 (identical values).
+    return {k: desat_hex(v) for k, v in entry.items()}
 
 
 def get_theme_accent():
@@ -921,3 +1293,288 @@ def get_panel_header_3d_style(accent_name="blue"):
             border-radius: 6px;
         }}
     """
+
+
+# =============================================================================
+# ELEVATION AND DEPTH — SPEC-THM-002
+# =============================================================================
+#
+# Depth, never hue. Every value below is MIXED FROM THE LIVE THEME TOKENS, so
+# Rule 20 holds and a theme switch moves the whole ramp with it.
+#
+# THE TRAP THIS EXISTS TO AVOID (SPEC-THM-002 INV-1): the qt-material surface
+# tokens do NOT keep a stable brightness order across polarities. `secondary`
+# (lum 37.6) is DARKER than `secondary_dark` (53.3) on every dark theme and
+# LIGHTER (245 vs 230) on every light one. So a ramp built by picking token
+# NAMES makes cards rise in one theme and sink in the other. `secondary_light`
+# is the only token that is the lightest in BOTH, which is why every level here
+# is a mix from the page colour TOWARD secondary_light.
+#
+# The shipped get_panel_style()/get_frame_style() are NOT affected and must not
+# be "simplified" into a single token expression: they are dual-path (frozen
+# constants on dark, tokens on light) and each branch was tuned separately.
+
+# SPEC-THM-002 D-1, answered 2026-07-27: the DEFAULT ramp. Level 0 is the page,
+# 1 a container, 2 a card, 3 a popover. Spans 17.4 luminance points on dark and
+# 12.0 on light — light themes simply have less headroom (INV-3), which is why
+# they also get a cast shadow and dark themes get a top rim instead.
+_ELEVATION_K = (0.00, 0.18, 0.34, 0.50)
+
+# D-4: gridlines drop to 0.18 alpha on list-like tables, but matrices (Tajika
+# 11x11, Avastha 13-row) keep a stronger grid because there the grid is doing
+# real work — it is what lets the eye track a row across to a column.
+DIVIDER_ALPHA_LIST = 0.18
+DIVIDER_ALPHA_MATRIX = 0.35
+
+
+def _clamp_level(level):
+    try:
+        level = int(level)
+    except (TypeError, ValueError):
+        return 0
+    return max(0, min(3, level))
+
+
+def _mix(color_a, color_b, t):
+    """Linear RGB blend: t=0 returns color_a, t=1 returns color_b.
+
+    Pure and unit-tested (SPEC-THM-002 T-1). Both endpoints are theme tokens, so
+    a mix of two neutrals stays neutral — this is what keeps the ramp hue-free.
+    """
+    try:
+        a = color_a.lstrip("#")
+        b = color_b.lstrip("#")
+        t = max(0.0, min(1.0, float(t)))
+        out = []
+        for i in (0, 2, 4):
+            ca = int(a[i:i + 2], 16)
+            cb = int(b[i:i + 2], 16)
+            out.append(int(round(ca + (cb - ca) * t)))
+        return "#{:02x}{:02x}{:02x}".format(*out)
+    except (ValueError, IndexError, AttributeError):
+        return color_a
+
+
+def _alpha(hex_color, a):
+    """``'rgba(r, g, b, a)'`` from a hex token.
+
+    Supersedes the five private ``_rgba()`` copies scattered through the widget
+    layer (parivartana, nabhasa, cards_of_truth, varshaphala, kuta).
+    """
+    try:
+        h = hex_color.lstrip("#")
+        r, g, b = (int(h[i:i + 2], 16) for i in (0, 2, 4))
+        return f"rgba({r}, {g}, {b}, {max(0.0, min(1.0, float(a))):.3f})"
+    except (ValueError, IndexError, AttributeError):
+        return hex_color
+
+
+def elevation_color(level, base=None):
+    """E1 — the surface colour for an elevation level (0 page .. 3 popover).
+
+    Monotone lighter in BOTH polarities by construction: every level is a mix
+    from the page colour toward ``secondary_light``, the only token that is the
+    lightest in both (INV-2). No literal, no hue shift.
+    """
+    theme = get_theme_colors()
+    base = base or theme["secondary_dark"]
+    return _mix(base, theme["secondary_light"], _ELEVATION_K[_clamp_level(level)])
+
+
+def elevation_rim(level, base=None):
+    """E3 — ``(top_hex, side_hex)`` for the 1px rim that reads as a raised edge.
+
+    A brighter top edge than sides is what makes a dark surface look lit from
+    above; it is the whole depth cue on dark themes, where a cast shadow over a
+    near-black page is invisible.
+    """
+    theme = get_theme_colors()
+    surface = elevation_color(level, base)
+    if is_light_theme():
+        return (_mix(surface, theme["secondary_light"], 0.90),
+                _mix(surface, theme["secondary_text"], 0.10))
+    return (_mix(surface, theme["secondary_light"], 0.85),
+            _mix(surface, theme["secondary"], 0.60))
+
+
+def elevation_divider(alpha=None):
+    """E6 — the hairline colour for gridlines and separators.
+
+    Today's grid is the LIGHTEST token at full strength, which is the single
+    loudest thing in these tables and most of the "blunt table" complaint. At
+    low alpha it becomes structure instead of noise.
+    """
+    theme = get_theme_colors()
+    ink = theme["secondary_text"] if is_light_theme() else theme["secondary_light"]
+    return _alpha(ink, DIVIDER_ALPHA_LIST if alpha is None else alpha)
+
+
+def elevation_shadow_spec(level):
+    """E2 — ``(color, blur_px, dy_px)`` or ``None`` when no shadow applies.
+
+    D-2: LIGHT THEMES ONLY. On dark themes the page is already near-black, so a
+    shadow derived from it is invisible and costs a render pass for nothing —
+    E1 + E3 carry the depth there instead.
+    """
+    level = _clamp_level(level)
+    if level == 0 or not is_light_theme():
+        return None
+    theme = get_theme_colors()
+    color = _alpha(theme["secondary_text"], (0.10, 0.16, 0.22)[level - 1])
+    return (color, scaled_px((10, 18, 28)[level - 1]),
+            scaled_px((2, 3, 5)[level - 1]))
+
+
+def elevation_margin(level):
+    """INV-9 — the margin a shadowed container needs so its blur is not clipped.
+
+    Zero whenever ``elevation_shadow_spec`` is None, so a caller can reserve
+    space unconditionally and get the right answer in both polarities.
+    """
+    spec = elevation_shadow_spec(level)
+    if spec is None:
+        return 0
+    _color, blur, dy = spec
+    return int(blur / 2) + dy + 1
+
+
+def elevation_surface_style(selector, level, radius_px=None, hover=False):
+    """E1 + E3 (+ E7 hover) for one container. THE call a panel author makes.
+
+    ``selector`` is a full QSS selector (``"QFrame#pcard"``). Returns a complete
+    stylesheet string; register it with ``_register_themed(widget, fn)`` so it
+    replays on a theme switch rather than freezing at construction.
+    """
+    if radius_px is None:
+        radius_px = scaled_px(10)
+    bg = elevation_color(level)
+    top, side = elevation_rim(level)
+    css = (f"{selector} {{ background-color: {bg}; "
+           f"border: 1px solid {side}; border-top: 1px solid {top}; "
+           f"border-radius: {radius_px}px; }}")
+    if hover:
+        hb = elevation_color(min(3, _clamp_level(level) + 1))
+        htop, hside = elevation_rim(min(3, _clamp_level(level) + 1))
+        css += (f" {selector}:hover {{ background-color: {hb}; "
+                f"border: 1px solid {hside}; border-top: 1px solid {htop}; "
+                f"border-radius: {radius_px}px; }}")
+    return css
+
+
+def elevation_header_style(level=1):
+    """E4 — a ``QHeaderView::section`` block: a vertical gradient plus a top rim.
+
+    Makes a header read as a lid rather than a bold body row.
+
+    TRAP: any ``::section`` state variant that sets a flat ``background-color``
+    WINS over this gradient and makes it vanish on that state. Every state must
+    restate its own gradient — the discipline get_3d_button_style already keeps.
+    """
+    theme = get_theme_colors()
+    top_c = elevation_color(min(3, _clamp_level(level) + 1))
+    bot_c = elevation_color(level)
+    rim_top, rim_side = elevation_rim(level)
+    return f"""
+        QHeaderView::section {{
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 {top_c}, stop:1 {bot_c});
+            color: {theme['secondary_text']};
+            border: none;
+            border-top: 1px solid {rim_top};
+            border-bottom: 1px solid {rim_side};
+            padding: 4px 6px;
+            font-weight: bold;
+        }}
+        QTableCornerButton::section {{
+            background: {bot_c};
+            border: none;
+            border-top: 1px solid {rim_top};
+        }}
+    """
+
+
+def elevation_table_style(level=0, header_level=1, matrix=False, radius_px=0):
+    """E4 + E6 + E7 for a table. Emits NO ``::item`` rule, deliberately.
+
+    INV-5, measured: a QSS ``::item`` rule DEFEATS a delegate's own ``fillRect``,
+    so an ``::item`` background here would silently erase every semantic colour
+    on the avastha / tajika / karaka / strength tables. Cell-level depth is the
+    delegate's job (``apps.delegates.cell_depth``), never a stylesheet's.
+
+    ``matrix=True`` keeps a stronger gridline (D-4): on a 7x7 or 11x11 matrix the
+    grid is what lets the eye track a row across to its column, so quieting it to
+    list-table levels costs real legibility.
+    """
+    theme = get_theme_colors()
+    bg = elevation_color(level)
+    grid = elevation_divider(DIVIDER_ALPHA_MATRIX if matrix else DIVIDER_ALPHA_LIST)
+    _top, side = elevation_rim(level)
+    focus = _alpha(theme["primary"], 0.55)
+    return f"""
+        QTableWidget, QTableView {{
+            background-color: {bg};
+            alternate-background-color: {bg};
+            gridline-color: {grid};
+            border: 1px solid {side};
+            border-radius: {radius_px}px;
+            color: {theme['secondary_text']};
+        }}
+        QTableWidget:focus, QTableView:focus {{
+            border: 1px solid {focus};
+        }}
+    """ + elevation_header_style(header_level)
+
+
+def elevation_state_style(selector, level):
+    """E7 for a non-table surface: hover lifts one level, focus draws a ring."""
+    theme = get_theme_colors()
+    up = elevation_color(min(3, _clamp_level(level) + 1))
+    focus = _alpha(theme["primary"], 0.55)
+    return (f"{selector}:hover {{ background-color: {up}; }} "
+            f"{selector}:focus {{ border: 1px solid {focus}; }}")
+
+
+def apply_elevation_shadow(widget, level):
+    """E2 — apply a drop shadow, and return the margin it needs (0 if none).
+
+    Returns 0 and applies nothing on dark themes or level 0 (D-2).
+
+    Three hard constraints, all of them learned the hard way:
+      * Rule 18 — Qt takes ownership at setGraphicsEffect, so the Python
+        reference is dropped here or a later GC can segfault.
+      * INV-8 — REFUSED over a QGraphicsView host. A drop shadow over a
+        QGraphicsView child is a reproduced crash in this codebase
+        (apps/widgets/sign_variation_dialog.py:163 has six shadow blocks
+        commented out for exactly this). Every chart view is therefore off
+        limits, permanently.
+      * INV-9 — the blur is clipped unless the caller reserves the returned
+        margin in its parent layout.
+    """
+    from PySide6.QtWidgets import QGraphicsView, QGraphicsDropShadowEffect
+    from PySide6.QtGui import QColor
+
+    if widget is None:
+        return 0
+    # INV-8: a QGraphicsView anywhere under this widget makes the shadow unsafe.
+    if isinstance(widget, QGraphicsView) or widget.findChild(QGraphicsView) is not None:
+        widget.setGraphicsEffect(None)
+        return 0
+
+    spec = elevation_shadow_spec(level)
+    if spec is None:
+        widget.setGraphicsEffect(None)   # clears a stale shadow after a switch
+        return 0
+
+    color_str, blur, dy = spec
+    nums = color_str[color_str.find("(") + 1:color_str.find(")")].split(",")
+    r, g, b = (int(float(n)) for n in nums[:3])
+    a = float(nums[3]) if len(nums) > 3 else 1.0
+
+    effect = QGraphicsDropShadowEffect(widget)
+    effect.setBlurRadius(blur)
+    effect.setXOffset(0)
+    effect.setYOffset(dy)
+    effect.setColor(QColor(r, g, b, int(a * 255)))
+    widget.setGraphicsEffect(effect)
+    del effect          # Rule 18: Qt owns it now.
+    return elevation_margin(level)

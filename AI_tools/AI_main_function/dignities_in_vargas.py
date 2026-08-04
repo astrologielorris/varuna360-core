@@ -1,8 +1,7 @@
 # Copyright (C) 2026 Lorris Turpin / 360 Hearts in the Sky
-# Proprietary software — All rights reserved.
-# Part of Varuna360 Pro. Not covered by AGPL-3.0.
+# Licensed under AGPL-3.0 — see LICENSE file for details.
 """
-Dignities in Vargas — Kala-style table showing planetary dignities across all 16 vargas.
+Dignities in Vargas — planetary dignities across all 16 vargas.
 
 Usage:
     python -m AI_tools.AI_main_function.dignities_in_vargas Lorris.chtk
@@ -14,7 +13,6 @@ import os
 import json
 import argparse
 from pathlib import Path
-from prettytable import PrettyTable
 
 from core.varga_codes import (
     VARGA_NAMES, _GUI_TO_LIBADITYA_VARGA, to_libaditya_varga_code,
@@ -98,7 +96,11 @@ def _colorize(dignity, use_color=True):
 
 
 def print_table(rows, chart_name="", use_color=True):
-    """Print dignities table matching Kala's layout."""
+    """Print dignities table (standard 16-varga layout)."""
+    # Function-level: prettytable is only needed by this one CLI table
+    # renderer, so it stays an OPTIONAL dependency of the public artifact
+    # rather than a hard install requirement for everyone (SPEC-SES-001 §8).
+    from prettytable import PrettyTable
     title = "Dignities in Vargas"
     if chart_name:
         title = f"{title} ({chart_name})"
@@ -158,7 +160,7 @@ def resolve_chtk_path(name):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Dignities in Vargas (Kala-style table)")
+    parser = argparse.ArgumentParser(description="Dignities in Vargas (16-varga table)")
     parser.add_argument("chart", help="CHTK file name or path")
     parser.add_argument("--json", action="store_true", help="Output as JSON")
     parser.add_argument("--mode", default="aditya",

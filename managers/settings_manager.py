@@ -1,6 +1,5 @@
 # Copyright (C) 2026 Lorris Turpin / 360 Hearts in the Sky
 # Licensed under AGPL-3.0 — see LICENSE file for details.
-# Commercial exception: see NOTICE file.
 """
 Unified Settings Manager for Astrology Chart Application.
 
@@ -25,6 +24,22 @@ try:
     from utils.debug import debug_print
 except ImportError:
     debug_print = print  # Fallback for standalone testing
+
+from core.fs_safety import atomic_write_json, write_bytes_atomic
+
+
+def _get_log():
+    """Diagnostics logger, or None if unavailable.
+
+    Imported lazily and defensively: settings are loaded before almost
+    everything else, so a logging problem must never stop a save from being
+    attempted. Same pattern as state/profile_store.py.
+    """
+    try:
+        from core.diagnostics import get_logger
+        return get_logger("settings")
+    except Exception:
+        return None
 
 # Project root is one level up: managers/ -> chart_calculation/
 _MANAGERS_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -346,8 +361,31 @@ DEFAULT_WHEEL_DISPLAY = {
     "indicator_line": {
         "glow_radius": 6,    # Blur radius for glow effect (0 = no glow, 100 = max)
         "line_width": 1       # Line thickness in pixels
-    }
+    },
+    # Transit/custom outer-ring rendering style (SPEC-TRN-004).
+    #   "full_wheel" (default): a flush, closed replica of the natal planet band
+    #     (element-colored sign sectors, full-size icons, degree ruler, labels).
+    #   "miniature": the legacy thin dark rim with 40 percent icons.
+    "transit_rim_style": "full_wheel"
 }
+
+# Valid values for wheel_display.transit_rim_style (SPEC-TRN-004 D2).
+TRANSIT_RIM_STYLES = ("miniature", "full_wheel")
+DEFAULT_TRANSIT_RIM_STYLE = "full_wheel"
+
+# Valid values for display.south_indian_style (SPEC-SIC-002 D-5).
+SOUTH_INDIAN_STYLES = ("classic", "vector")
+DEFAULT_SOUTH_INDIAN_STYLE = "classic"
+
+class EnvUnreadableError(OSError):
+    """The .env file EXISTS on disk but could not be read/parsed (round-5 F2).
+
+    Raised only by ``has_api_key_on_disk`` so the settings UI can tell
+    "no key stored" (return False) apart from "couldn't check" (this error) —
+    a permissions/corruption failure must NOT be silently reported as absent,
+    which would make a real on-disk secret un-clearable through the UI.
+    """
+
 
 # Default North Indian chart display settings.
 #
@@ -388,9 +426,65 @@ DEFAULT_NORTH_INDIAN_DISPLAY = {
     }
 }
 
+# Default South Indian VECTOR theme display settings (SPEC-SIC-002 §4.7).
+#
+# Mirrors the North Indian block structure (sign_name / planet_degrees /
+# planet_sizes) — the SI cards are uniform rectangles, so sign_name carries a
+# single font_size instead of the NI diamond/triangle pair. Adds the two glow
+# keys for the surviving glow styles (D-4). These keys are read ONLY by the
+# experimental vector view; the classic image-backed SI view keeps reading the
+# shared chart_display block (INV-10 — those keys are untouched).
+#
+# Only keys the vector view actually reads live here (W2b review, opus #2/#3):
+# text COLOR is element-driven per INV-7 (no font_color keys) and the vector
+# layout has no calibrated offsets (no offset_x/offset_y keys).
+DEFAULT_SOUTH_INDIAN_DISPLAY = {
+    "sign_name": {
+        "font_size": 24,
+        "font_weight": "bold",
+    },
+    "planet_degrees": {
+        "font_size": 14,
+        "font_weight": "normal",
+    },
+    "planet_sizes": {
+        "Sun": 149,
+        "Moon": 186,
+        "Mars": 152,
+        "Mercury": 142,
+        "Jupiter": 140,
+        "Venus": 120,
+        "Saturn": 143,
+        "Rahu": 130,
+        "Ketu": 120,
+        "Uranus": 128,
+        "Neptune": 120,
+        "Pluto": 110
+    },
+    # Glow effects (Phase 2, D-4): one parametrized implementation, two
+    # surviving styles. "none" disables the glow entirely.
+    "glow_style": "none",       # "none" | "element_glow" | "golden_aura"
+    "glow_intensity": 50        # 0-100
+}
+
 # Default settings structure
 DEFAULT_SETTINGS = {
     "version": "2.0",
+
+    # Nakshatra Compatibility (Kuta) rule toggles. Defaults = Ernst/Kala values
+    # (golden-tested). These are GENUINE cross-tradition variants only, each with two
+    # documented classical sources — NOT Ernst-vs-Ernst readings.
+    "nakshatra_compat": {
+        # Stree Deergha threshold: "14_9" = Ernst/Kala (man >=14, secondary 9);
+        # "9_7" = mainstream South-Indian Porutham (man >=9, secondary 7).
+        "stree_deergha_scale": "14_9",
+        # Mahendra offset set: True = Kala full 3-step series incl. 19th;
+        # False = some Tamil sources omit the 19th.
+        "mahendra_include_19th": True,
+        # Total-points thresholds: "17_20" = Ernst/Kala (17 avg / 20 ideal);
+        # "18_36" = North-Indian Guna Milan (18/36 minimum).
+        "total_threshold": "17_20",
+    },
 
     "appearance": {
         "theme": "Dark Blue",
@@ -415,6 +509,22 @@ DEFAULT_SETTINGS = {
     "display": {
         "background": "stone_06",
         "font_scale": 1.0,
+        # SPEC-SAT-001: global UI color saturation, 0-100 (100 = full color,
+        # a no-op). Desaturates the WHOLE UI live — theme chrome, semantic
+        # palettes and planet/sign icon images — for taming oversaturated
+        # displays. Boot deep-merge (:866) propagates this key to existing
+        # settings files. DISPLAY-ONLY: never affects any calculation.
+        "color_saturation": 100,
+        # SPEC-SIC-002: which South Indian implementation renders the SI chart.
+        # "classic" (default) = today's image-backed view; "vector" = the
+        # experimental vector theme. Boot deep-merge (:773) propagates the key
+        # to existing settings files.
+        "south_indian_style": "classic",
+        # SPEC-CAL-001: calendar convention for DISPLAYING pre-1582 dates.
+        # 'astronomical' = Julian calendar pre-1582 (current behaviour, matches
+        # NASA/Swiss Ephemeris). 'proleptic_gregorian' = Gregorian extended
+        # backwards (Kala norm). DISPLAY-ONLY: never affects JD/computation.
+        "calendar_convention": "astronomical",
         "fonts": {
             "tables": 11,
             "table_headers": 12,
@@ -423,7 +533,8 @@ DEFAULT_SETTINGS = {
             "buttons": 10,
             "sidebar": 10,
             "status": 9,
-            "tabs": 12
+            "tabs": 12,
+            "chart_labels": 16
         }
     },
 
@@ -435,12 +546,25 @@ DEFAULT_SETTINGS = {
         "show_trimsamsha_degrees": False,
         "show_element_pies": True,
         "cusp_glow_mode": 0,
-        "wheel_house_display": "sign_based"
+        "wheel_house_display": "sign_based",
+        # SPEC-BODY-002: Body Graph rashi-aspect dual view.
+        # rashi_aspect_system: "quadrant" | "element" | "conventional".
+        # show_aspect_panel persists the Shift+F2 toggle.
+        # aspect_split_fraction persists the splitter proportion as the LEFT
+        # pane's share of the width (float 0-1, or None until the reader drags
+        # it). It replaces the old aspect_splitter_sizes, which stored absolute
+        # pixels and was written on every drag but read nowhere. A new key
+        # rather than a reused one: the stored pixel pairs were produced by the
+        # superseded 70/30 default, so honouring them would have resurrected a
+        # default nobody chose.
+        "rashi_aspect_system": "quadrant",
+        "show_aspect_panel": False,
+        "aspect_split_fraction": None
     },
 
     "zodiac": {
         "mode": "aditya",
-        "ayanamsa_id": 1,
+        "ayanamsa_id": 100,
         "house_system": "campanus",
         "use_western_names": False,
         "nakshatra_coords": "neither",
@@ -448,9 +572,68 @@ DEFAULT_SETTINGS = {
         "sign_language": "en"
     },
 
+    # SPEC-COT-001: the Cards of Truth position order, shared by the F2 view,
+    # the Planet Placements dialog and the Settings combo. The default is
+    # solar_system because that is what Kala uses (D-5, verified) —
+    # the LIBRARY default is "vedic" and it relabels three of the seven main
+    # cards and moves their occupants. This key had no entry here at all, so
+    # every reader supplied its own inline fallback and they all said "vedic".
+    "cot": {
+        "planet_order": "solar_system",
+        # SPEC-COT-001 §4.10: draw each sign's card (by lordship) inside the
+        # South Indian vector chart. Off by default — it adds a plaque to all
+        # twelve boxes, which is a real change to a chart people read daily.
+        "show_in_chart": False
+    },
+
     "dasha": {
         "left":  {"ayanamsa_id": 100},
         "right": {"mode": "nisarga", "ayanamsa_id": 98}
+    },
+
+    # Transit panel (Pro) preferences.
+    #   reading_date_use_ai (SPEC-TRN-005 B2): the ✨ engine selector on the
+    #     reading-date paste field. False (default) = offline regex engine only
+    #     (INV-1, hermetically offline, images refused); True = LLM engine only
+    #     (INV-2). Persisted so the operator's engine choice survives restart.
+    "transit": {
+        "reading_date_use_ai": False
+    },
+
+    # AI provider layer (Pro) — SPEC-PROV-001 §4 / plan task A5.
+    #   default_provider: the provider the AI Tools chat (and the reading-date
+    #     LLM path) are INTENDED to select by default. Persisted so the
+    #     operator's choice survives restart. The value is a REGISTRY PROVIDER
+    #     NAME (e.g. "DeepSeek", "Claude", "Codex"), NOT an env-key. NOTE: as of
+    #     A5 this setting is written by the settings UI but NOT yet consumed at
+    #     runtime — exploration_chat_manager still hardcodes its default. Wiring
+    #     it as the chat manager's initial provider is C1 (registry cutover)
+    #     scope (bead td-dnbs C1). When the stored name is no longer registered
+    #     the settings section surfaces it EXPLICITLY as a disabled
+    #     "<name> (unavailable)" combo entry (not a silent first-item fallback),
+    #     leaving the stale value persisted until the user picks a real one.
+    "ai": {
+        "default_provider": "DeepSeek"
+    },
+
+    # Vision model for IMAGE extraction (SPEC-TRN-005 reading-date paste) —
+    # deliberately SEPARATE from ai.default_provider (the chat/text provider):
+    # image extraction is a simple OCR-ish task (read a birth date/time/place
+    # off a screenshot) best served by a dedicated cheap keyed vision model,
+    # while chat may run on a session provider (Claude CLI) that cannot take
+    # images at all.
+    #   provider: a vision-capable provider name from
+    #     pro.providers.registry.vision_provider_configs() (e.g. "GPT-5.4
+    #     Mini", "Kimi K2.6", "Anthropic API"). Default is a keyed OpenAI
+    #     vision model — NOT Anthropic, whose key is typically absent.
+    #   model: explicit model id override; "" = the provider's registry
+    #     vision_model default.
+    #   effort: reasoning effort for providers that support the knob
+    #     (minimal|low|medium|high). "medium" is plenty for extraction.
+    "vision": {
+        "provider": "GPT-5.4 Mini",
+        "model": "",
+        "effort": "medium"
     },
 
     "ui": {
@@ -485,7 +668,11 @@ DEFAULT_SETTINGS = {
         "chart_folders": [],
         "default_folder": "",
         "screenshot_folder": "",
-        "kala_path": ""
+        "kala_path": "",
+        # SPEC-PERSIST-001: the format every NEW chart is written in. "toml"
+        # (Open Astrology Chart) or "chtk". This governs writing only —
+        # both formats are read, and nothing already on disk is converted.
+        "default_chart_format": "toml"
     },
 
     "defaults": {
@@ -589,6 +776,21 @@ API_PROVIDERS = {
         "name": "DeepSeek",
         "description": "Used for chart categorization and birth data parsing",
         "test_endpoint": None
+    },
+    # SPEC-PROV-001 A5: canonical key names for the remaining OpenAI-compatible
+    # KeyDriver providers. The live exploration_chat_manager PROVIDERS dict uses
+    # divergent legacy names (Kimi_API_KEY / Mistrale_API_KEY) — the registry
+    # alias table maps those to these canonical names, and the AI Providers
+    # settings section reads/writes the canonical name here.
+    "KIMI_API_KEY": {
+        "name": "Kimi (Moonshot)",
+        "description": "Used for Kimi (Moonshot) chat and vision models",
+        "test_endpoint": None
+    },
+    "MISTRAL_API_KEY": {
+        "name": "Mistral",
+        "description": "Used for Mistral chat models",
+        "test_endpoint": None
     }
 }
 
@@ -639,6 +841,10 @@ class SettingsManager:
         self._env_cache: Dict[str, str] = {}
         self._callbacks: List[callable] = []
         self._key_callbacks: Dict[str, List[Callable]] = {}
+        # Last save failure as "OSError: ...", or None after any success.
+        # Mirrors ProfileStore.last_error so a UI banner can report why a
+        # preference did not stick instead of inventing a reason.
+        self.last_error: Optional[str] = None
 
         # Load settings
         self._load()
@@ -673,13 +879,42 @@ class SettingsManager:
             return False
 
     def _save(self) -> bool:
-        """Save current settings to JSON file."""
+        """Save current settings to app_settings.json. Never raises.
+
+        ATOMIC (2026-07-25). The previous implementation was
+        `open(path, 'w')` + `json.dump`, which truncates the live file first
+        and only then writes. Two consequences, both observed:
+
+          - A crash, a kill, or a full disk between the truncate and the write
+            leaves a zero-length or half-written app_settings.json, and the
+            user loses every preference.
+          - The owner runs the full app and the --lite build at the same time
+            against the same data directory, so two processes truncate and
+            write the same file concurrently. A stress run over 160 saves read
+            a corrupt settings file 13 times before this change and 0 times
+            after.
+
+        The write now goes to a UNIQUE temp file in the same directory, is
+        fsync'd, and is promoted with os.replace (atomic on POSIX and on
+        Windows), with a bounded retry for the transient sharing violations
+        OneDrive produces on a synced Documents folder.
+        """
         try:
-            with open(self._config_path, 'w', encoding='utf-8') as f:
-                json.dump(self._settings, f, indent=2, ensure_ascii=False)
+            atomic_write_json(self._config_path, self._settings,
+                              indent=2, ensure_ascii=False)
+            self.last_error = None
             return True
         except Exception as e:
+            # Kept non-raising: every caller of set()/_save() treats settings
+            # persistence as fire-and-forget, and a preference that failed to
+            # persist must not take the app down. last_error carries the real
+            # reason for anything that wants to show it.
+            self.last_error = f"{type(e).__name__}: {e}"
             debug_print(f"[SettingsManager] Error saving settings: {e}")
+            log = _get_log()
+            if log:
+                log.error("settings save FAILED for %s: %s",
+                          self._config_path, self.last_error)
             return False
 
     def _deep_merge(self, base: dict, override: dict) -> dict:
@@ -826,10 +1061,14 @@ class SettingsManager:
         self.set("_migrated_from_prefs", True, save=False)
         self._save()
 
-        # Rename settings.json to .bak
+        # Rename settings.json to .bak.
+        # os.replace, NOT os.rename: on POSIX rename overwrites an existing
+        # destination, on Windows it raises FileExistsError. A settings.json.bak
+        # left over from an earlier install (this repo ships one) would make the
+        # migration silently fail to retire the old file on Windows only.
         bak_path = prefs_path + ".bak"
         try:
-            os.rename(prefs_path, bak_path)
+            os.replace(prefs_path, bak_path)
             debug_print(f"[SettingsManager] Renamed settings.json to {bak_path}")
         except Exception as e:
             debug_print(f"[SettingsManager] Could not rename settings.json: {e}")
@@ -1197,6 +1436,30 @@ class SettingsManager:
             return DEFAULT_WHEEL_DISPLAY.copy()
         return self._deep_merge(DEFAULT_WHEEL_DISPLAY.copy(), stored)
 
+    def get_transit_rim_style(self) -> str:
+        """
+        Get the wheel transit/custom outer-ring style (SPEC-TRN-004).
+
+        Reads wheel_display.transit_rim_style, validating against
+        TRANSIT_RIM_STYLES. Any missing or invalid stored value falls back to
+        DEFAULT_TRANSIT_RIM_STYLE ("full_wheel"). Callers read this at draw
+        time (no cached copy) so every WheelView picks up changes on redraw.
+
+        Returns:
+            "miniature" or "full_wheel".
+        """
+        # Guard the whole read: a malformed stored wheel_display (e.g. a list or
+        # string) makes get_wheel_display() raise inside _deep_merge, so we must
+        # not let that escape the "invalid falls back to default" contract.
+        try:
+            wd = self.get_wheel_display()
+            style = wd.get("transit_rim_style") if isinstance(wd, dict) else None
+        except Exception:
+            style = None
+        if style not in TRANSIT_RIM_STYLES:
+            return DEFAULT_TRANSIT_RIM_STYLE
+        return style
+
     def set_wheel_display(self, settings: Dict[str, Any]):
         """
         Set Wheel chart display settings.
@@ -1240,6 +1503,36 @@ class SettingsManager:
         self.set("north_indian_display", DEFAULT_NORTH_INDIAN_DISPLAY.copy())
 
     # -------------------------------------------------------------------------
+    # South Indian (vector theme) Display Settings
+    # -------------------------------------------------------------------------
+
+    def get_south_indian_display(self) -> Dict[str, Any]:
+        """
+        Get South Indian vector-theme display settings (SPEC-SIC-002).
+
+        Returns:
+            Dict with sign_name, planet_degrees, planet_sizes, and glow
+            settings.
+        """
+        stored = self.get("south_indian_display", None)
+        if stored is None:
+            return DEFAULT_SOUTH_INDIAN_DISPLAY.copy()
+        return self._deep_merge(DEFAULT_SOUTH_INDIAN_DISPLAY.copy(), stored)
+
+    def set_south_indian_display(self, settings: Dict[str, Any]):
+        """
+        Set South Indian vector-theme display settings.
+
+        Args:
+            settings: Dict with south indian display settings
+        """
+        self.set("south_indian_display", settings)
+
+    def reset_south_indian_display(self):
+        """Reset South Indian vector-theme display settings to defaults."""
+        self.set("south_indian_display", DEFAULT_SOUTH_INDIAN_DISPLAY.copy())
+
+    # -------------------------------------------------------------------------
     # API Keys (.env handling)
     # -------------------------------------------------------------------------
 
@@ -1258,10 +1551,61 @@ class SettingsManager:
                 debug_print(f"[SettingsManager] Error loading .env: {e}")
         return env_vars
 
-    def _save_env(self, env_vars: Dict[str, str]) -> bool:
-        """Save environment variables to .env file."""
+    def _read_env_checked(self) -> Tuple[bool, Dict[str, str]]:
+        """Read the .env with EXPLICIT read-success signaling (round-5 F2).
+
+        Unlike ``_load_env`` — which swallows every read error and returns a
+        partial/empty dict, so a permissions or corruption failure is
+        indistinguishable from an absent key — this returns ``(ok, mapping)``:
+
+            ok=True,  {...}  -> read succeeded (file absent => True, {}).
+            ok=False, {}     -> the file EXISTS but could not be read/parsed.
+
+        Used ONLY by ``has_api_key_on_disk`` (the broad ``_load_env`` callers
+        are intentionally left untouched).
+        """
+        # Attempt the open directly rather than gating on os.path.exists():
+        # a prior exists() check is TOCTOU-prone and misreports "absent" when a
+        # parent directory is unsearchable. FileNotFoundError IS the absent case.
         try:
-            # Read existing content to preserve comments
+            env_vars: Dict[str, str] = {}
+            with open(self._env_path, 'r', encoding='utf-8') as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith('#') and '=' in line:
+                        key, value = line.split('=', 1)
+                        env_vars[key.strip()] = value.strip().strip('"\'')
+            return True, env_vars
+        except FileNotFoundError:
+            return True, {}          # definitively absent, not a read failure
+        except Exception as e:
+            # Log the CLASS only — a filesystem error string here is not a
+            # secret, but keeping it generic matches the redaction discipline.
+            debug_print(
+                "[SettingsManager] .env present but unreadable during key "
+                f"check ({type(e).__name__})")
+            return False, {}
+
+    def _save_env(self, env_vars: Dict[str, str],
+                  remove_keys: Optional[set] = None) -> bool:
+        """Atomically write env vars to the .env file.
+
+        Writes to a sibling temp file, flush+fsync, then os.replace() onto the
+        .env path — so a failure mid-write leaves the existing .env (and every
+        stored key) intact rather than truncating it (same pattern as
+        chart_creation_pipeline's .chtk writes). Restrictive permissions on an
+        existing .env are preserved onto the replacement.
+
+        ``remove_keys`` names env-var keys to drop entirely. As of round-2,
+        a canonical write MIRRORS its value to every legacy alias (it does NOT
+        purge them — see set_api_key), so this parameter is now used only to
+        CLEAR a key: set_api_key("") passes the canonical name and all its
+        aliases here so a blank Save removes every stored copy in one atomic
+        write (finding F4(b)).
+        """
+        remove_keys = remove_keys or set()
+        try:
+            # Read existing content to preserve comments / unrelated keys.
             lines = []
             existing_keys = set()
 
@@ -1271,6 +1615,9 @@ class SettingsManager:
                         stripped = line.strip()
                         if stripped and not stripped.startswith('#') and '=' in stripped:
                             key = stripped.split('=', 1)[0].strip()
+                            if key in remove_keys:
+                                # Drop a purged (e.g. legacy alias) entry.
+                                continue
                             if key in env_vars:
                                 lines.append(f"{key}={env_vars[key]}\n")
                                 existing_keys.add(key)
@@ -1281,12 +1628,31 @@ class SettingsManager:
 
             # Add new keys
             for key, value in env_vars.items():
-                if key not in existing_keys:
+                if key not in existing_keys and key not in remove_keys:
                     lines.append(f"{key}={value}\n")
 
-            with open(self._env_path, 'w', encoding='utf-8') as f:
-                f.writelines(lines)
+            # Capture existing permissions so the atomic replacement keeps a
+            # restrictive (e.g. 0o600) mode instead of the temp's default.
+            existing_mode = None
+            if os.path.exists(self._env_path):
+                try:
+                    existing_mode = os.stat(self._env_path).st_mode & 0o777
+                except OSError:
+                    existing_mode = None
 
+            # Unique temp name + fsync + os.replace + best-effort directory
+            # fsync, all inside write_bytes_atomic. tempfile.mkstemp creates the
+            # temp with 0o600 already, which is what a secrets file wants;
+            # `mode` restores a stricter-or-different mode from an existing .env.
+            # The bounded retry is what makes this survive a OneDrive sync pass
+            # holding the file open (Documents is redirected into OneDrive on
+            # many consumer Windows installs).
+            write_bytes_atomic(
+                self._env_path,
+                "".join(lines).encode("utf-8"),
+                prefix=f".{os.path.basename(self._env_path)}.",
+                mode=existing_mode,
+            )
             return True
         except Exception as e:
             debug_print(f"[SettingsManager] Error saving .env: {e}")
@@ -1301,15 +1667,102 @@ class SettingsManager:
 
         Returns:
             API key string or empty string if not found
-        """
-        # First check environment variable
-        env_value = os.environ.get(provider, "")
-        if env_value:
-            return env_value
 
-        # Then check .env file
-        env_vars = self._load_env()
-        return env_vars.get(provider, "")
+        Alias-aware: a canonical key (e.g. DEEPSEEK_API_KEY) that is unset is
+        resolved against its legacy aliases (Deepseek_API_KEY, ...) so a value
+        stored only under the legacy name is still found — canonical wins.
+        """
+        return self._resolve_api_key(provider)
+
+    def _resolve_api_key(self, provider: str) -> str:
+        """Single canonical-name-first resolution — registry-EXACT (findings 5 + F2).
+
+        The ONE precedence rule used by both get_api_key AND list_api_providers.
+        It reproduces the runtime authority pro.providers.registry LINE FOR LINE
+        (read_env + resolve_env_key):
+
+            read_env      = disk .env, then ``env.update(os.environ)`` — so a
+                            process var overlays the disk value PER NAME, and a
+                            var that is PRESENT in os.environ but EMPTY masks the
+                            disk value for that name (it does not "fall through"
+                            to disk).
+            resolve_env_key = canonical name wins if its (overlaid) value is
+                            truthy; else the first legacy alias with a truthy
+                            (overlaid) value; else empty.
+
+        Finding F2 (round-3): the previous per-name ``os.environ then .env``
+        order treated an explicitly-empty process var as ABSENT and fell through
+        to the disk value, so settings_manager returned 'canonical-disk' while
+        the registry (which masks with the empty overlay and moves to the next
+        NAME) returned 'legacy-process'. Building the merged map the same way
+        read_env does removes that divergence for every cell of the matrix.
+        """
+        merged = dict(self._load_env())   # disk .env
+        merged.update(os.environ)         # process overlays per name (registry parity)
+        for name in (provider, *self._legacy_aliases_for(provider)):
+            value = merged.get(name, "")
+            if value:
+                return value
+        return ""
+
+    def has_api_key_on_disk(self, provider: str) -> bool:
+        """Whether a canonical-or-alias key is present in the .env FILE.
+
+        Round-4 F2: unlike get_api_key / _resolve_api_key (which overlay
+        os.environ, so a process var that is PRESENT-BUT-EMPTY masks a real
+        disk value and makes the resolved value empty), this consults ONLY the
+        on-disk .env. It is the "is there a stored key to clear?" decision for
+        the settings UI: a disk secret that an empty process var is masking must
+        still be clearable. Returns True iff the canonical name OR any legacy
+        alias has a non-empty value in the .env file itself.
+
+        Round-5 F2: reads via ``_read_env_checked`` so a .env that EXISTS but
+        is unreadable (permissions / corruption) is not silently reported as
+        "absent". In that case it raises ``EnvUnreadableError`` so the settings
+        UI surfaces the failure instead of concluding "nothing to clear" and
+        dropping a real on-disk secret out of the UI's reach.
+        """
+        ok, env_vars = self._read_env_checked()
+        if not ok:
+            raise EnvUnreadableError(self._env_path)
+        for name in (provider, *self._legacy_aliases_for(provider)):
+            if env_vars.get(name):
+                return True
+        return False
+
+    def all_api_key_values(self) -> List[str]:
+        """Every currently-stored API key VALUE (for secret redaction, INV-4).
+
+        The settings UI scrubs these out of driver error strings before display
+        so a raised exception echoing a real key never renders it verbatim.
+        Merges the .env file with process env (process wins per name) and
+        returns the values of vars whose name looks like a secret
+        (``*_API_KEY`` / ``*_KEY`` / ``*_TOKEN``).
+        """
+        merged = dict(self._load_env())
+        merged.update(os.environ)
+        values = []
+        for name, val in merged.items():
+            if not val:
+                continue
+            upper = str(name).upper()
+            if (upper.endswith("_API_KEY") or upper.endswith("_KEY")
+                    or upper.endswith("_TOKEN")):
+                values.append(val)
+        return values
+
+    def _legacy_aliases_for(self, canonical: str) -> List[str]:
+        """Legacy env-key aliases for a canonical name (from registry table).
+
+        Imported lazily from pro.providers.registry (the single source of the
+        alias table) to avoid duplicating it and to avoid an import cycle
+        (registry.py lazily imports this module).
+        """
+        try:
+            pass  # Pro import stripped for Lite distribution
+            return list(_ALIASES_BY_CANONICAL.get(canonical, []))
+        except Exception:
+            return []
 
     def set_api_key(self, provider: str, key: str) -> bool:
         """
@@ -1321,9 +1774,39 @@ class SettingsManager:
 
         Returns:
             True if saved successfully
+
+        Finding 4: writing a canonical key MIRRORS the same value to every
+        legacy alias (Deepseek_API_KEY, ...) in the SAME atomic write, rather
+        than purging them. Live code paths that still read the legacy names
+        (pro/managers/exploration_chat_manager.py, pre-C1 registry cutover)
+        keep working the moment a key is saved through the new UI.
+        C1 NOTE: remove these mirror writes once exploration_chat_manager reads
+        the canonical names (bead td-dnbs C1). DEV-ONLY REACH: in a frozen build
+        these mirror writes land in the user-data-dir .env, but the legacy
+        reader (exploration_chat_manager) hardcodes PROJECT_ROOT/.env, so the
+        mirror only actually reaches it in a dev checkout — the C1 cutover makes
+        the chat manager source keys via SettingsManager/registry and then drops
+        both the mirror and this divergence (bead td-dnbs.2 A5 round-3 note).
+
+        Finding F4(b) (round-3): an EMPTY ``key`` is an explicit CLEAR — the
+        canonical name and every legacy alias are REMOVED from .env in one
+        atomic write (not written as dangling ``KEY=`` lines that naive parsers
+        still read as "present"). This is what the settings UI's blank Save
+        calls.
         """
+        aliases = self._legacy_aliases_for(provider)
+        if not key:
+            # Explicit clear: drop canonical + every alias entirely.
+            env_vars = self._load_env()
+            for name in (provider, *aliases):
+                env_vars.pop(name, None)
+            return self._save_env(
+                env_vars, remove_keys={provider, *aliases})
         env_vars = self._load_env()
         env_vars[provider] = key
+        # Mirror (do NOT purge) to every known legacy alias for this provider.
+        for alias in aliases:
+            env_vars[alias] = key
         return self._save_env(env_vars)
 
     def list_api_providers(self) -> List[Dict[str, Any]]:
@@ -1333,10 +1816,10 @@ class SettingsManager:
         Returns:
             List of dicts with provider info and current key status
         """
-        env_vars = self._load_env()
         providers = []
         for key, info in API_PROVIDERS.items():
-            current_key = env_vars.get(key, os.environ.get(key, ""))
+            # Finding 5: same canonical-name-first resolution as get_api_key.
+            current_key = self._resolve_api_key(key)
             providers.append({
                 "key": key,
                 "name": info["name"],

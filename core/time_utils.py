@@ -1,6 +1,5 @@
 # Copyright (C) 2026 Lorris Turpin / 360 Hearts in the Sky
 # Licensed under AGPL-3.0 — see LICENSE file for details.
-# Commercial exception: see NOTICE file.
 """
 Time conversion utilities for CHTK timezone handling.
 
@@ -10,7 +9,7 @@ with no GUI dependencies.
 
 import logging
 from datetime import datetime, timedelta
-from typing import Tuple
+from typing import List, Optional, Tuple
 
 from libaditya import swe
 
@@ -44,10 +43,98 @@ def revjul(jd_val, cal_flag=None):
     """Convert Julian Day number to calendar date (year, month, day, hour_decimal).
 
     Auto-detects Julian/Gregorian calendar if cal_flag is not provided.
+
+    COMPUTATION entry point: the astronomical default (JUL_CAL pre-1582) is
+    load-bearing. Callers that feed the result back into a civil->JD conversion
+    (chart building, roundtrips) depend on this default. Do NOT route display
+    convention through here; use display_revjul() for user-facing strings.
     """
     if cal_flag is None:
         cal_flag = _calendar_flag_from_jd(jd_val)
     return swe.revjul(jd_val, cal_flag)
+
+
+# ---------------------------------------------------------------------------
+# DISPLAY-ONLY calendar convention (SPEC-CAL-001)
+#
+# Pre-1582 instants can be NAMED in two calendars that describe the SAME JD:
+#   - astronomical      : Julian calendar pre-1582 (NASA/Swiss Ephemeris norm)
+#   - proleptic_gregorian: Gregorian extended backwards (Kala norm)
+# The setting selects RENDERING only. The Julian Day is the single source of
+# truth (spec section 2). These helpers MUST NEVER appear in a civil->JD path:
+# a display convention leaking into computation rebuilds charts 7 days off
+# (the td-9hzo bug in reverse).
+# ---------------------------------------------------------------------------
+
+_CALENDAR_CONVENTIONS = ("astronomical", "proleptic_gregorian")
+
+
+def _read_calendar_convention():
+    """Read display.calendar_convention from settings; default 'astronomical'.
+
+    Lazy import (mirrors core/aditya_mode.py) so this module keeps no
+    module-level manager/GUI dependency and no import-time settings load.
+    Any failure (headless, missing settings) falls back to 'astronomical',
+    which is the display-inert default. Explicit default, never an or-chain
+    (spec section 7): an empty/None stored value must fall back, but a valid
+    'proleptic_gregorian' must not be coerced away.
+    """
+    try:
+        from managers.settings_manager import get_settings
+        value = get_settings().get("display.calendar_convention", "astronomical")
+    except Exception:
+        return "astronomical"
+    return value if value in _CALENDAR_CONVENTIONS else "astronomical"
+
+
+def _display_cal_flag(jd_val, convention):
+    """Calendar flag for DISPLAY: proleptic forces GREG_CAL, else astronomical."""
+    if convention == "proleptic_gregorian":
+        return swe.GREG_CAL
+    return _calendar_flag_from_jd(jd_val)
+
+
+def display_revjul(jd_val, convention=None):
+    """DISPLAY-ONLY JD -> (year, month, day, hour_decimal) for user-facing text.
+
+    Reads display.calendar_convention (or an explicit ``convention`` override,
+    used by CLIs so they never touch app settings). 'astronomical' reproduces
+    revjul()/_calendar_flag_from_jd exactly (so the default is byte-identical to
+    the prior behaviour); 'proleptic_gregorian' renders every date in the
+    Gregorian calendar, extended backwards.
+
+    FORBIDDEN in any civil->JD path: computation must use revjul()/julday().
+    The JD passed in is never modified; only the flag used to render it changes.
+    """
+    if convention is None:
+        convention = _read_calendar_convention()
+    return swe.revjul(jd_val, _display_cal_flag(jd_val, convention))
+
+
+def display_civil_date(year, month, day, convention=None):
+    """DISPLAY-ONLY: re-express an astronomical civil DATE under the setting.
+
+    Input (year, month, day) are astronomical-convention fields (Julian
+    calendar pre-1582), as produced by the computation path (usrday()/usrmonth()
+    /usryear(), stored CHTK/recipe fields, revjul()). Returns (year, month, day)
+    naming the SAME calendar day under display.calendar_convention:
+    'astronomical' returns the input unchanged; 'proleptic_gregorian' shifts
+    pre-1582 dates to their Gregorian name (e.g. 1179-03-10 -> 1179-03-17).
+    Post-1582 dates are unchanged under both.
+
+    Implementation note: the julday() round-trip below is a self-contained
+    date-renaming device (noon avoids midnight boundary drift). Its intermediate
+    JD is thrown away; NO chart or computation is ever built from it, so the
+    section-2 invariant holds. Never feed the RESULT into a civil->JD path.
+    """
+    if convention is None:
+        convention = _read_calendar_convention()
+    if convention != "proleptic_gregorian":
+        return year, month, day
+    # Astronomical fields -> exact instant (calendar-aware), then re-render.
+    jd_noon = swe.julday(year, month, day, 12.0, _calendar_flag(year, month, day))
+    y, m, d, _ = swe.revjul(jd_noon, swe.GREG_CAL)
+    return y, m, d
 
 
 def invert_chtk_timezone(tz_str: str) -> str:
@@ -177,6 +264,54 @@ def resolve_total_offset(iana_name: str, year: int, month: int, day: int,
     # lands in the else branch: std = total, flag 0.
     flag = 1 if dst > 0 else 0
     return total - flag, flag
+
+
+def resolve_auto_dst_flag(iana_name: Optional[str], year: int, month: int,
+                          day: int, hour: int = 12, minute: int = 0,
+                          longitude: float = None) -> Tuple[int, List[str]]:
+    """Resolve a CHTK DST auto flag (-1, Kala convention) to a real flag.
+
+    Kala writes -1 on CHTK line 14 meaning AUTO: resolve DST from the atlas
+    (IANA rules) at load. This is a thin wrapper over resolve_total_offset
+    that keeps only the flag; the CHTK standard-offset field stays
+    authoritative for the offset itself, so the caller adds float(flag) to
+    its own standard offset (never the pytz total outright).
+
+    Contract notes:
+    - This module NEVER instantiates TimezoneFinder; detecting the IANA
+      name from coordinates is the caller's job (the third fail-loud
+      branch, no-coords/no-IANA-found, lives in the caller too).
+    - Every degradation to flag 0 is fail-loud (SPEC-TZ-001 5f): a warning
+      is appended for the user-facing tz_warnings channel. Success appends
+      an informational warning documenting the resolution.
+
+    Args:
+        iana_name: IANA zone name (e.g. "Europe/Paris"), or falsy when the
+            caller has none.
+        year, month, day, hour, minute: local birth instant.
+        longitude: forwarded to resolve_total_offset for LMT-era correction.
+
+    Returns:
+        Tuple of (dst_flag: int in {0, 1}, warnings: list of str)
+    """
+    warnings: List[str] = []
+    if not iana_name:
+        warnings.append(
+            "Timezone: DST flag -1 could not be auto-resolved: no IANA zone "
+            "(chart may be 1h off)")
+        return 0, warnings
+    try:
+        _std, flag = resolve_total_offset(iana_name, year, month, day,
+                                          hour, minute, longitude=longitude)
+    except Exception as e:  # incl. pytz.UnknownTimeZoneError
+        warnings.append(
+            f"Timezone: DST flag -1 could not be auto-resolved: IANA "
+            f"'{iana_name}' resolution failed: {e} (chart may be 1h off)")
+        return 0, warnings
+    warnings.append(
+        f"Timezone: DST flag -1 auto-resolved to {flag} via {iana_name} "
+        f"rules for {year}-{month:02d}-{day:02d}")
+    return flag, warnings
 
 
 def lmt_corrected_offset(tz_name: str, year: int, month: int, day: int,

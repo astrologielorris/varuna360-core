@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 # Copyright (C) 2026 Lorris Turpin / 360 Hearts in the Sky
 # Licensed under AGPL-3.0 - see LICENSE file for details.
-# Commercial exception: see NOTICE file.
 """
 Sign Selector Column (Z6b)
 
@@ -107,6 +106,41 @@ def create_sign_selector_column(gui):
     layout.addStretch()
     scroll.setWidget(container)
     return scroll
+
+
+def set_column_selection(gui, sign_index_1based):
+    """Move the column's visible selection WITHOUT re-entering the click
+    handler (SPEC-SIC-003 §4.3, INV-10).
+
+    The column and the F4 cycle are two input surfaces over one Ascendant
+    state, so F4 must be able to show where the chart is anchored. It cannot
+    do that by synthesising a click: `_on_button_clicked` ends by calling
+    `gui._on_z6b_selection_changed`, which writes the very counter F4 is in
+    the middle of advancing. This setter owns the visible state only —
+    checked buttons plus `gui.selected_z6b_sign` — and leaves the dispatch
+    to the caller.
+
+    Args:
+        gui: the host carrying `sign_selector_buttons` / `selected_z6b_sign`.
+        sign_index_1based: 1..12 to select, or None to clear the column.
+    """
+    if sign_index_1based is not None:
+        valid = (isinstance(sign_index_1based, int)
+                 and not isinstance(sign_index_1based, bool)
+                 and 1 <= sign_index_1based <= 12)
+        if not valid:
+            # Same domain check as the view's set_z6b_selection: writing an
+            # out-of-range value here would clear every button yet leave
+            # selected_z6b_sign pointing at a sign no view is anchored to —
+            # the exact desync INV-10 forbids.
+            print("[Z6B] Ignoring invalid column selection: "
+                  f"{sign_index_1based!r} (expected 1-12 or None)")
+            return
+
+    buttons = getattr(gui, "sign_selector_buttons", None) or {}
+    for idx, btn in buttons.items():
+        btn.setChecked(idx == sign_index_1based)
+    gui.selected_z6b_sign = sign_index_1based
 
 
 def _on_button_clicked(gui, sign_index):

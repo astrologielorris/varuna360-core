@@ -1,4 +1,4 @@
-Varuna360 Core — Tropical Vedic Astrology Software
+Varuna360 Core: Tropical Vedic Astrology Software
 Copyright (C) 2026 Lorris Turpin / 360 Hearts in the Sky
 
 This program is free software: you can redistribute it and/or modify
@@ -14,12 +14,22 @@ GNU Affero General Public License for more details.
 You should have received a copy of the GNU Affero General Public License
 along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-COMMERCIAL EXCEPTION:
-Lorris Turpin, as sole copyright holder, retains the right to use,
-combine, and distribute this code in proprietary derivative works
-(including Varuna360 Pro). This exception applies exclusively to
-Lorris Turpin and 360 Hearts in the Sky. All other users and
-distributors are bound by the AGPL-3.0 terms above.
+VARUNA360 CORE AND VARUNA360 PRO:
+Core and Pro are two editions of this same AGPL-3.0 program, not two
+licensing regimes. Pro is the larger paid edition: more screens, more
+research tooling, more calculation surfaces. It is not proprietary
+software and it is not distributed as closed binaries. Pro subscribers
+receive the corresponding source of the Pro edition under AGPL-3.0,
+exactly as this license requires. The subscription pays for the work,
+the packaging, the updates and the support. It does not buy a
+different license.
+
+RESERVED RIGHTS OF THE COPYRIGHT HOLDER:
+Lorris Turpin, as sole copyright holder, retains the right to license
+his own work to third parties under terms other than the AGPL-3.0,
+including commercial terms. This reservation does not restrict anyone
+holding a copy under this license: your rights under the AGPL-3.0
+terms above are unaffected by it.
 
 Contact: contact@360heartsinthesky.com
 Website: https://360heartsinthesky.com

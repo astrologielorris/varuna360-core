@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 # Copyright (C) 2026 Lorris Turpin / 360 Hearts in the Sky
 # Licensed under AGPL-3.0 — see LICENSE file for details.
-# Commercial exception: see NOTICE file.
 """
 Chart Title Widget
 Displays chart name with close button (centered above chart)
@@ -16,9 +15,9 @@ from PySide6.QtGui import QFont, QPixmap
 
 # Import centralized theme
 from ui.qt_theme import (
-    TEXT_PRIMARY, TEXT_SECONDARY, STATUS, SURFACE, BG, BORDER,
+    TEXT_PRIMARY, TEXT_SECONDARY, STATUS, SURFACE, BG, BORDER, GOLD,
     get_theme_colors, get_secondary_button_style, FONT_MONO, scaled_px, scaled_size,
-    scaled_area_px, scaled_area_size, scaled_area_font
+    scaled_area_px, scaled_area_size, scaled_area_font, desat_hex
 )
 
 import urllib.parse
@@ -54,8 +53,10 @@ def _search_chart_name_google_images(gui):
 def _jd_to_date_str(jd):
     """Convert Julian Day to MM/DD/YYYY string."""
     try:
-        from core.time_utils import revjul
-        year, month, day, _ = revjul(jd)
+        # SPEC-CAL-001: DISPLAY-ONLY. These date strings feed dasha-range web
+        # searches (user-facing), so they follow the calendar-display setting.
+        from core.time_utils import display_revjul
+        year, month, day, _ = display_revjul(jd)
         return f"{month:02d}/{day:02d}/{year}"
     except Exception:
         return ""
@@ -239,7 +240,7 @@ def _show_pill_context_menu(gui, button, pos):
     """Right-click menu on the chart name pill button.
 
     Dynamic sections:
-    - Web searches (Wikipedia, Astro-Databank, Google Images)
+    - Web searches (Astrotheme, Wikipedia, Astro-Databank, Google Images)
     - Current dasha period searches (from left and right panels)
     """
     if not hasattr(gui, 'current_chart_data') or not gui.current_chart_data:
@@ -268,6 +269,8 @@ def _show_pill_context_menu(gui, button, pos):
     """)
 
     # === Astrology searches ===
+    menu.addAction(f"Astrotheme: \"{name}\"").triggered.connect(
+        lambda _=False: _web_search(f"site:www.astrotheme.com {name}"))
     menu.addAction(f"Astro-Databank: \"{name}\"").triggered.connect(
         lambda _=False: _web_search(f"site:www.astro.com/astro-databank {name}"))
 
@@ -847,12 +850,12 @@ def create_chart_title_widget(gui):
 
     layout.addSpacing(8)
 
-    gui.wiki_bio_btn = QPushButton("📖 WikiBio")
-    gui.wiki_bio_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-    gui.wiki_bio_btn.setToolTip("Fetch complete Wikipedia biography for current chart person")
-    gui.wiki_bio_btn.setStyleSheet(left_btn_style)
-    gui.wiki_bio_btn.clicked.connect(lambda: _fetch_wiki_bio(gui))
-    layout.addWidget(gui.wiki_bio_btn)
+    gui.chart_info_btn = QPushButton("📖 Chart Info")
+    gui.chart_info_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+    gui.chart_info_btn.setToolTip("Chart information, notes, and biography")
+    gui.chart_info_btn.setStyleSheet(left_btn_style)
+    gui.chart_info_btn.clicked.connect(lambda: _fetch_chart_info(gui))
+    layout.addWidget(gui.chart_info_btn)
 
     # LEFT SPACER (for centering the name+close group)
     layout.addStretch(1)
@@ -865,6 +868,9 @@ def create_chart_title_widget(gui):
 
     # Chart title as ROUNDED PILL BUTTON showing full birth info
     # Format: Name | Date Time TZ | Location (IANA) | Asc: Sign Deg°Min'
+    # Typography/design language mirrors the vector-chart medallion (T-8
+    # experiment, reversible): Inter family, gold hairline, name slightly
+    # larger than the panel_titles area baseline.
     gui.chart_title_label = QPushButton("No Chart Loaded")
     gui.chart_title_label.setMinimumWidth(400)
     gui.chart_title_label.setMinimumHeight(40)
@@ -873,19 +879,20 @@ def create_chart_title_widget(gui):
         QPushButton {{
             background-color: {theme["secondary"]};
             color: {theme["primary_text"]};
-            font-size: {scaled_area_px('panel_titles')}px;
+            font-family: 'Inter', 'Segoe UI', 'Arial', sans-serif;
+            font-size: {round(scaled_area_px('panel_titles') * 1.25)}px;
             font-weight: bold;
-            border: 1px solid {theme["primary"]};
+            border: 1.5px solid {GOLD};
             border-radius: 20px;
             padding: 8px 24px;
             text-transform: none;
         }}
         QPushButton:hover {{
             background-color: {theme["primary"]};
-            border: 1px solid {theme["primary_light"]};
+            border: 1.5px solid {theme["primary_light"]};
         }}
     """)
-    gui.chart_title_label.setToolTip("Click: Google Images | Right-click: Web searches")
+    gui.chart_title_label.setToolTip("Click: Google Images | Right-click: Search Astrotheme")
     gui.chart_title_label.clicked.connect(lambda: _search_chart_name_google_images(gui))
     gui.chart_title_label.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
     gui.chart_title_label.customContextMenuRequested.connect(
@@ -900,7 +907,7 @@ def create_chart_title_widget(gui):
     gui.chart_close_button.setToolTip("Remove current chart from memory")
     gui.chart_close_button.setStyleSheet(f"""
         QPushButton {{
-            background-color: {STATUS["error"]};
+            background-color: {desat_hex(STATUS["error"])};
             color: #FFFFFF;
             border: none;
             border-radius: 19px;
@@ -911,10 +918,10 @@ def create_chart_title_widget(gui):
             text-align: center;
         }}
         QPushButton:hover {{
-            background-color: #CC0000;
+            background-color: {desat_hex('#CC0000')};
         }}
         QPushButton:pressed {{
-            background-color: #990000;
+            background-color: {desat_hex('#990000')};
         }}
     """)
 
@@ -933,7 +940,7 @@ def create_chart_title_widget(gui):
     # Button styles
     active_style = f"""
         QPushButton {{
-            background-color: #4CAF50;
+            background-color: {desat_hex('#4CAF50')};
             color: white;
             font-weight: bold;
             font-size: {scaled_area_px('buttons')}px;
@@ -943,7 +950,7 @@ def create_chart_title_widget(gui):
             min-width: 100px;
         }}
         QPushButton:hover {{
-            background-color: #45A049;
+            background-color: {desat_hex('#45A049')};
         }}
     """
     inactive_style = f"""
@@ -1083,7 +1090,7 @@ def create_chart_title_widget(gui):
     # Compact mode: buttons to fully hide (rarely needed when tiled)
     gui._title_compact_hidden_btns = [
         gui.open_in_kala_btn,
-        gui.wiki_bio_btn,
+        gui.chart_info_btn,
         gui.time_adjust_btn,
         gui.human_design_btn,
     ]
@@ -1105,7 +1112,7 @@ def set_chart_title_compact(gui, compact):
     """Switch chart title bar between compact (tiled) and full layout.
 
     In compact mode:
-    - Hides rarely-needed buttons (WikiBio, Random, Open in Kala, etc.)
+    - Hides rarely-needed buttons (Chart Info, Random, Open in Kala, etc.)
     - Keeps useful buttons (Wheel, Now, Add Chart, Search, Aditya, Tropical)
       but applies compact styling so they don't stretch or overflow
     - Shrinks the name pill and close button
@@ -1142,12 +1149,12 @@ def set_chart_title_compact(gui, compact):
     """
     _compact_active = f"""
         QPushButton {{
-            background-color: #4CAF50; color: white;
+            background-color: {desat_hex('#4CAF50')}; color: white;
             font-weight: bold; font-size: {scaled_area_px('buttons')}px; border: none;
             border-radius: 5px; padding: 2px 6px;
             max-height: 22px;
         }}
-        QPushButton:hover {{ background-color: #45A049; }}
+        QPushButton:hover {{ background-color: {desat_hex('#45A049')}; }}
     """
     _compact_inactive = f"""
         QPushButton {{
@@ -1179,11 +1186,11 @@ def set_chart_title_compact(gui, compact):
     """
     _full_active = f"""
         QPushButton {{
-            background-color: #4CAF50; color: white;
+            background-color: {desat_hex('#4CAF50')}; color: white;
             font-weight: bold; font-size: {scaled_area_px('buttons')}px; border: none;
             border-radius: 8px; padding: 8px 12px; min-width: 100px;
         }}
-        QPushButton:hover {{ background-color: #45A049; }}
+        QPushButton:hover {{ background-color: {desat_hex('#45A049')}; }}
     """
     _full_inactive = f"""
         QPushButton {{
@@ -1259,23 +1266,23 @@ def set_chart_title_compact(gui, compact):
             gui.chart_close_button.setFixedSize(22, 22)
             gui.chart_close_button.setStyleSheet(f"""
                 QPushButton {{
-                    background-color: {STATUS["error"]}; color: #FFF;
+                    background-color: {desat_hex(STATUS["error"])}; color: #FFF;
                     border: none; border-radius: 11px;
                     font-size: {scaled_area_px('buttons')}px; padding: 0;
                 }}
-                QPushButton:hover {{ background-color: #CC0000; }}
+                QPushButton:hover {{ background-color: {desat_hex('#CC0000')}; }}
             """)
         else:
             gui.chart_close_button.setFixedSize(38, 38)
             gui.chart_close_button.setStyleSheet(f"""
                 QPushButton {{
-                    background-color: {STATUS["error"]}; color: #FFF;
+                    background-color: {desat_hex(STATUS["error"])}; color: #FFF;
                     border: none; border-radius: 19px;
                     font-size: {scaled_area_px('buttons')}px; font-weight: 500;
                     padding: 0px 0px 2px 0px;
                 }}
-                QPushButton:hover {{ background-color: #CC0000; }}
-                QPushButton:pressed {{ background-color: #990000; }}
+                QPushButton:hover {{ background-color: {desat_hex('#CC0000')}; }}
+                QPushButton:pressed {{ background-color: {desat_hex('#990000')}; }}
             """)
 
     # --- 5. Title bar height ---
@@ -1316,7 +1323,7 @@ def refresh_chart_title_theme(gui):
         # Update close button styling (modern clean design)
         gui.chart_close_button.setStyleSheet(f"""
             QPushButton {{
-                background-color: {STATUS["error"]};
+                background-color: {desat_hex(STATUS["error"])};
                 color: #FFFFFF;
                 border: none;
                 border-radius: 19px;
@@ -1327,10 +1334,10 @@ def refresh_chart_title_theme(gui):
                 text-align: center;
             }}
             QPushButton:hover {{
-                background-color: #CC0000;
+                background-color: {desat_hex('#CC0000')};
             }}
             QPushButton:pressed {{
-                background-color: #990000;
+                background-color: {desat_hex('#990000')};
             }}
         """)
 
@@ -1367,7 +1374,7 @@ def refresh_chart_title_theme(gui):
     """
 
     # Apply to ALL left-side buttons
-    for attr in ('wheel_btn', 'open_in_kala_btn', 'wiki_bio_btn', 'now_btn'):
+    for attr in ('wheel_btn', 'open_in_kala_btn', 'chart_info_btn', 'now_btn'):
         btn = getattr(gui, attr, None)
         if btn:
             btn.setStyleSheet(btn_style)
@@ -1400,615 +1407,54 @@ def _debug_log(msg):
     print(msg)
     try:
         import os
-        log_path = os.path.expanduser("~/wikibio_debug.log")
+        log_path = os.path.expanduser("~/chart_info_debug.log")
         with open(log_path, "a") as f:
             import datetime
             f.write(f"[{datetime.datetime.now().isoformat()}] {msg}\n")
     except:
         pass
 
-class WikiBioWorker(QThread):
+
+# ChartInfoWorker + ChartInfoDialog were extracted to a dedicated module
+# (SPEC-IMPORT-001 §7.2, bead td-clt6.12) to keep this file focused.
+# They are imported here so existing references in this file (the panel
+# button wiring and _fetch_chart_info below) keep working unchanged.
+# Dependency is one-way: chart_info_dialog does NOT import this module.
+from apps.widgets.chart_info_dialog import ChartInfoDialog, ChartInfoWorker
+
+
+def _fetch_chart_info(gui):
     """
-    Background worker thread for fetching complete Wikipedia biography with images.
-
-    Uses Wikipedia API to get full article content and Wikimedia Commons for images.
-    """
-    finished = Signal(str, str, list)  # Emits (title, content, images) on success
-    error = Signal(str)                # Emits error message on failure
-    progress = Signal(str)             # Emits progress messages
-
-    # Image filename patterns to SKIP (not photos of people)
-    SKIP_PATTERNS = [
-        'flag', 'logo', 'icon', 'map', 'coat_of_arms', 'seal', 'emblem',
-        'signature', 'autograph', 'chart', 'graph', 'diagram', 'symbol',
-        'commons-logo', 'wiki', 'edit-clear', 'question_mark', 'stub',
-        'ambox', 'crystal', 'folder', 'gnome', 'nuvola', 'p_', 'pictogram',
-        'red_pencil', 'speaker', 'wiktionary', 'wikibooks', 'wikiquote',
-        'wikisource', 'location', 'locator', 'position', '.svg'
-    ]
-
-    def __init__(self, name: str):
-        super().__init__()
-        self.name = name
-
-    def run(self):
-        """Execute the Wikipedia API call in background thread."""
-        import requests
-        import re
-
-        try:
-            self.progress.emit(f"Searching Wikipedia for '{self.name}'...")
-
-            headers = {"User-Agent": "Varuna360/1.0 (Vedic Astrology App)"}
-
-            # Step 1: Search for the page
-            search_url = "https://en.wikipedia.org/w/api.php"
-            search_params = {
-                "action": "query",
-                "list": "search",
-                "srsearch": self.name,
-                "srlimit": 5,
-                "format": "json"
-            }
-
-            response = requests.get(search_url, params=search_params, headers=headers, timeout=15)
-            response.raise_for_status()
-            search_data = response.json()
-
-            search_results = search_data.get("query", {}).get("search", [])
-            if not search_results:
-                self.error.emit(f"No Wikipedia article found for '{self.name}'")
-                return
-
-            # Use the first result
-            page_title = search_results[0]["title"]
-            self.progress.emit(f"Found: {page_title}")
-
-            # Step 2: Get article content AND image list
-            self.progress.emit(f"Fetching complete article...")
-
-            content_params = {
-                "action": "parse",
-                "page": page_title,
-                "prop": "text|images",  # Added images
-                "format": "json",
-                "disabletoc": "true"
-            }
-
-            content_response = requests.get(search_url, params=content_params, headers=headers, timeout=30)
-            content_response.raise_for_status()
-            content_data = content_response.json()
-
-            if "error" in content_data:
-                self.error.emit(f"Error fetching article: {content_data['error'].get('info', 'Unknown error')}")
-                return
-
-            parse_data = content_data.get("parse", {})
-            html_content = parse_data.get("text", {}).get("*", "")
-            image_list = parse_data.get("images", [])
-
-            if not html_content:
-                self.error.emit(f"No content found for '{page_title}'")
-                return
-
-            # Convert HTML to clean text
-            clean_text = self._html_to_text(html_content)
-
-            if not clean_text.strip():
-                self.error.emit(f"Could not extract text from '{page_title}'")
-                return
-
-            # Step 3: Fetch images from Wikimedia Commons
-            self.progress.emit("Fetching images...")
-            images_data = self._fetch_images(image_list, headers)
-
-            _debug_log(f"[WikiBio DEBUG] Final images count: {len(images_data)}")
-            self.progress.emit("Biography loaded successfully!")
-            self.finished.emit(page_title, clean_text, images_data)
-
-        except requests.exceptions.Timeout:
-            self.error.emit("Request timed out - Wikipedia may be slow")
-        except requests.exceptions.RequestException as e:
-            self.error.emit(f"Network error: {str(e)}")
-        except Exception as e:
-            self.error.emit(f"Error: {str(e)}")
-
-    def _fetch_images(self, image_list: list, headers: dict) -> list:
-        """
-        Fetch actual image URLs and data from Wikimedia Commons.
-
-        Args:
-            image_list: List of image filenames from Wikipedia article
-            headers: HTTP headers for requests
-
-        Returns:
-            List of dicts with 'url' and 'bytes' keys (up to 5 images)
-        """
-        import requests
-
-        # Filter out non-photo images
-        photo_candidates = []
-        _debug_log(f"[WikiBio DEBUG] Total images from article: {len(image_list)}")
-        for img_name in image_list:
-            img_lower = img_name.lower()
-            # Skip if matches any skip pattern
-            if any(skip in img_lower for skip in self.SKIP_PATTERNS):
-                continue
-            # Only keep common image formats (not SVG which are usually icons)
-            if img_lower.endswith(('.jpg', '.jpeg', '.png', '.gif', '.webp')):
-                photo_candidates.append(img_name)
-
-        _debug_log(f"[WikiBio DEBUG] Photo candidates after filtering: {len(photo_candidates)}")
-        if photo_candidates:
-            _debug_log(f"[WikiBio DEBUG] First 3 candidates: {photo_candidates[:3]}")
-
-        if not photo_candidates:
-            return []
-
-        # Limit to first 8 candidates to check
-        photo_candidates = photo_candidates[:8]
-
-        self.progress.emit(f"Found {len(photo_candidates)} potential photos...")
-
-        # Query Wikimedia Commons for image URLs
-        commons_url = "https://en.wikipedia.org/w/api.php"
-        images_data = []
-
-        for img_name in photo_candidates:
-            if len(images_data) >= 5:  # Max 5 images
-                break
-
-            try:
-                self.progress.emit(f"Loading image {len(images_data) + 1}...")
-
-                # Get image info (URL)
-                info_params = {
-                    "action": "query",
-                    "titles": f"File:{img_name}",
-                    "prop": "imageinfo",
-                    "iiprop": "url|size",
-                    "iiurlwidth": 400,  # Request thumbnail at 400px width
-                    "format": "json"
-                }
-
-                info_response = requests.get(commons_url, params=info_params, headers=headers, timeout=10)
-                info_response.raise_for_status()
-                info_data = info_response.json()
-
-                pages = info_data.get("query", {}).get("pages", {})
-                for page_id, page_data in pages.items():
-                    if page_id == "-1":
-                        continue  # Image not found
-
-                    imageinfo = page_data.get("imageinfo", [])
-                    if imageinfo:
-                        img_info = imageinfo[0]
-                        # Prefer thumbnail URL if available, else full URL
-                        img_url = img_info.get("thumburl") or img_info.get("url")
-
-                        if img_url:
-                            _debug_log(f"[WikiBio DEBUG] Downloading: {img_url[:80]}...")
-                            # Download the image
-                            img_response = requests.get(img_url, headers=headers, timeout=15)
-                            img_response.raise_for_status()
-
-                            # Check if it's actually an image (not HTML error page)
-                            content_type = img_response.headers.get('content-type', '')
-                            _debug_log(f"[WikiBio DEBUG] Content-Type: {content_type}, Size: {len(img_response.content)} bytes")
-                            if 'image' in content_type:
-                                images_data.append({
-                                    'url': img_url,
-                                    'bytes': img_response.content,
-                                    'name': img_name
-                                })
-                                _debug_log(f"[WikiBio DEBUG] Image added! Total: {len(images_data)}")
-
-            except Exception as e:
-                # Skip failed images, continue with others
-                _debug_log(f"[WikiBio] Failed to fetch image {img_name}: {e}")
-                continue
-
-        return images_data
-
-    def _html_to_text(self, html: str) -> str:
-        """Convert Wikipedia HTML to clean readable text."""
-        import re
-
-        text = html
-
-        # Remove script and style tags
-        text = re.sub(r'<script[^>]*>.*?</script>', '', text, flags=re.DOTALL | re.IGNORECASE)
-        text = re.sub(r'<style[^>]*>.*?</style>', '', text, flags=re.DOTALL | re.IGNORECASE)
-
-        # Remove reference tags [1], [2], etc.
-        text = re.sub(r'\[(?:edit|citation needed|\d+)\]', '', text)
-
-        # Remove infobox, navbox, sidebar tables (they clutter the text)
-        text = re.sub(r'<table[^>]*class="[^"]*(?:infobox|navbox|sidebar|vertical-navbox|wikitable)[^"]*"[^>]*>.*?</table>', '', text, flags=re.DOTALL | re.IGNORECASE)
-
-        # Remove div elements with certain classes (navigation, etc.)
-        text = re.sub(r'<div[^>]*class="[^"]*(?:navbox|catlinks|reflist|references|mw-references|toc|thumb|gallery)[^"]*"[^>]*>.*?</div>', '', text, flags=re.DOTALL | re.IGNORECASE)
-
-        # Convert headers to readable format
-        text = re.sub(r'<h2[^>]*><span[^>]*>([^<]*)</span>.*?</h2>', r'\n\n═══ \1 ═══\n\n', text, flags=re.DOTALL)
-        text = re.sub(r'<h3[^>]*><span[^>]*>([^<]*)</span>.*?</h3>', r'\n\n─── \1 ───\n\n', text, flags=re.DOTALL)
-        text = re.sub(r'<h4[^>]*><span[^>]*>([^<]*)</span>.*?</h4>', r'\n\n── \1 ──\n\n', text, flags=re.DOTALL)
-        text = re.sub(r'<h[1-6][^>]*>([^<]*)</h[1-6]>', r'\n\n═══ \1 ═══\n\n', text)
-
-        # Convert paragraph breaks
-        text = re.sub(r'</p>\s*<p[^>]*>', '\n\n', text)
-        text = re.sub(r'<p[^>]*>', '\n', text)
-        text = re.sub(r'</p>', '\n', text)
-
-        # Convert list items
-        text = re.sub(r'<li[^>]*>', '\n  • ', text)
-        text = re.sub(r'</li>', '', text)
-
-        # Convert line breaks
-        text = re.sub(r'<br\s*/?>', '\n', text)
-
-        # Remove all remaining HTML tags
-        text = re.sub(r'<[^>]+>', '', text)
-
-        # Decode HTML entities
-        import html
-        text = html.unescape(text)
-
-        # Clean up whitespace
-        text = re.sub(r'\n\s*\n\s*\n+', '\n\n', text)  # Multiple blank lines to double
-        text = re.sub(r'[ \t]+', ' ', text)  # Multiple spaces to single
-        text = re.sub(r' +\n', '\n', text)  # Trailing spaces
-        text = re.sub(r'\n +', '\n', text)  # Leading spaces on lines
-
-        # Remove "See also", "References", "External links" sections and everything after
-        for section in ['See also', 'References', 'External links', 'Further reading', 'Notes']:
-            pattern = rf'\n═══ {section} ═══.*'
-            text = re.sub(pattern, '', text, flags=re.DOTALL | re.IGNORECASE)
-
-        return text.strip()
-
-
-class WikiBioDialog(QDialog):
-    """
-    Dialog window to display Wikipedia biography with images and scrolling text.
-    """
-
-    def __init__(self, parent, title: str, content: str, images: list = None):
-        super().__init__(parent)
-
-        self.setWindowTitle(f"Wikipedia: {title}")
-        self.setMinimumSize(900, 700)
-        self.resize(1000, 800)
-
-        # Dark theme styling
-        self.setStyleSheet(f"""
-            QDialog {{
-                background-color: {BG};
-            }}
-        """)
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 16, 16, 16)
-        layout.setSpacing(12)
-
-        # Title label
-        title_label = QLabel(f"📖 {title}")
-        title_label.setStyleSheet(f"""
-            QLabel {{
-                color: {TEXT_PRIMARY};
-                font-size: {scaled_area_px('panel_titles')}px;
-                font-weight: bold;
-                padding-bottom: 8px;
-            }}
-        """)
-        layout.addWidget(title_label)
-
-        # Images section (if images available)
-        _debug_log(f"[WikiBio DEBUG] Dialog received images: {len(images) if images else 0}")
-        if images:
-            self._add_images_section(layout, images)
-
-        # Biography text area
-        self.text_edit = QTextEdit()
-        self.text_edit.setReadOnly(True)
-        self.text_edit.setPlainText(content)
-        self.text_edit.setFont(scaled_area_font('info_text', family="Segoe UI"))
-        self.text_edit.setStyleSheet(f"""
-            QTextEdit {{
-                background-color: {SURFACE};
-                color: {TEXT_PRIMARY};
-                border: 1px solid {BORDER};
-                border-radius: 8px;
-                padding: 12px;
-                selection-background-color: #3C6E9E;
-            }}
-            QScrollBar:vertical {{
-                background-color: {SURFACE};
-                width: 12px;
-                border-radius: 6px;
-            }}
-            QScrollBar::handle:vertical {{
-                background-color: #555;
-                border-radius: 6px;
-                min-height: 30px;
-            }}
-            QScrollBar::handle:vertical:hover {{
-                background-color: #666;
-            }}
-        """)
-        layout.addWidget(self.text_edit, stretch=1)
-
-        # Bottom buttons
-        button_layout = QHBoxLayout()
-        button_layout.addStretch()
-
-        # Image count info
-        if images:
-            img_info = QLabel(f"📷 {len(images)} images from Wikimedia Commons")
-            img_info.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: {scaled_area_px('info_text')}px;")
-            button_layout.addWidget(img_info)
-            button_layout.addSpacing(20)
-
-        # Copy button
-        copy_btn = QPushButton("📋 Copy to Clipboard")
-        copy_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        copy_btn.setStyleSheet(f"""
-            QPushButton {{
-                background-color: #3C6E9E;
-                color: white;
-                border: none;
-                border-radius: 6px;
-                padding: 10px 20px;
-                font-size: {scaled_area_px('buttons')}px;
-                font-weight: bold;
-            }}
-            QPushButton:hover {{
-                background-color: #4A7FB0;
-            }}
-        """)
-        copy_btn.clicked.connect(lambda: self._copy_to_clipboard(content))
-        button_layout.addWidget(copy_btn)
-
-        # Close button
-        close_btn = QPushButton("Close")
-        close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        close_btn.setStyleSheet(f"""
-            QPushButton {{
-                background-color: #555;
-                color: white;
-                border: none;
-                border-radius: 6px;
-                padding: 10px 20px;
-                font-size: {scaled_area_px('buttons')}px;
-            }}
-            QPushButton:hover {{
-                background-color: #666;
-            }}
-        """)
-        close_btn.clicked.connect(self.accept)
-        button_layout.addWidget(close_btn)
-
-        layout.addLayout(button_layout)
-
-    def _add_images_section(self, parent_layout, images: list):
-        """
-        Add a horizontal scrollable image gallery at the top.
-
-        Args:
-            parent_layout: The parent QVBoxLayout
-            images: List of dicts with 'bytes' key containing image data
-        """
-        # Container frame for images
-        images_frame = QFrame()
-        images_frame.setStyleSheet(f"""
-            QFrame {{
-                background-color: {SURFACE};
-                border: 1px solid {BORDER};
-                border-radius: 8px;
-            }}
-        """)
-        images_frame.setFixedHeight(220)
-
-        # Scroll area for horizontal scrolling
-        scroll_area = QScrollArea()
-        scroll_area.setWidgetResizable(True)
-        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll_area.setStyleSheet(f"""
-            QScrollArea {{
-                background-color: transparent;
-                border: none;
-            }}
-            QScrollBar:horizontal {{
-                background-color: {SURFACE};
-                height: 10px;
-                border-radius: 5px;
-            }}
-            QScrollBar::handle:horizontal {{
-                background-color: #555;
-                border-radius: 5px;
-                min-width: 30px;
-            }}
-            QScrollBar::handle:horizontal:hover {{
-                background-color: #666;
-            }}
-        """)
-
-        # Container widget for images
-        images_container = QWidget()
-        images_layout = QHBoxLayout(images_container)
-        images_layout.setContentsMargins(10, 10, 10, 10)
-        images_layout.setSpacing(15)
-
-        # Add each image
-        _debug_log(f"[WikiBio DEBUG] _add_images_section: Processing {len(images)} images")
-        for idx, img_data in enumerate(images):
-            try:
-                img_bytes = img_data.get('bytes')
-                if not img_bytes:
-                    _debug_log(f"[WikiBio DEBUG] Image {idx}: No bytes!")
-                    continue
-
-                _debug_log(f"[WikiBio DEBUG] Image {idx}: {len(img_bytes)} bytes")
-
-                # Create QPixmap from bytes
-                pixmap = QPixmap()
-                loaded = pixmap.loadFromData(img_bytes)
-                _debug_log(f"[WikiBio DEBUG] Image {idx}: loadFromData returned {loaded}")
-
-                if pixmap.isNull():
-                    _debug_log(f"[WikiBio DEBUG] Image {idx}: Pixmap is NULL!")
-                    continue
-
-                _debug_log(f"[WikiBio DEBUG] Image {idx}: Pixmap size {pixmap.width()}x{pixmap.height()}")
-
-                # Scale to fit height while maintaining aspect ratio
-                scaled_pixmap = pixmap.scaledToHeight(
-                    180,
-                    Qt.TransformationMode.SmoothTransformation
-                )
-
-                # Create label with rounded corners effect
-                img_label = QLabel()
-                img_label.setPixmap(scaled_pixmap)
-                img_label.setStyleSheet(f"""
-                    QLabel {{
-                        background-color: #1A1A1A;
-                        border: 2px solid {BORDER};
-                        border-radius: 8px;
-                        padding: 4px;
-                    }}
-                """)
-                img_label.setToolTip(img_data.get('name', 'Wikipedia image'))
-
-                images_layout.addWidget(img_label)
-                _debug_log(f"[WikiBio DEBUG] Image {idx}: Widget added to layout!")
-
-            except Exception as e:
-                _debug_log(f"[WikiBio] Error displaying image: {e}")
-                import traceback
-                _debug_log(f"[WikiBio] Traceback: {traceback.format_exc()}")
-                continue
-
-        _debug_log(f"[WikiBio DEBUG] _add_images_section: Loop complete, adding stretch")
-        images_layout.addStretch()  # Push images to the left
-
-        scroll_area.setWidget(images_container)
-        _debug_log(f"[WikiBio DEBUG] _add_images_section: scroll_area widget set")
-
-        # Layout for the frame
-        frame_layout = QVBoxLayout(images_frame)
-        frame_layout.setContentsMargins(0, 0, 0, 0)
-        frame_layout.addWidget(scroll_area)
-
-        parent_layout.addWidget(images_frame)
-        _debug_log(f"[WikiBio DEBUG] _add_images_section: COMPLETE - images_frame added to parent")
-
-    def _copy_to_clipboard(self, content: str):
-        """Copy biography content to clipboard."""
-        clipboard = QApplication.clipboard()
-        clipboard.setText(content)
-        # Brief visual feedback would be nice but keeping it simple
-
-
-def _fetch_wiki_bio(gui):
-    """
-    Fetch and display Wikipedia biography for the current chart person.
+    Open the Chart Info dialog for the current chart (SPEC-IMPORT-001 §7.3).
+
+    Section A (metadata: Rodden, tags, source format, notes) is shown
+    immediately. Section B (the Wikipedia biography) is fetched on demand
+    via the "Search Wikipedia" button inside the dialog.
 
     Args:
-        gui: The main GUI instance with current_chart_data
+        gui: The main GUI instance with current_chart_data / current_chart_path
     """
     # Clear debug log
     try:
         import os
-        log_path = os.path.expanduser("~/wikibio_debug.log")
+        log_path = os.path.expanduser("~/chart_info_debug.log")
         with open(log_path, "w") as f:
-            f.write("=== WikiBio Debug Log ===\n")
+            f.write("=== Chart Info Debug Log ===\n")
     except:
         pass
 
-    # Get current chart name
+    # Require a chart, but NOT a name — Section A (metadata) is useful even
+    # for unnamed charts; only the Wikipedia search needs a name.
     if not hasattr(gui, 'current_chart_data') or not gui.current_chart_data:
         from PySide6.QtWidgets import QMessageBox
         QMessageBox.warning(gui, "No Chart Loaded", "Please load a chart first.")
         return
 
-    name = gui.current_chart_data.get('name', '')
-    _debug_log(f"[WikiBio DEBUG] Searching for: '{name}'")
-    if not name or name == "Unknown":
-        from PySide6.QtWidgets import QMessageBox
-        QMessageBox.warning(gui, "No Name", "Current chart has no name to search.")
-        return
+    chart_data = gui.current_chart_data
+    chart_path = getattr(gui, 'current_chart_path', None)
+    _debug_log(f"[ChartInfo DEBUG] Opening Chart Info for: "
+               f"'{chart_data.get('name', '')}' path={chart_path}")
 
-    # Show loading dialog
-    loading_dialog = QDialog(gui)
-    loading_dialog.setWindowTitle("Loading Wikipedia Biography")
-    loading_dialog.setFixedSize(400, 120)
-    loading_dialog.setStyleSheet(f"QDialog {{ background-color: {BG}; }}")
-
-    loading_layout = QVBoxLayout(loading_dialog)
-    loading_layout.setContentsMargins(20, 20, 20, 20)
-
-    loading_label = QLabel(f"🔍 Searching Wikipedia for '{name}'...")
-    loading_label.setStyleSheet(f"color: {TEXT_PRIMARY}; font-size: {scaled_area_px('info_text')}px;")
-    loading_layout.addWidget(loading_label)
-
-    progress_bar = QProgressBar()
-    progress_bar.setRange(0, 0)  # Indeterminate
-    progress_bar.setStyleSheet(f"""
-        QProgressBar {{
-            background-color: {SURFACE};
-            border: 1px solid {BORDER};
-            border-radius: 4px;
-            height: 20px;
-        }}
-        QProgressBar::chunk {{
-            background-color: #3C6E9E;
-        }}
-    """)
-    loading_layout.addWidget(progress_bar)
-
-    # Create worker
-    worker = WikiBioWorker(name)
-
-    def on_progress(msg):
-        loading_label.setText(f"🔍 {msg}")
-
-    def _cleanup_worker():
-        """Disconnect signals and schedule worker for deletion."""
-        try:
-            worker.progress.disconnect(on_progress)
-            worker.finished.disconnect(on_finished)
-            worker.error.disconnect(on_error)
-        except RuntimeError:
-            pass
-        worker.deleteLater()
-        gui._wiki_bio_worker = None
-
-    def on_finished(title, content, images):
-        _debug_log(f"[WikiBio DEBUG] on_finished called with {len(images) if images else 0} images")
-        _cleanup_worker()
-        loading_dialog.accept()
-        bio_dialog = WikiBioDialog(gui, title, content, images)
-        bio_dialog.exec()
-        bio_dialog.deleteLater()
-
-    def on_error(error_msg):
-        _cleanup_worker()
-        loading_dialog.accept()
-        from PySide6.QtWidgets import QMessageBox
-        QMessageBox.warning(gui, "Wikipedia Error", error_msg)
-
-    worker.progress.connect(on_progress)
-    worker.finished.connect(on_finished)
-    worker.error.connect(on_error)
-
-    # Store worker reference to prevent garbage collection during fetch
-    gui._wiki_bio_worker = worker
-    worker.start()
-
-    # Show loading dialog (blocks until finished or error)
-    result = loading_dialog.exec()
-    # If user closed dialog manually before worker finished, clean up
-    if gui._wiki_bio_worker is not None:
-        _cleanup_worker()
+    dialog = ChartInfoDialog(gui, chart_data=chart_data, chart_path=chart_path)
+    dialog.exec()
+    dialog.deleteLater()

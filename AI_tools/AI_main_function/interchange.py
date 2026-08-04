@@ -1,6 +1,5 @@
 # Copyright (C) 2026 Lorris Turpin / 360 Hearts in the Sky
 # Licensed under AGPL-3.0 — see LICENSE file for details.
-# Commercial exception: see NOTICE file.
 """
 Interchange yoga (Parivartana) detection.
 ==========================================
@@ -56,6 +55,54 @@ def _classify_interchange(house_a, house_b):
     return "MAHA"
 
 
+def _dainya_afflicted_houses(house_a, house_b, classification):
+    """Afflicted house(s) for a Dainya interchange.
+
+    A single-dusthana Dainya afflicts the NON-dusthana partner house (the good
+    house dragged onto the 6/8/12 misery axis). A DAINYA_DOUBLE (both houses in a
+    dusthana) afflicts BOTH. Returns a list of house numbers, or None for a
+    non-Dainya classification.
+    """
+    if classification == "DAINYA_DOUBLE":
+        return [house_a, house_b]
+    if classification in ("DAINYA_6", "DAINYA_8", "DAINYA_12"):
+        # Report the house that is NOT the dusthana (the afflicted good house).
+        return [house_b if house_a in DUSTHANA_HOUSES else house_a]
+    return None
+
+
+def dispositor(chart, planet):
+    """Return the planet that RULES the sign `planet` occupies (its dispositor).
+
+    Index-keyed via `_SIGN_INDEX_RULERS`, using the chart's own sign-index API
+    (no manual ayanamsa math). PURE: takes an ALREADY-FRAMED chart and reads NO
+    GUI state. Sidereal (or any other) framing is the caller's responsibility.
+    # EXCHDISP-REVIEW: R4 sidereal-rebuild deferred to caller seam
+    Returns the ruler planet name, or None if the planet is absent/unresolved.
+    """
+    idx = get_planet_sign_index(chart, planet, default=-1)
+    if idx < 0:
+        return None
+    return _SIGN_INDEX_RULERS.get(idx)
+
+
+def house_of(chart, planet):
+    """Return the whole-sign house (1-12) the planet OCCUPIES, or None.
+
+    # EXCHDISP-REVIEW: R5 occupied-not-owned house
+    Uses the sign the planet OCCUPIES (via `_build_sign_house_map`), never the
+    sign it rules. PURE: no GUI state, no manual ayanamsa math; the chart must be
+    framed by the caller.
+    """
+    sign_to_house = _build_sign_house_map(chart)
+    if sign_to_house is None:
+        return None
+    idx = get_planet_sign_index(chart, planet, default=-1)
+    if idx < 0:
+        return None
+    return sign_to_house.get(idx)
+
+
 def _build_sign_house_map(chart):
     """Build sign_index -> house_number map from the ascendant's sign index."""
     asc_idx = get_planet_sign_index(chart, "Ascendant", default=-1)
@@ -90,6 +137,11 @@ def get_all_interchanges(chart):
     interchanges = []
     by_type = {t: [] for t in all_types}
 
+    # dainya_afflicted: a NEW parallel field keyed by the (planet_a, planet_b)
+    # pair -> list of afflicted house numbers. Kept SEPARATE from the frozen
+    # 7-tuple in "interchanges" (consumers hard-unpack exactly 7 elements).
+    dainya_afflicted = {}
+
     sign_to_house = _build_sign_house_map(chart)
     if sign_to_house is None:
         return {
@@ -98,6 +150,7 @@ def get_all_interchanges(chart):
             "has_maha": False,
             "has_khala": False,
             "has_dainya": False,
+            "dainya_afflicted": dainya_afflicted,
         }
 
     positions = _collect_planet_positions(chart)
@@ -121,6 +174,7 @@ def get_all_interchanges(chart):
 
                 classification = _classify_interchange(house_a, house_b)
 
+                # 7-tuple shape is FROZEN (H1) — consumers hard-unpack 7 elements.
                 record = (
                     planet_a, sign_a, house_a,
                     planet_b, sign_b, house_b,
@@ -128,6 +182,10 @@ def get_all_interchanges(chart):
                 )
                 interchanges.append(record)
                 by_type[classification].append(record)
+
+                afflicted = _dainya_afflicted_houses(house_a, house_b, classification)
+                if afflicted is not None:
+                    dainya_afflicted[(planet_a, planet_b)] = afflicted
 
     dainya_types = {"DAINYA_6", "DAINYA_8", "DAINYA_12", "DAINYA_DOUBLE"}
 
@@ -137,6 +195,7 @@ def get_all_interchanges(chart):
         "has_maha": bool(by_type["MAHA"]),
         "has_khala": bool(by_type["KHALA"]),
         "has_dainya": any(by_type[t] for t in dainya_types),
+        "dainya_afflicted": dainya_afflicted,
     }
 
 

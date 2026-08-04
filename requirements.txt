@@ -11,6 +11,10 @@ pyswisseph>=2.10.0
 # Timezone and date handling
 tzdata>=2024.1
 pytz>=2024.1
+# core/nisarga_dasha.py imports dateutil.relativedelta at module level. Its
+# absence does not stop the app booting — it fails later with "Error updating
+# Nisarga dasha: No module named 'dateutil'", which is why it was missed.
+python-dateutil>=2.8.0
 # timezonefinder 8.x is what we actually run. The old ==6.0.2 pin was
 # stale and broke fresh installs on Python 3.14 because it transitively
 # required h3==3.7.7 (no wheels for Py3.14, source build fails on
@@ -20,6 +24,7 @@ timezonefinder>=8.0
 
 # GUI framework
 PySide6>=6.6.0
+shiboken6>=6.6.0
 qt-material>=2.14
 
 # Image handling
@@ -34,3 +39,41 @@ cryptography>=42.0.0
 
 # HTTP requests
 requests>=2.31.0
+
+# --- libaditya engine dependencies -------------------------------------
+# The vendored libaditya/ engine pulls these in; they are not imported by
+# Varuna360's own code, which is why a human reading this file cannot spot
+# them. Only the ones the engine imports at MODULE level belong here — those
+# run at startup and their absence is a hard boot failure:
+#
+#   toml            libaditya/read.py — chart file parsing (also SPEC-IMPORT-001 .toml)
+#   more-itertools  libaditya/calc/jaimini.py — collapse() inside the argala
+#                   calculation. REAL calculation code, not presentation, so it
+#                   stays required: this repo is the calculation reference for
+#                   the whole product family and correctness is not negotiable
+#                   for the sake of one wheel.
+toml>=0.10.0
+more-itertools>=8.0.0
+
+# Deliberately NOT listed: metar, rich, drawsvg, prettytable.
+#
+# Josh (libaditya's author) reported it as "silly that your app doesn't need
+# metar or drawsvg or rich, but it won't run without them" — and he was right.
+# All four sat behind MODULE-level imports in the vendored engine, so every
+# user installed four packages to run features Varuna360 never calls:
+#
+#   metar        libaditya/objects/location.py — decodes airport weather
+#                reports. Location is on the critical path for every chart,
+#                which is the only reason this was ever loaded.
+#   prettytable  __str__/__repr__ ASCII tables in objects/ and print_functions
+#   rich         terminal-colour table rendering (objects/signs, calc/varga,
+#                cards/, print_functions)
+#   drawsvg      draw/draw_bodygraph.py + draw_sbc.py — Human Design SVG output
+#
+# Those imports are now function-level, so the packages are optional: the app
+# boots and calculates without them, and only the specific CLI-print or
+# SVG-drawing call that needs one would raise. They are registered in
+# release_gates/check_requirements.py INTENTIONALLY_OPTIONAL with that reason.
+#
+# If you ever see one of them re-appear at module level, put it BACK here —
+# at module level there is no degradation path, the app simply dies on start.

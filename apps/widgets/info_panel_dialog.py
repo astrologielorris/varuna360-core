@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 # Copyright (C) 2026 Lorris Turpin / 360 Hearts in the Sky
 # Licensed under AGPL-3.0 — see LICENSE file for details.
-# Commercial exception: see NOTICE file.
 """
 Info Panel Dialog — Fullscreen popup showing all sub-tables side by side.
 
@@ -15,7 +14,7 @@ import json
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QTableWidget,
     QTableWidgetItem, QHeaderView, QPushButton, QTextEdit,
-    QApplication, QSplitter, QWidget
+    QApplication, QSplitter, QWidget, QFrame
 )
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QFont, QColor, QBrush
@@ -54,6 +53,71 @@ DELEGATE_MAP = {
 }
 
 
+# SPEC-AVA-002 §4.1 — live sub-tab -> the gui attribute it displays.
+#
+# THE TRAP: these are NOT page indices and must never be used as such. A section's
+# live QStackedWidget indices and its SECTION_DEFS page positions line up for
+# `aspects` and `strength` by coincidence only; `karakas` does not line up at all,
+# because two of its four stack entries are themselves inner stacks that each
+# expand into two dialog pages (its Hora tab is stack index 1 but page 2). Resolve
+# stack index -> ATTRIBUTE NAME here, then let the dialog look the attribute up in
+# SECTION_DEFS. An index->index map would be right for two sections out of three
+# and would rot silently the first time a tab is inserted.
+#
+# A stack index with no dialog page maps to None (aspects index 7 is Nabhasa,
+# which has no page today) and the dialog falls back to page 0.
+_SUBTAB_ATTRS = {
+    "aspects": {
+        0: "aspects_table", 1: "avastha_table", 2: "shame_display",
+        3: "tajika_matrix_table", 4: "tajika_rel_table",
+        5: "tajika_placeholder", 6: "exchange_display", 7: None,
+    },
+    "strength": {
+        0: "strength_table", 1: "elements_table",
+        2: "modality_table", 3: "dignities_table",
+    },
+    # karakas entries 0 and 3 are inner stacks: (inner_stack_attr, {inner index: attr})
+    "karakas": {
+        0: ("karakas_inner_stack", {0: "karakas_table", 1: "karakas_enriched"}),
+        1: "hora_table",
+        2: "trimsamsa_table",
+        3: ("condition_inner_stack", {0: "house_graph_bars", 1: "planet_profiles"}),
+    },
+}
+
+# SPEC-THM-002 D-4: tables where the GRID is doing real work — on a 7x7 or an
+# 11x11 the gridline is what lets the eye track a row across to its column, so
+# these keep a stronger hairline than the list-like tables.
+_MATRIX_TABLES = {"avastha_table", "tajika_matrix_table", "tajika_rel_table",
+                  "aspects_table"}
+
+_SECTION_STACKS = {
+    "aspects": "aspects_stack",
+    "karakas": "karakas_stack",
+    "strength": "strength_elements_stack",
+}
+
+
+def current_subtab_attr(gui, section_key):
+    """The gui attribute name of the sub-tab currently showing in ``section_key``.
+
+    Returns None when it cannot be resolved (missing stack, unknown index, or a
+    tab with no dialog page), which the dialog treats as "open on page 0" — the
+    pre-SPEC-AVA-002 behaviour, so a new tab can never crash the popup.
+    """
+    stack = getattr(gui, _SECTION_STACKS.get(section_key, ""), None)
+    if stack is None:
+        return None
+    entry = _SUBTAB_ATTRS.get(section_key, {}).get(stack.currentIndex())
+    if isinstance(entry, tuple):
+        inner_attr, inner_map = entry
+        inner = getattr(gui, inner_attr, None)
+        if inner is None:
+            return None
+        return inner_map.get(inner.currentIndex())
+    return entry
+
+
 def _get_delegate_colors(gui, attr_name, row, col):
     """Read bg/fg colors from the delegate's state for a given cell.
 
@@ -72,8 +136,14 @@ def _get_delegate_colors(gui, attr_name, row, col):
     # AvasthaHighlightDelegate: per-cell category coloring
     if hasattr(delegate, 'cell_categories'):
         cat = delegate.cell_categories.get((row, col))
-        if cat and hasattr(delegate, 'CATEGORY_COLORS') and cat in delegate.CATEGORY_COLORS:
-            return delegate.CATEGORY_COLORS[cat]
+        # The delegate exposes its palette as get_category_colors() (theme-aware),
+        # over a CATEGORY_COLORS_MAP class attribute. This branch used to test for
+        # a bare `CATEGORY_COLORS`, which exists nowhere in the repo, so it always
+        # fell through to (None, None) and cloned avastha tables got no baked
+        # colours — invisible only because _attach_avastha_delegate re-attaches a
+        # live delegate straight afterwards (SPEC-AVA-002 §4.7).
+        if cat and hasattr(delegate, 'get_category_colors'):
+            return delegate.get_category_colors().get(cat, (None, None))
         return None, None
 
     # KarakaHighlightDelegate: highlight_rows (entire row)
@@ -91,41 +161,79 @@ def _get_delegate_colors(gui, attr_name, row, col):
     return None, None
 
 
-_AVASTHA_7 = ["Sun", "Moon", "Mars", "Mercury", "Jupiter", "Venus", "Saturn"]
+# SPEC-AVW-001 T1: the avastha totals math now lives in the pure, GUI-free
+# core.avastha_totals module (shared by the desktop GUI, the FastAPI backend, and
+# the show_avastha CLI). Re-exported here so existing importers of
+# `from apps.widgets.info_panel_dialog import split_expression, _AVASTHA_7` keep working.
+from ui.themed_style import ThemedStyleMixin
+from ui.qt_theme import (
+    elevation_color, elevation_surface_style, elevation_table_style,
+    elevation_divider, apply_elevation_shadow, elevation_margin,
+)
+
+from core.avastha_totals import (  # noqa: F401
+    split_expression, SELF_BASE, dignity_multiplier, AVASTHA_7 as _AVASTHA_7,
+)
 
 
-def split_expression(target, planet_order, matrix, dignity_data, shame_pairs):
-    """Split avastha into uplifted (positive) and afflicted (negative) totals."""
-    up = 0.0
-    aff = 0.0
-    dig = dignity_data.get(target)
-    if dig:
-        up += dig["virupas"]
-    for other in planet_order:
-        if other == target:
-            continue
-        entry = matrix.get((other, target))
-        if not entry or entry["virupas"] <= 0:
-            continue
-        if (other, target) in shame_pairs:
-            aff -= 60
-        elif entry["relationship"] == "DUAL":
-            pass
-        elif entry["relationship"] == "FRIEND":
-            up += entry["virupas"]
-        elif entry["relationship"] == "ENEMY":
-            aff -= entry["virupas"]
-    return up, aff
-
-
-class InfoPanelDialog(QDialog):
+class InfoPanelDialog(ThemedStyleMixin, QDialog):
     """Near-fullscreen dialog showing all sub-tables of a section side by side."""
 
-    def __init__(self, gui, section_key, parent=None):
+    def __init__(self, gui, section_key, parent=None, initial_attr=None):
         super().__init__(parent or gui)
         self.gui = gui
         self.section_key = section_key
         self.section_items = SECTION_DEFS.get(section_key, [])
+        # SPEC-AVA-002 §4.1: the gui attribute the user was looking at when they
+        # double-clicked, so the dialog opens on THAT page instead of page 0.
+        # None (or an attribute with no page, e.g. Nabhasa) falls back to 0.
+        self._initial_attr = initial_attr
+        self._page_attrs = []
+
+        self._setup_ui()
+
+    def refresh_theme(self):
+        """Re-theme a dialog that is open while the theme changes.
+
+        SPEC-THM-002 §6.4. Before this the dialog simply went stale: it is
+        non-modal and long-lived, has no refresh path of its own, and was absent
+        from core_gui_qt._on_theme_changed's fan-out, so changing theme with a
+        popup open left it painted in the old palette until it was closed.
+
+        AS-BUILT DEVIATION from §6.4.2, deliberate. The spec asks for all 28
+        setStyleSheet call sites in this file to be converted to
+        _register_themed. This rebuilds the UI instead and restores the page.
+        The reason is the failure mode: a missed conversion is SILENT, and 28
+        sites is 28 chances to miss one now plus one more every time somebody
+        adds a widget. A rebuild covers every site by construction and cannot
+        rot. Construction here is milliseconds (it clones already-populated
+        tables), and a theme switch is a rare, user-initiated event.
+
+        _register_themed / _register_themed_effect are still used for the
+        elevation surfaces, because those must also survive the rebuild path
+        used by any future partial refresh.
+        """
+        page = None
+        if hasattr(self, "_page_stack") and self._page_stack is not None:
+            try:
+                idx = self._page_stack.currentIndex()
+                if 0 <= idx < len(self._page_attrs):
+                    page = self._page_attrs[idx]
+            except RuntimeError:
+                page = None      # C++ side already gone
+        if page is None:
+            page = self._initial_attr
+        self._initial_attr = page
+
+        # Drop the old tree. Re-parenting the layout onto a throwaway widget is
+        # the supported way to destroy a layout AND its children together —
+        # deleting widgets one by one here races the pending paint events.
+        old = self.layout()
+        if old is not None:
+            QWidget().setLayout(old)
+        self.__dict__["_themed_registry"] = []
+        self.__dict__["_themed_effect_registry"] = []
+        self._page_attrs = []
 
         self._setup_ui()
 
@@ -147,9 +255,13 @@ class InfoPanelDialog(QDialog):
 
         self.setModal(False)
         # SPEC-THM-001 G05: live theme colors (were frozen BG / TEXT_PRIMARY).
+        # SPEC-THM-002 W1: the dialog is elevation level 0, the page everything
+        # else sits above. Same value as the old secondary_dark by construction
+        # (K[0] == 0.0), so this changes nothing on its own — it just puts the
+        # page on the ramp so the containers above it have something to rise from.
         self.setStyleSheet(f"""
             QDialog {{
-                background-color: {theme['secondary_dark']};
+                background-color: {elevation_color(0)};
                 color: {theme['secondary_text']};
             }}
         """)
@@ -167,10 +279,12 @@ class InfoPanelDialog(QDialog):
 
         # Build the panel widgets first; layout differs by section.
         panels = []  # list of (label, widget)
+        self._page_attrs = []  # parallel to `panels`: the gui attr each page shows
         for attr_name, label in self.section_items:
             widget = self._build_section_widget(attr_name)
             if widget is not None:
                 panels.append((label, widget))
+                self._page_attrs.append(attr_name)
 
         if self.section_key in ("aspects", "karakas"):
             # Too many panels for side-by-side — show ONE full-width
@@ -188,9 +302,27 @@ class InfoPanelDialog(QDialog):
             """)
 
             for label, widget in panels:
-                container = QWidget()
+                # SPEC-THM-002 W1 E1/E3: each side-by-side panel is an elevated
+                # container at level 2 ("card"), not a bare transparent QWidget.
+                # Level 2 rather than 1 because the T-3 probe measured level 1 at
+                # only +4.0 against the page on a LIGHT theme — the whole light
+                # ramp spans 12 points across three steps, so one adjacent step
+                # can never clear the spec's own 5.0 floor. These containers ARE
+                # cards, which is what level 2 is named; it gives +8.0 on light
+                # and +12.4 on dark. WA_StyledBackground
+                # is required (INV-7) — a plain QWidget subclass ignores a
+                # background rule without it and the lift would silently no-op.
+                container = QFrame()
+                container.setObjectName("elevPanel")
+                container.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+                self._register_themed(
+                    container,
+                    lambda: elevation_surface_style("QFrame#elevPanel", 2))
+                self._register_themed_effect(
+                    container, lambda w: apply_elevation_shadow(w, 2))
+                _pad = 4 + elevation_margin(2)
                 container_layout = QVBoxLayout(container)
-                container_layout.setContentsMargins(4, 4, 4, 4)
+                container_layout.setContentsMargins(_pad, _pad, _pad, _pad)
                 container_layout.setSpacing(4)
 
                 sub_label = QLabel(label)
@@ -275,6 +407,12 @@ class InfoPanelDialog(QDialog):
         elif self.section_key == "aspects":
             if attr_name == "aspects_table":
                 return self._build_popup_aspects_table(source_widget)
+            if attr_name == "avastha_table":
+                # SPEC-AVA-002 §4.5: not a clone of the cramped panel table —
+                # a page built for the width, carrying the cast band the panel
+                # has no room for.
+                from apps.widgets.avastha_fullscreen import AvasthaFullscreenPage
+                return AvasthaFullscreenPage(self.gui, parent=self)
             if attr_name == "exchange_display":
                 return self._build_popup_exchange_display(source_widget)
 
@@ -350,7 +488,21 @@ class InfoPanelDialog(QDialog):
         self._page_stack = QStackedWidget()
         for _, widget in panels:
             self._page_stack.addWidget(widget)
-        area_layout.addWidget(self._page_stack, stretch=1)
+
+        # SPEC-THM-002 W1: the stack rides inside an elevated container so the
+        # page reads as a card on the dialog rather than as one flat expanse.
+        page_frame = QFrame()
+        page_frame.setObjectName("elevPage")
+        page_frame.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self._register_themed(
+            page_frame, lambda: elevation_surface_style("QFrame#elevPage", 2))
+        self._register_themed_effect(
+            page_frame, lambda w: apply_elevation_shadow(w, 2))
+        _pad = 6 + elevation_margin(2)
+        frame_layout = QVBoxLayout(page_frame)
+        frame_layout.setContentsMargins(_pad, _pad, _pad, _pad)
+        frame_layout.addWidget(self._page_stack)
+        area_layout.addWidget(page_frame, stretch=1)
 
         n = len(panels)
         prev_btn.clicked.connect(
@@ -358,7 +510,14 @@ class InfoPanelDialog(QDialog):
         next_btn.clicked.connect(
             lambda: self._set_page((self._page_stack.currentIndex() + 1) % n))
 
-        self._set_page(0)
+        # SPEC-AVA-002 §4.1: open on the page the user was reading. The lookup is
+        # by ATTRIBUTE NAME, never by index — the live QStackedWidget indices do
+        # not correspond to page positions (karakas has two inner stacks that
+        # each expand into two pages, so its Hora tab is stack 1 but page 2).
+        start = 0
+        if self._initial_attr in self._page_attrs:
+            start = self._page_attrs.index(self._initial_attr)
+        self._set_page(start)
         return area
 
     def _set_page(self, idx):
@@ -462,27 +621,16 @@ class InfoPanelDialog(QDialog):
 
                     tbl.setItem(r, c, new_item)
 
-        # Larger font for fullscreen readability
-        # SPEC-THM-001 G05: live theme color (was frozen TEXT_PRIMARY/BORDER).
-        tbl.setStyleSheet(f"""
-            QTableWidget {{
-                background-color: {theme['secondary_dark']};
-                color: {theme['secondary_text']};
-                border: 1px solid {theme['secondary_light']};
-                font-size: {scaled_area_px('tables')}px;
-                gridline-color: {theme['secondary_light']};
-            }}
-            QTableWidget::item {{
-                padding: 6px;
-            }}
-            QHeaderView::section {{
-                background-color: {theme['secondary']};
-                color: {theme['secondary_text']};
-                border: 1px solid {theme['secondary_light']};
-                padding: 6px;
-                font-size: {scaled_area_px('table_headers')}px;
-                font-weight: bold;
-            }}
+        # Larger font for fullscreen readability.
+        # SPEC-THM-002 W2: was a third hand-rolled copy of the same block, one of
+        # the two this wave collapses onto _popup_table_style. The ::item rule
+        # here sets PADDING ONLY and is safe to keep — INV-5 is about a
+        # BACKGROUND in ::item, which would defeat the delegate's fillRect and
+        # erase the semantic colours. Padding does not paint.
+        tbl.setStyleSheet(
+            self._popup_table_style(matrix=attr_name in _MATRIX_TABLES)
+            + """
+            QTableWidget::item { padding: 6px; }
         """)
 
         for c in range(cols):
@@ -638,25 +786,30 @@ class InfoPanelDialog(QDialog):
         "weak":     ("#2E3440", "#90A4AE", "#EDEEF2", "#5C616E"),
     }
 
-    def _popup_table_style(self):
-        """Fullscreen table style — no ::item rule so delegate colors work."""
-        theme = get_theme_colors()
-        # SPEC-THM-001 G05: live theme color (was frozen TEXT_PRIMARY/BORDER).
-        return f"""
-            QTableWidget {{
-                background-color: {theme['secondary_dark']};
-                color: {theme['secondary_text']};
-                border: 1px solid {theme['secondary_light']};
-                font-size: {scaled_area_px('tables')}px;
-                gridline-color: {theme['secondary_light']};
-            }}
-            QHeaderView::section {{
-                background-color: {theme['secondary']};
-                color: {theme['secondary_text']};
-                border: 1px solid {theme['secondary_light']};
-                padding: 6px; font-size: {scaled_area_px('table_headers')}px; font-weight: bold;
-            }}
+    def _popup_table_style(self, matrix=False):
+        """Fullscreen table style — no ::item rule so delegate colors work.
+
+        SPEC-THM-002 W2: the body sits at elevation level 1 (it is inside an
+        elevated container), the header gets the E4 gradient, and the gridline
+        drops from full-strength `secondary_light` to a low-alpha hairline. That
+        gridline was the single loudest thing in these tables and most of the
+        "blunt table" complaint — at 0.18 alpha it reads as structure instead of
+        noise.
+
+        `matrix=True` keeps a stronger grid (D-4). On the Avastha 7x7 and the
+        Tajika 11x11 the grid is doing real work: it is what lets the eye track a
+        row across to its column. Quieting those to list-table levels would cost
+        legibility to buy calm.
+
+        The "no ::item rule" comment above is load-bearing, not decorative — a
+        QSS ::item background DEFEATS a delegate's own fillRect (INV-5), so one
+        would silently erase every semantic cell colour in the popup.
         """
+        return (elevation_table_style(level=2, header_level=3, matrix=matrix)
+                + f"""
+            QTableWidget {{ font-size: {scaled_area_px('tables')}px; }}
+            QHeaderView::section {{ font-size: {scaled_area_px('table_headers')}px; }}
+        """)
 
     def _build_popup_karakas_enriched(self):
         """Fullscreen Karakas+Avastha enriched view (SPEC-KARAKAS-LAYOUT-001)."""
@@ -796,15 +949,20 @@ class InfoPanelDialog(QDialog):
             # Avastha matrix columns
             for col_planet, _ in _COL_ABBR:
                 if col_planet == pname:
+                    # Diagonal = self base 60 x dignity multiplier (SPEC-AVA-001
+                    # rev3): EX=120, MK=105, OH=90, none/debilitated=60.
                     dig = dignity_data.get(pname)
+                    diag_val = SELF_BASE * dignity_multiplier(
+                        dig["virupas"] if dig else 0)
                     if dig:
                         abbr_map = {"exaltation": "EX", "mulatrikona": "MK", "own_sign": "OH"}
                         html += (
                             f"<td style='{td_s} text-align:center; "
                             f"color:{c('PROUD')}; font-weight:bold;'>"
-                            f"{abbr_map.get(dig['type'], '?')}={dig['virupas']:.0f}</td>")
+                            f"{abbr_map.get(dig['type'], '?')}={diag_val:.0f}</td>")
                     else:
-                        html += f"<td style='{td_s} text-align:center;'>-</td>"
+                        html += (f"<td style='{td_s} text-align:center;'>"
+                                 f"{diag_val:.0f}</td>")
                 else:
                     entry = matrix.get((col_planet, pname))
                     if not entry or (not entry.get("is_yuti") and entry["virupas"] <= 0):
@@ -1349,16 +1507,21 @@ class InfoPanelDialog(QDialog):
             if target:
                 for col_planet, _ in _COL_ABBR:
                     if col_planet == target:
+                        # Diagonal = self base 60 x dignity multiplier
+                        # (SPEC-AVA-001 rev3).
                         dig = dignity_data.get(target)
+                        diag_val = SELF_BASE * dignity_multiplier(
+                            dig["virupas"] if dig else 0)
                         if dig:
                             abbr_map = {"exaltation": "EX", "mulatrikona": "MK", "own_sign": "OH"}
                             code = abbr_map.get(dig["type"], "?")
                             html += (
                                 f"<td style='{td_s} text-align:center; "
                                 f"color:{c('PROUD')}; font-weight:bold;'>"
-                                f"{code}={dig['virupas']:.0f}</td>")
+                                f"{code}={diag_val:.0f}</td>")
                         else:
-                            html += f"<td style='{td_s} text-align:center;'>-</td>"
+                            html += (f"<td style='{td_s} text-align:center;'>"
+                                     f"{diag_val:.0f}</td>")
                     else:
                         entry = avastha_matrix.get((col_planet, target))
                         if not entry or (not entry.get("is_yuti") and entry["virupas"] <= 0):
@@ -1731,119 +1894,34 @@ class InfoPanelDialog(QDialog):
         The main panel shows short blurbs with click-for-detail links; the
         fullscreen page has the space to show everything at once.
         """
-        from PySide6.QtWidgets import QTextBrowser
-        import html as _html_mod
-        theme = get_theme_colors()
+        # Fullscreen pop-out reuses the SAME widget as the docked panel, built
+        # with wide=True (all cards pre-expanded). This keeps embed and pop-out
+        # from ever drifting (they share one renderer). H8: no import of the
+        # deleted _YOGA_DISPLAY/_YOGA_ORDER symbols, no src.toHtml() fallback.
+        from apps.widgets.parivartana_widget import ParivartanaWidget
+        from AI_tools.AI_main_function.interchange import get_all_interchanges
+        from AI_tools.AI_main_function.final_dispositor import get_dispositor_themes
 
-        tb = QTextBrowser()
-        tb.setReadOnly(True)
-        tb.setOpenLinks(False)
-        tb.setOpenExternalLinks(False)
-
-        html = None
+        widget = ParivartanaWidget(wide=True)
         try:
             chart = getattr(self.gui.state, 'active_chart', None)
             if chart is not None:
-                from AI_tools.AI_main_function.interchange import get_all_interchanges
-                from AI_tools.AI_main_function.constants import (
-                    PARIVARTANA_YOGA_SHORT, PARIVARTANA_YOGA_FULL,
-                )
-                from apps.widgets.panel_controllers.interchange_controller import (
-                    _YOGA_DISPLAY, _YOGA_ORDER,
-                )
-
-                text_color = theme['secondary_text']
-                base_px = scaled_area_px('info_text')
-                result = get_all_interchanges(chart)
-                interchanges = result["interchanges"]
-
-                if not interchanges:
-                    html = (
-                        f"<div style='padding: 24px; text-align: center;'>"
-                        f"<p style='color: #2ecc71; font-weight: bold; font-size: {base_px + 4}px;'>"
-                        f"No Parivartana yogas detected</p>"
-                        f"<p style='color: {text_color}; font-size: {base_px}px;'>"
-                        f"This chart has no planetary mutual exchange.</p>"
-                        f"</div>"
-                    )
-                else:
-                    grouped = {}
-                    for rec in interchanges:
-                        grouped.setdefault(rec[6], []).append(rec)
-
-                    html = f"<div style='padding: 10px; color: {text_color};'>"
-                    for yoga_key in _YOGA_ORDER:
-                        if yoga_key not in grouped:
-                            continue
-                        color, label = _YOGA_DISPLAY.get(yoga_key, ("#999", yoga_key))
-                        short_desc = PARIVARTANA_YOGA_SHORT.get(yoga_key, "")
-                        full_text = PARIVARTANA_YOGA_FULL.get(yoga_key, "")
-
-                        html += (
-                            f"<h2 style='margin: 14px 0 2px 0; color: {color};'>"
-                            f"{label}</h2>"
-                        )
-                        if short_desc:
-                            html += (
-                                f"<p style='margin: 0 0 8px 0; color: {text_color}; "
-                                f"font-size: {base_px}px; font-style: italic;'>"
-                                f"{_html_mod.escape(short_desc)}</p>"
-                            )
-
-                        html += (
-                            f"<table cellpadding='6' cellspacing='0' "
-                            f"style='border-collapse: collapse; font-size: {base_px + 2}px;'>"
-                        )
-                        for rec in grouped[yoga_key]:
-                            planet_a, sign_a, house_a, planet_b, sign_b, house_b, _ = rec
-                            html += (
-                                f"<tr>"
-                                f"<td style='color: {text_color}; font-weight: bold;'>{planet_a}</td>"
-                                f"<td style='color: {color};'>{sign_a}</td>"
-                                f"<td style='color: {text_color};'>H{house_a}</td>"
-                                f"<td style='color: {text_color}; padding: 0 10px;'>&#8596;</td>"
-                                f"<td style='color: {text_color}; font-weight: bold;'>{planet_b}</td>"
-                                f"<td style='color: {color};'>{sign_b}</td>"
-                                f"<td style='color: {text_color};'>H{house_b}</td>"
-                                f"</tr>"
-                            )
-                        html += "</table>"
-
-                        if full_text:
-                            paragraphs = [
-                                p.strip() for p in full_text.split("\n\n") if p.strip()
-                            ]
-                            for p in paragraphs:
-                                p_html = _html_mod.escape(p).replace("\n", "<br>")
-                                html += (
-                                    f"<p style='margin: 8px 0 0 0; color: {text_color}; "
-                                    f"font-size: {base_px}px; line-height: 1.45;'>"
-                                    f"{p_html}</p>"
-                                )
-                    html += "</div>"
+                # Frame sidereal at this seam too (H3) so the pop-out and the
+                # docked panel show the SAME yogas in sidereal mode.
+                state = getattr(self.gui, 'state', None)
+                if state is not None and getattr(state, 'aditya_mode', None) == "sidereal":
+                    from core.chart_factory import rebuild_chart
+                    chart = rebuild_chart(chart, mode="sidereal")
+                interchanges = get_all_interchanges(chart)
+                themes = get_dispositor_themes(chart)
+                widget.refresh(themes, interchanges)
+            else:
+                widget.clear()
         except Exception:
-            html = None
-
-        if html is None:
-            # Fallback: clone the main panel content (short blurbs)
-            html = src.toHtml()
-            import re
-            def _scale_font(m):
-                size = float(m.group(1))
-                return f"font-size: {size * 1.5:.0f}px"
-            html = re.sub(r'font-size:\s*(\d+(?:\.\d+)?)px', _scale_font, html)
-
-        tb.setHtml(html)
-
-        tb.setStyleSheet(f"""
-            QTextBrowser {{
-                background-color: {theme['secondary_dark']};
-                color: {theme['secondary_text']};
-                border: 1px solid {theme['secondary_light']};
-                font-size: {scaled_area_px('info_text')}px;
-            }}
-        """)
-        return tb
+            import traceback
+            traceback.print_exc()
+            widget.clear()
+        return widget
 
     # ── Enhanced popup builders for Dignities ────────────────────────
 
@@ -2060,8 +2138,13 @@ class InfoPanelDialog(QDialog):
         return {"headers": headers, "rows": data_rows}
 
 
-def open_panel_dialog(gui, section_key):
+def open_panel_dialog(gui, section_key, initial_attr=None):
     """Open an InfoPanelDialog for the given section.
+
+    ``initial_attr`` is the gui attribute of the sub-tab the user was reading;
+    the dialog opens on that page instead of the section's first one
+    (SPEC-AVA-002 §4.1). Omitted, it resolves from the live UI, so a caller that
+    does not care still lands on the right page.
 
     All panels use controllers now (panel_manager is gone).
     The aspects sub-panels are DEFERRED controllers (created on first tab
@@ -2079,5 +2162,23 @@ def open_panel_dialog(gui, section_key):
             if ctrl:
                 ctrl._refresh()
 
-    dlg = InfoPanelDialog(gui, section_key, parent=gui)
+    if initial_attr is None:
+        initial_attr = current_subtab_attr(gui, section_key)
+
+    dlg = InfoPanelDialog(gui, section_key, parent=gui, initial_attr=initial_attr)
+
+    # SPEC-THM-002 §6.4 / D-7: register the dialog so a theme switch reaches it.
+    # WEAKREF, not the dialog itself: a strong reference here would pin every
+    # dialog the user ever opened for the life of the app — the same leak
+    # SPEC-COT-001 records for its settings closures. Dead refs are pruned on
+    # each pass rather than on close, so a dialog destroyed by Qt needs no
+    # co-operation from us.
+    import weakref
+    refs = getattr(gui, "_open_panel_dialogs", None)
+    if refs is None:
+        refs = []
+        gui._open_panel_dialogs = refs
+    refs[:] = [r for r in refs if r() is not None]
+    refs.append(weakref.ref(dlg))
+
     dlg.show()

@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 # Copyright (C) 2026 Lorris Turpin / 360 Hearts in the Sky
 # Licensed under AGPL-3.0 — see LICENSE file for details.
-# Commercial exception: see NOTICE file.
 """
 Varga Selection Column
 Slim column with divisional chart selection buttons (D-1 to D-60)
@@ -9,12 +8,14 @@ Slim column with divisional chart selection buttons (D-1 to D-60)
 Extracted from core_gui_qt.py for modularity
 """
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QPushButton, QScrollArea, QButtonGroup, QSizePolicy
+    QWidget, QVBoxLayout, QPushButton, QScrollArea, QButtonGroup, QSizePolicy,
+    QFrame
 )
 from PySide6.QtCore import Qt
 
 # Import centralized theme - use theme colors for checked state
 from ui.qt_theme import TEXT, get_theme_colors, scaled_px, scaled_area_px
+from core.varga_codes import varga_display_label
 
 
 def create_varga_column(gui, is_varga_implemented, get_varga_name):
@@ -110,13 +111,10 @@ def create_varga_column(gui, is_varga_implemented, get_varga_name):
 
     for varga_num in varga_numbers:
         if is_varga_implemented(varga_num):
-            # Display label: use "10R" for 1010, "24R" for 2424
-            if varga_num == 1010:
-                label = "10R"
-            elif varga_num == 2424:
-                label = "24R"
-            else:
-                label = str(varga_num)
+            # "10R" for 1010, "24R" for 2424 — spelled once, in
+            # core.varga_codes, so the column and the center-box label
+            # cannot disagree (SPEC-VGC-001).
+            label = varga_display_label(varga_num)
 
             btn = QPushButton(label)
             btn.setCheckable(True)
@@ -129,11 +127,102 @@ def create_varga_column(gui, is_varga_implemented, get_varga_name):
             gui.varga_buttons[varga_num] = btn
             layout.addWidget(btn)
 
+    # SPEC-VGC-001: the varga-in-center toggle, below D-60.
+    layout.addWidget(_center_separator(theme))
+    layout.addWidget(_create_center_toggle(gui, theme))
+
     # Add stretch at bottom to push buttons up
     layout.addStretch()
 
     scroll.setWidget(container)
     return scroll
+
+
+# Nested frames: a chart inside a chart. Picked on screen from five
+# candidates (SPEC-VGC-001 D-6). "IN" was rejected — it sits in a column of
+# short text labels and reads as another varga code at a glance, which is
+# exactly the confusion INV-4 exists to prevent. Renders for the pick:
+#   scripts/render_varga_center_button_candidates.py
+CENTER_TOGGLE_MARK = "\u29c9"
+
+
+def _center_separator(theme):
+    """A thin rule between D-60 and the toggle. The toggle has to read as
+    part of the column AND as not-a-varga; the rule does half that work."""
+    rule = QFrame()
+    rule.setFrameShape(QFrame.Shape.HLine)
+    rule.setFixedHeight(6)
+    rule.setStyleSheet(f"color: {theme['secondary_light']};")
+    return rule
+
+
+def center_toggle_style(theme):
+    """Same shape as the varga buttons, but the checked state fills with the
+    theme primary instead of merely outlining — a varga is *selected*, this
+    is *on*, and they must not look alike."""
+    return f"""
+        QPushButton {{
+            background-color: {theme["secondary_dark"]};
+            color: {theme["secondary_text"]};
+            border: 1px solid {theme["secondary_light"]};
+            border-radius: 3px;
+            font-size: {scaled_area_px('sidebar')}px;
+            font-weight: bold;
+            min-height: {scaled_px(22)}px;
+            max-height: {scaled_px(22)}px;
+            max-width: {scaled_px(35)}px;
+            padding: 0px;
+            outline: none;
+        }}
+        QPushButton:hover {{
+            background-color: {theme["secondary_light"]};
+            border: 1px solid {theme["primary"]};
+        }}
+        QPushButton:checked {{
+            background-color: {theme["primary"]};
+            color: {theme["secondary_dark"]};
+            border: 2px solid {theme["primary_light"]};
+        }}
+        QPushButton:disabled {{
+            color: {theme["secondary_light"]};
+            border: 1px solid {theme["secondary_dark"]};
+        }}
+        /* SPEC-VGC-001 D-1/INV-5: the mode is on but something outranks it
+           (transit, time adjust). A lit toggle over a box showing something
+           else would tell the user the varga is displayed when it is not. */
+        QPushButton[suspended="true"] {{
+            background-color: {theme["secondary_dark"]};
+            color: {theme["secondary_light"]};
+            border: 2px dashed {theme["primary"]};
+        }}
+        QPushButton:focus {{ outline: none; }}
+    """
+
+
+def _create_center_toggle(gui, theme):
+    """Build the toggle and hang it off `gui`.
+
+    INV-4: it must NOT join `gui.varga_button_group`. That group is
+    EXCLUSIVE, so joining it would uncheck the selected varga the moment the
+    toggle is pressed and the app would believe D-1 is selected. It is kept
+    out of `gui.varga_buttons` too, because that dict is indexed by varga
+    number and iterated as vargas elsewhere.
+    """
+    btn = QPushButton(CENTER_TOGGLE_MARK)
+    btn.setCheckable(True)
+    btn.setChecked(bool(getattr(gui, "varga_in_center", False)))
+    btn.setStyleSheet(center_toggle_style(theme))
+    # Surface-neutral: _sync_varga_center_button replaces this with wording
+    # for whichever view is visible (SPEC-VGO-001 INV-8). This is only the
+    # text between construction and the first sync.
+    btn.setToolTip(
+        "Show the divisional chart beside the main chart,\n"
+        "keeping D-1 in the main chart")
+    handler = getattr(gui, "_toggle_varga_in_center", None)
+    if handler is not None:
+        btn.toggled.connect(handler)
+    gui.varga_center_button = btn
+    return btn
 
 
 def refresh_varga_theme(gui):
@@ -162,3 +251,9 @@ def refresh_varga_theme(gui):
     """
     for btn in getattr(gui, 'varga_buttons', {}).values():
         btn.setStyleSheet(style)
+
+    # The center toggle is deliberately outside `varga_buttons` (INV-4), so
+    # it needs its own line here or it keeps the previous theme's colours.
+    toggle = getattr(gui, 'varga_center_button', None)
+    if toggle is not None:
+        toggle.setStyleSheet(center_toggle_style(theme))

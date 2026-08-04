@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 # Copyright (C) 2026 Lorris Turpin / 360 Hearts in the Sky
 # Licensed under AGPL-3.0 — see LICENSE file for details.
-# Commercial exception: see NOTICE file.
 """
 AI Aspects - Vedic Planetary Aspect Calculator (Graha Sphuta Drishti)
 ======================================================================
@@ -503,50 +502,29 @@ def parse_dms_to_decimal(dms_str):
 
 
 def extract_from_chtk(chtk_path):
-    """Extract planet data from CHTK file."""
-    reader = CHTKReader()
-    chtk_data = reader.read_chtk_file(chtk_path)
+    """Extract planet data from a chart file (.chtk or .toml).
 
-    year = chtk_data['year']
-    month = chtk_data['month']
-    day = chtk_data['day']
-    hour = chtk_data['hour']
-    minute = chtk_data['minute']
-    second = chtk_data['second']
+    SPEC-IMPORT-001 §6.1: dispatch via BirthDataManager.create_birth_data_from_file
+    so .toml charts work here too (previously CHTKReader.read_chtk_file, .chtk-only).
+    The canonical dict already does the LOCAL->UTC conversion this function used to
+    do inline (BCE-safe, date-aware IANA, War Time flag), so the manual TZ block is
+    replaced by reading flat latitude/longitude and the canonical utc_* fields.
+    """
+    from managers.birth_data_manager import BirthDataManager
 
-    coords = chtk_data['coordinates']
-    lat = coords['latitude']
-    lon = coords['longitude']
+    bd = BirthDataManager.create_birth_data_from_file(str(chtk_path))
 
-    if lat == 0.0 and 'latitude_dms' in coords:
-        lat = parse_dms_to_decimal(coords['latitude_dms'])
-    if lon == 0.0 and 'longitude_dms' in coords:
-        lon = parse_dms_to_decimal(coords['longitude_dms'])
-
-    # Parse timezone from CHTK
-    tz_raw = chtk_data['timezone']
-    time_change = int(chtk_data['time_change_flag'])
-
-    if '/' in tz_raw:
-        # IANA name in CHTK field: STANDARD sign, never CHTK-inverted. Do NOT invert.
-        # chtk_reader passes pure IANA names through already sign-stripped; no manual
-        # sign-strip parsing here (it would trip the W7 completeness grep).
-        std_hours, _ = resolve_total_offset(tz_raw, year, month, day)  # errors propagate loudly
-        total = std_hours + (time_change if time_change in (1, 2) else 0)
-        utc = local_to_utc_total(year, month, day, hour, minute, second, total)
-    else:
-        # Input convention: RAW CHTK (inverted sign)
-        std_str = invert_chtk_timezone(tz_raw)
-        utc = local_to_utc(year, month, day, hour, minute, second, std_str, time_change)
-    utc_year, utc_month, utc_day, utc_hour, utc_minute, utc_second = utc
+    lat = bd['latitude']
+    lon = bd['longitude']
 
     from core.chart_factory import build_chart_from_params
     from libaditya import swe
-    hour_decimal = utc_hour + utc_minute / 60.0 + utc_second / 3600.0
-    jd = swe.julday(utc_year, utc_month, utc_day, hour_decimal)
+    hour_decimal = (bd['utc_hour'] + bd['utc_minute'] / 60.0
+                    + bd['utc_second'] / 3600.0)
+    jd = swe.julday(bd['utc_year'], bd['utc_month'], bd['utc_day'], hour_decimal)
     chart = build_chart_from_params(jd=jd, lat=lat, lon=lon, mode="aditya", ayanamsa=1)
 
-    return chart, chtk_data['name']
+    return chart, bd['name']
 
 
 def extract_from_datetime(date_str, time_str, lat, lon):

@@ -2,7 +2,7 @@
 
 **Tropical Vedic astrology, open-sourced.**
 
-Varuna360 Core is the free, open-source foundation of Varuna360 — a desktop
+Varuna360 Core is the free, open-source foundation of Varuna360, a desktop
 astrology application that computes and visualizes charts in **Tropical,
 Sidereal, and Aditya Circle** modes with Vedic concepts (Adityas,
 Nakshatras, Vedic mythology). The author practices Tropical astrology,
@@ -62,13 +62,15 @@ across his various repositories on
 - Avastha relationship analysis (help and damage between planets)
 - Element and Modality breakdown with pie charts
 - Planetary strength (Shadbala) and Karakas panels
-- Available on Windows and Linux (Mac coming later)
+- Available on Windows, Linux and Mac
 
 ## What's in Varuna360 Pro
 
-Pro is a separate, proprietary edition with new screens, advanced research
-tools, and features being added over time. It is **not** in this repository
-and Core never imports from it. If you want any of these, see
+Pro is the larger paid edition, with new screens, advanced research tools,
+and features being added over time. It is AGPL-3.0 too, like everything else
+in Varuna360: Pro subscribers receive its corresponding source. It is simply
+**not** published in this repository, and Core never imports from it. If you
+want any of these, see
 [Varuna360 Pro](https://360heartsinthesky.com/subscribe):
 
 - All Core features
@@ -87,7 +89,7 @@ and Core never imports from it. If you want any of these, see
 
 ## Pricing
 
-Varuna360 Core runs fully from this repository under AGPL-3.0 — no
+Varuna360 Core runs fully from this repository under AGPL-3.0, with no
 account, no payment, no server call at launch. The desktop app is a
 legitimate product you can test for free for as long as you want.
 When you decide it is worth paying for, the website offers three
@@ -101,20 +103,34 @@ account tiers that unlock content on the web app.
 | Registered free    | €0                           | All No account features plus celebrity database, transit ring (current planets), 2 save slots |
 | Explorer           | €9.99 / month                | All Registered free features plus CHTK file import, full transit calculation plus Now button, Dignified Planets panel, Divine Cow (Kamadhenu) panel, Planet Strength (Shadbala) panel, 20 save slots |
 
-### Desktop distribution
+### Desktop and mobile distribution
 
 | Distribution       | Price                        | What you get                                                                   | Status      |
 |--------------------|------------------------------|---------------------------------------------------------------------------------|-------------|
 | Source (this repo) | €0                           | Every Core feature, AGPL-3.0, clone and build                                  | Available   |
-| Bundled installer  | From €1 / month, suggested €14.99 / month | Same Core features as source plus pre-built installer, auto-updates, email help, matching website tier | Coming Soon |
+| Lite Mobile        | From €3 / month              | The Aditya wheel on Android: Hora and Trimsamsa rings, Avastha, 16 Tajika aspects, live transits and live Ascendant | Available |
+| Lite Desktop       | From €3 / month, suggested €14.99 / month | Same Core features as source plus pre-built installer, auto-updates, email help, matching website tier | Coming Soon |
 | Pro                | €29.99 / month               | Everything in Core plus the "What's in Varuna360 Pro" list above               | Coming Soon |
 
-Every paid tier is a monthly recurring subscription. Paying €9.99 /
-month or more also includes the Explorer website tier. Paying less
-than €9.99 / month grants a partial-access tier on the website.
-Pricing is shown in EUR. The bundled installer and Pro subscription
-will go live on [360heartsinthesky.com](https://360heartsinthesky.com)
-when ready. Source self-host remains free forever under AGPL-3.0.
+Every paid tier is a monthly recurring subscription, priced in EUR.
+
+**You choose what you pay.** Lite Desktop and Lite Mobile use a slider
+starting at €3 / month. €14.99 is what the author suggests, not a gate:
+salaries are not the same everywhere, and there is no proof to provide and
+no country box to tick. Pay what your situation allows, and adjust later if
+it changes.
+
+Two thresholds are worth knowing. From €9.90 / month, Lite Desktop includes
+the mobile app. From €11 / month, it also includes the Explorer website
+tier; below €11 the two subscriptions simply coexist.
+
+**The €29.99 Pro price is not final.** Pro is still growing, and the price
+may change as it does. Treat it as the current intent rather than a
+commitment.
+
+The bundled installers and the Pro subscription go live on
+[360heartsinthesky.com](https://360heartsinthesky.com) when ready. Building
+from this source stays free forever under AGPL-3.0.
 
 ## Running from source
 
@@ -132,10 +148,12 @@ with this repository.
 
 ## License
 
-Varuna360 Core is licensed under the **GNU AGPL v3.0**. See
-[`LICENSE`](LICENSE) for the full text and [`NOTICE`](NOTICE) for copyright
-and commercial-exception information. The author, Lorris Turpin, holds the
-copyright and retains a commercial exception for the Pro edition.
+The whole of Varuna360 is licensed under the **GNU AGPL v3.0**, Core and Pro
+alike. Pro is a paid edition, not a proprietary one. See [`LICENSE`](LICENSE)
+for the full text and [`NOTICE`](NOTICE) for copyright details. The author,
+Lorris Turpin, holds the copyright and, as sole copyright holder, reserves
+the right to license his own code under other terms as well. That reservation
+does not affect the AGPL-3.0 grant on the copy you have.
 
 ## Contributing
 

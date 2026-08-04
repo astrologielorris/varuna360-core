@@ -1,6 +1,5 @@
 # Copyright (C) 2026 Lorris Turpin / 360 Hearts in the Sky
 # Licensed under AGPL-3.0 — see LICENSE file for details.
-# Commercial exception: see NOTICE file.
 """
 Chart Manager - Handles chart file operations and loading
 
@@ -62,7 +61,13 @@ def _format_chart_title(chart, aditya_mode="aditya", chart_data=None, timezone_s
     day = chart_data['local_day'] if 'local_day' in chart_data else chart_data.get('day', 1)
     hour = chart_data['local_hour'] if 'local_hour' in chart_data else chart_data.get('hour', 0)
     minute = chart_data['local_minute'] if 'local_minute' in chart_data else chart_data.get('minute', 0)
-    date_str = f"{month:02d}/{day:02d}/{year}"
+    # SPEC-CAL-001: DISPLAY-ONLY calendar convention. Re-express the stored
+    # (astronomical) civil date for the title string; the tz-offset math below
+    # keeps the astronomical year/month/day (the offset lookup must not shift
+    # by a display convention). Byte-identical at the astronomical default.
+    from core.time_utils import display_civil_date
+    disp_year, disp_month, disp_day = display_civil_date(year, month, day)
+    date_str = f"{disp_month:02d}/{disp_day:02d}/{disp_year}"
     time_str = f"{hour:02d}:{minute:02d}"
 
     tz_part = ""
@@ -164,9 +169,9 @@ class ChartManager:
 
         file_path, _ = QFileDialog.getOpenFileName(
             self.gui,
-            "Open CHTK Chart File",
+            "Open Chart File",
             start_dir,
-            "CHTK Files (*.chtk);;All Files (*)"
+            "Chart Files (*.chtk *.toml);;CHTK Files (*.chtk);;TOML Charts (*.toml);;All Files (*)"
         )
 
         if file_path:
@@ -200,8 +205,10 @@ class ChartManager:
             chtk_path = Path(chtk_path) if isinstance(chtk_path, str) else chtk_path
 
             # === CREATE CANONICAL BIRTH_DATA FIRST ===
-            # This is the Single Source of Truth for all UI components
-            birth_data = BirthDataManager.create_birth_data_from_chtk(str(chtk_path))
+            # This is the Single Source of Truth for all UI components.
+            # SPEC-IMPORT-001 §6.2: dispatch by extension (.chtk / .toml).
+            # chtk_path may be any supported chart file (name kept for history).
+            birth_data = BirthDataManager.create_birth_data_from_file(str(chtk_path))
 
             # Validate and surface warnings (SPEC-TZ-001 8a, non-blocking).
             # Console [TZ-CHECK] lines now; status bar message merged into the
@@ -224,10 +231,18 @@ class ChartManager:
             utc_minute = birth_data['utc_minute']
             utc_second = birth_data['utc_second']
 
-            # Calculate Julian Day for mode switching
+            # Calculate Julian Day for mode switching.
+            # SPEC-IMPORT-001 §6.2: a .toml file may carry an authoritative
+            # [moment].jd (canonical birth_data['julian_day']); prefer it so the
+            # chart uses the file's exact JD instead of recomputing from civil
+            # time. CHTK files have julian_day None -> compute from civil UTC.
             from core.time_utils import julday
-            hour_decimal = utc_hour + utc_minute / 60.0 + utc_second / 3600.0
-            birth_jd = julday(utc_year, utc_month, utc_day, hour_decimal)
+            _bd_jd = birth_data.get('julian_day')
+            if _bd_jd is not None:
+                birth_jd = float(_bd_jd)
+            else:
+                hour_decimal = utc_hour + utc_minute / 60.0 + utc_second / 3600.0
+                birth_jd = julday(utc_year, utc_month, utc_day, hour_decimal)
 
             # Store birth parameters for mode switching
             self.gui.birth_jd = birth_jd
@@ -246,7 +261,7 @@ class ChartManager:
                 mode=mode,
                 name=birth_data.get('name', ''),
                 utcoffset=birth_data.get('utc_offset_hours', 0.0),
-                ayanamsa=getattr(self.gui, 'chart_sidereal_ayanamsa_id', 1),
+                ayanamsa=getattr(self.gui, 'chart_sidereal_ayanamsa_id', 100),
                 hsys=self.state.house_system_code,
             )
 
@@ -258,7 +273,7 @@ class ChartManager:
                     chtk_path=str(chtk_path),
                     birth_data=birth_data,
                     mode=mode,
-                    ayanamsa=getattr(self.gui, 'chart_sidereal_ayanamsa_id', 1),
+                    ayanamsa=getattr(self.gui, 'chart_sidereal_ayanamsa_id', 100),
                     house_system=self.gui.state.house_system,
                     is_human_design=False,
                 )))
@@ -272,6 +287,13 @@ class ChartManager:
                 country=birth_data.get('country', ''),
                 gender=birth_data.get('gender', 'Unknown'),
                 time_change_flag=birth_data.get('time_change_flag', 0),
+                # SPEC-IMPORT-001 §6.3: forward additive TOML metadata (None for
+                # CHTK -> conditionally omitted by make_recipe).
+                rodden=birth_data.get('rodden'),
+                tags=birth_data.get('tags'),
+                notes=birth_data.get('notes'),
+                julian_day=birth_data.get('julian_day'),
+                dst_offset_hours=birth_data.get('dst_offset_hours'),
             )
             self.gui._current_chart_data = None
             self.gui._current_birth_data = birth_data
@@ -375,6 +397,13 @@ class ChartManager:
             if hasattr(self.gui, 'chart_view'):
                 self.gui.chart_view.draw_empty_grid()
 
+            # SPEC-COT-001 §4.8: _update_all_chart_views returns before any
+            # fan-out when active_chart is None, so nothing downstream would
+            # ever reach this view — the closed chart's spread would stay on
+            # screen. Clear it here, next to the South Indian empty grid.
+            if hasattr(self.gui, 'cards_of_truth_view'):
+                self.gui.cards_of_truth_view.clear_chart()
+
             # Clear active chart FIRST so fallback cannot resurrect (six-eyes M3)
             from state.events import SetActiveChart, SetVarga
             self.gui.state.dispatch(SetActiveChart(chart=None))
@@ -408,14 +437,54 @@ class ChartManager:
     # SCREENSHOT
     # =========================================================================
 
-    def take_screenshot(self):
-        """Capture chart view and save as PNG to screenshot_debug/ folder."""
-        # Create screenshot directory if it doesn't exist
-        screenshot_dir = PROJECT_ROOT / "screenshot_debug"
-        screenshot_dir.mkdir(exist_ok=True)
+    def take_screenshot(self, full_window: bool = False):
+        """Capture the chart view (or the whole window) and save it as a PNG.
+
+        Returns the absolute path on success and None on failure. Callers must
+        treat None as an error: until 2026-08-04 this returned nothing at all on
+        every path, so the remote command reported ``ok: True, path: ""`` even
+        when the save had raised and been swallowed.
+
+        ``full_window=True`` grabs the top-level window via ``window.grab()``.
+        ``screen.grabWindow()`` must never be used here -- on this machine it
+        grabs the whole desktop (see test_remote_control_visual.py:1944).
+        A QDialog is its own top-level and is invisible to window.grab(); grab
+        the dialog directly instead.
+        """
+        # Resolve the screenshot directory, in order:
+        #   1. paths.screenshot_folder if the user configured one. That setting
+        #      has had an editor since it shipped and NO consumer at all -- this
+        #      is its first reader.
+        #   2. the user data dir, so VARUNA360_USER_DATA_DIR isolates captures
+        #      too. Hardcoding PROJECT_ROOT made every harness capture land in
+        #      the real checkout regardless of the isolation env.
+        screenshot_dir = None
+        try:
+            from managers.settings_manager import get_settings
+            configured = (get_settings().get("paths.screenshot_folder") or "").strip()
+            if configured:
+                screenshot_dir = Path(configured)
+        except Exception:
+            screenshot_dir = None
+        if screenshot_dir is None:
+            try:
+                from state.user_data import get_user_data_dir
+                base = get_user_data_dir() or PROJECT_ROOT
+            except Exception:
+                base = PROJECT_ROOT
+            screenshot_dir = Path(base) / "screenshot_debug"
+        try:
+            screenshot_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            self.gui.statusBar().showMessage(
+                f"Screenshot failed: cannot create {screenshot_dir}: {e}")
+            return None
 
         # Generate filename with timestamp and chart name
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        # Milliseconds, not seconds: a scripted burst (the visual harness takes
+        # 18+ captures) put two shots in the same second and the second silently
+        # overwrote the first while both reported success.
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
         chart_name = "chart"
         if self.gui.current_chart_data:
             chart_name = self.gui.current_chart_data.get('name', 'chart')
@@ -423,36 +492,52 @@ class ChartManager:
             chart_name = "".join(c for c in chart_name if c.isalnum() or c in " _-").strip()
             chart_name = chart_name.replace(" ", "_")
 
-        filename = f"{chart_name}_{timestamp}.png"
+        suffix = "_window" if full_window else ""
+        filename = f"{chart_name}_{timestamp}{suffix}.png"
         filepath = screenshot_dir / filename
 
         try:
-            # Render the chart scene to a pixmap
-            scene = self.gui.chart_view.scene
-            scene_rect = scene.sceneRect()
+            if full_window:
+                # House mechanism: widget.grab(), never screen.grabWindow().
+                pixmap = self.gui.grab()
+                saved = pixmap.save(str(filepath), "PNG")
+            else:
+                # Render the chart scene to a pixmap
+                scene = self.gui.chart_view.scene
+                scene_rect = scene.sceneRect()
 
-            # Create a pixmap with the scene dimensions
-            image = QImage(
-                int(scene_rect.width()),
-                int(scene_rect.height()),
-                QImage.Format.Format_ARGB32
-            )
-            image.fill(Qt.GlobalColor.transparent)
+                # Create a pixmap with the scene dimensions
+                image = QImage(
+                    int(scene_rect.width()),
+                    int(scene_rect.height()),
+                    QImage.Format.Format_ARGB32
+                )
+                image.fill(Qt.GlobalColor.transparent)
 
-            # Render the scene
-            painter = QPainter(image)
-            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-            painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
-            scene.render(painter)
-            painter.end()
+                # Render the scene
+                painter = QPainter(image)
+                painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+                painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+                scene.render(painter)
+                painter.end()
 
-            # Save to file
-            image.save(str(filepath), "PNG")
+                # Save to file
+                saved = image.save(str(filepath), "PNG")
+
+            # QImage.save()/QPixmap.save() report failure by return value, not by
+            # raising. An unwritable directory used to sail straight past here.
+            if not saved:
+                self.gui.statusBar().showMessage(
+                    f"Screenshot failed: could not write {filepath}")
+                print(f"❌ Screenshot error: save returned False for {filepath}")
+                return None
 
             self.gui.statusBar().showMessage(f"Screenshot saved: {filename}")
+            return str(filepath)
 
         except Exception as e:
             self.gui.statusBar().showMessage(f"Screenshot failed: {e}")
             print(f"❌ Screenshot error: {e}")
             import traceback
             traceback.print_exc()
+            return None

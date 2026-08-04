@@ -1,6 +1,5 @@
 # Copyright (C) 2026 Lorris Turpin / 360 Hearts in the Sky
 # Licensed under AGPL-3.0 — see LICENSE file for details.
-# Commercial exception: see NOTICE file.
 """
 Constants for the round zodiac wheel.
 Colors, radii, Aditya names, zodiac symbols, and element mappings.
@@ -26,6 +25,18 @@ ELEMENT_COLORS = {
 
 # Element cycle pattern (repeats 3 times for 12 signs)
 ELEMENT_CYCLE = ["Fire", "Earth", "Air", "Water"]
+
+# Text color per element (SPEC-SIC-002 INV-7 — additive; the rule is lifted
+# from apps/widgets/wheel_items.py:243-248, which keeps its own inline copy
+# until the dedupe follow-up bead). Water cells are deep blue and need white
+# text; the lighter Fire/Earth/Air cells need dark text.
+ELEMENT_TEXT_COLORS = {
+    "Fire": "#1a1a1a",
+    "Earth": "#1a1a1a",
+    "Air": "#1a1a1a",
+    "Water": "#FFFFFF",
+}
+DEFAULT_ELEMENT_TEXT_COLOR = "#1a1a1a"
 
 # Aditya names in order (index 0 = position at 0° / Aries equivalent)
 ADITYA_NAMES = [
@@ -138,9 +149,27 @@ def get_element_for_sign(sign_index: int) -> str:
 
 
 def get_element_color(sign_index: int) -> str:
-    """Get element color for a sign index (0-11)."""
+    """Get element color for a sign index (0-11).
+
+    SPEC-SAT-001 WI-3: element colors are a semantic palette defined outside the
+    theme system, so the global UI saturation is applied at this resolution site
+    (never at ELEMENT_COLORS itself, so 100% keeps the dict byte-identical). The
+    import is LOCAL to keep this module GUI-free at import time (it is pure data,
+    imported by the lite build allowlist and headless contexts). desat_hex is a
+    no-op at 100.
+    """
     element = get_element_for_sign(sign_index)
-    return ELEMENT_COLORS[element]
+    from ui.qt_theme import desat_hex
+    return desat_hex(ELEMENT_COLORS[element])
+
+
+def element_text_color(element: str) -> str:
+    """Get the label text color for an element name ("Fire"/"Earth"/"Air"/"Water").
+
+    White on Water (deep blue cell), dark text on everything else. Unknown
+    element names fall back to the dark default (SPEC-SIC-002 INV-7).
+    """
+    return ELEMENT_TEXT_COLORS.get(element, DEFAULT_ELEMENT_TEXT_COLOR)
 
 
 def get_aditya_name(sign_index: int) -> str:

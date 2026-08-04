@@ -9,6 +9,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional, Dict, Any
 
+from core.fs_safety import windows_safe_filename
+
 
 def decimal_to_dms(decimal: float, is_latitude: bool = True) -> str:
     """Convert decimal degrees to CHTK DMS format (e.g. '27N57\\'00' or '082W27\\'36')."""
@@ -68,6 +70,44 @@ def standard_to_chtk_timezone(timezone_offset: str) -> str:
     return format_offset(-h, -m) + ":00"
 
 
+# CHTK gender codes. THREE of them, not two (td-n0z9): Kala itself writes 0
+# for a chart with no gender set — verified in Kala-authored files, and 31
+# charts in the reference database carry it.
+CHTK_GENDER_MALE = "1"
+CHTK_GENDER_FEMALE = "2"
+CHTK_GENDER_UNSET = "0"
+
+
+def gender_to_chtk_code(gender) -> str:
+    """The ONE mapping from a gender value to a CHTK line-8 code.
+
+    There used to be two, and they disagreed: create_chtk sent an
+    unrecognised value to '1' (Male) and CHTKWriter.generate_chtk sent it to
+    '2' (Female), so the same chart came out male or female depending on
+    which path touched it. They also accepted different inputs — one took
+    'M'/'f'/'1', the other only the full words.
+
+    Anything not recognisably male or female maps to 0, which the reader
+    turns back into 'Unknown'. A free string from a TOML source ('Other',
+    'Nonbinary') still loses its detail, but it comes back as unknown rather
+    than as the wrong gender, and the TOML side keeps the original string.
+    """
+    if gender is None:
+        return CHTK_GENDER_UNSET
+    if not isinstance(gender, str):
+        try:
+            code = int(gender)
+        except (TypeError, ValueError):
+            return CHTK_GENDER_UNSET
+        return str(code) if code in (0, 1, 2) else CHTK_GENDER_UNSET
+    value = gender.strip().lower()
+    if value in ("male", "m", "1"):
+        return CHTK_GENDER_MALE
+    if value in ("female", "f", "2"):
+        return CHTK_GENDER_FEMALE
+    return CHTK_GENDER_UNSET
+
+
 def create_chtk(
     name: str,
     year: int, month: int, day: int,
@@ -82,13 +122,17 @@ def create_chtk(
 ) -> str:
     """Create a 28-line CHTK file from birth data. Returns path to created file."""
     if output_path is None:
-        safe_name = name.replace(" ", "_").replace("/", "_")
+        # replace()-only sanitising left ':' intact, and a chart name very
+        # often carries one ("Eclipse 11:14 UT"). Windows rejects the whole
+        # path in that case, so the save failed there and only there.
+        safe_name = windows_safe_filename(
+            name.replace(" ", "_").replace("/", "_"))
         output_path = f"{safe_name}.chtk"
 
     lat_dms = decimal_to_dms(lat, is_latitude=True)
     lon_dms = decimal_to_dms(lon, is_latitude=False)
     chtk_timezone = standard_to_chtk_timezone(timezone_offset)
-    gender_code = "1" if gender.lower() == "male" else "2" if gender.lower() == "female" else "1"
+    gender_code = gender_to_chtk_code(gender)
     dst_flag = "1" if dst_active else "0"
     country_code = country.lower().replace(" ", "")[:10] + "3"
     country_lower = country.lower().replace(" ", "")[:10]
@@ -141,6 +185,11 @@ def create_chtk_from_web_data(
     try:
         name = birth_data.get("name", "Unknown")
         safe_name = re.sub(r'[^\w\s-]', '', name).strip().replace(' ', '_')
+        # The regex above already drops every character Windows forbids; this
+        # catches what it cannot see — an empty result and the DOS device
+        # names (a chart literally named "Nul" would produce nul.chtk, which
+        # Windows treats as the null device and silently discards).
+        safe_name = windows_safe_filename(safe_name)
         filename = f"{safe_name}.chtk"
         output_path = output_dir / filename
 
