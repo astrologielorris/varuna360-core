@@ -40,7 +40,7 @@ ADITYA_RETINUE = {
     "Aryama": {
         "number": 2, "type": "even", "tropical": "Aries",
         "rishi": "Pulaha", "gandharva": "Narada", "apsara": "Punjikasthali",
-        "naga": "Kacchanira", "yaksha": "Athauja", "rakshasa": "Praheti",
+        "naga": "Kacchanira", "yaksha": "Rathauja", "rakshasa": "Praheti",
     },
     "Mitra": {
         "number": 3, "type": "odd", "tropical": "Taurus",
