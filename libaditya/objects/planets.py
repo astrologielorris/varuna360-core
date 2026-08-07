@@ -584,7 +584,7 @@ class Sun(Planet):
             return False
 
     def is_oh(self):
-        if self.sign() == 5 and self.amsha_raw_in_sign_longitude() > 20:
+        if self.sign() == 5 and self.amsha_raw_in_sign_longitude() >= 20:
             return True
         else:
             return False
@@ -696,7 +696,7 @@ class Moon(Planet,SWEFirstLast):
             return False
 
     def is_mt(self):
-        if self.sign() == 2 and self.amsha_raw_in_sign_longitude() > 3:
+        if self.sign() == 2 and self.amsha_raw_in_sign_longitude() >= 3:
             return True
         else:
             return False
@@ -818,7 +818,7 @@ class Mars(Planet):
             return False
 
     def is_oh(self):
-        if (self.sign() == 1 and self.amsha_raw_in_sign_longitude() > 12) or self.sign() == 8:
+        if (self.sign() == 1 and self.amsha_raw_in_sign_longitude() >= 12) or self.sign() == 8:
             return True
         else:
             return False
@@ -1021,7 +1021,7 @@ class Jupiter(Planet):
             return False
 
     def is_oh(self):
-        if self.sign() == 12 or (self.sign() == 9 and self.amsha_raw_in_sign_longitude() > 10):
+        if self.sign() == 12 or (self.sign() == 9 and self.amsha_raw_in_sign_longitude() >= 10):
             return True
         else:
             return False
@@ -1141,7 +1141,7 @@ class Venus(Planet,SWEFirstLast):
             return False
 
     def is_oh(self):
-        if self.sign() == 2 or (self.sign() == 7 and self.amsha_raw_in_sign_longitude() > 15):
+        if self.sign() == 2 or (self.sign() == 7 and self.amsha_raw_in_sign_longitude() >= 15):
             return True
         else:
             return False
@@ -1223,7 +1223,7 @@ class Saturn(Planet):
             return False
 
     def is_oh(self):
-        if self.sign() == 10 or (self.sign() == 11 and self.amsha_raw_in_sign_longitude() > 20):
+        if self.sign() == 10 or (self.sign() == 11 and self.amsha_raw_in_sign_longitude() >= 20):
             return True
         else:
             return False
