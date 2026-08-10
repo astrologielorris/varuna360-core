@@ -61,6 +61,30 @@ if [[ "$DETECTED_ARCH" != "$TARGET_ARCH" ]]; then
   exit 1
 fi
 
+# The ad-hoc signature must still be intact. Nuitka signs the bundle at build
+# time, and ANY write inside Contents/ afterwards invalidates it — including
+# the app writing its own settings, which is what happens if someone launches
+# it to "check it works" before packaging. macOS then refuses the download with
+# "Varuna360 Core is damaged and can't be opened", which names no cause and
+# sends you hunting the DMG, the transfer, or Gatekeeper instead of the bundle.
+#
+# This is not hypothetical: it is exactly how the first hand-built DMGs failed
+# (three unsigned files created by opening the app pre-packaging). CI never
+# launches the app, so it should never trip — which is the point. If it ever
+# does fire, something touched the bundle and the DMG would have shipped broken.
+if ! codesign --verify --deep --strict "$APP_PATH" 2>/dev/null; then
+  echo "Refusing to package: the app bundle's signature is no longer valid."
+  echo
+  echo "Something modified $APP_PATH after Nuitka signed it. The usual cause is"
+  echo "launching the app before packaging — it writes files inside Contents/"
+  echo "and breaks the ad-hoc signature. macOS reports the result as 'damaged'."
+  echo
+  echo "Rebuild with scripts/build_macos_nuitka.sh and package WITHOUT opening"
+  echo "the app first. Details:"
+  codesign --verify --deep --strict --verbose=2 "$APP_PATH" 2>&1 | sed 's/^/  /'
+  exit 1
+fi
+
 # Fail early rather than shipping a bundle whose timezone data never made it in.
 if [[ ! -d "$APP_PATH/Contents/MacOS/timezonefinder/data" ]]; then
   echo "Refusing to package: timezonefinder data is missing from the bundle."

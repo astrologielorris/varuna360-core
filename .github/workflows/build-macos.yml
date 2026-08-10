@@ -1,0 +1,235 @@
+# Varuna360 Core — macOS release build
+#
+# Builds the macOS .app with Nuitka and packages it as a .dmg + .zip, once per
+# architecture, on GitHub-hosted Apple runners. macOS runner minutes bill at a
+# 10x multiplier on private repos but are FREE here, because varuna360-core is
+# public. That is the whole reason this runs on GitHub rather than needing a
+# Mac on the desk.
+#
+# TEMPLATE-OWNED FILE. The canonical copy lives in the PRIVATE repo at
+#   release_gates/templates/public_repo/.github/workflows/build-macos.yml
+# and is overlaid onto the mirror by sync_to_mirror.py on every release sync.
+# Editing it directly in the public repo works until the next sync silently
+# reverts it. Change it in the private template.
+#
+# The heavy lifting is in scripts/, not here. This workflow only provides an
+# interpreter of the right version and architecture, installs dependencies,
+# and collects the artifacts. Keeping build logic in the scripts means a
+# developer with a Mac runs exactly what CI runs.
+
+name: Build macOS
+
+on:
+  # Run it by hand from the Actions tab at any time.
+  workflow_dispatch:
+  # A v* tag builds and attaches both architectures to the GitHub Release.
+  push:
+    tags:
+      - "v*"
+
+# Read-only by default. ONLY the release job below widens this to write, and
+# only on a tag. A job-wide write token would be handed to `pip install` and to
+# both build scripts, because actions/checkout persists the token into the
+# runner's git config unless told not to — see persist-credentials below.
+permissions:
+  contents: read
+
+# A second dispatch (or a tag pushed while a manual run is going) would
+# otherwise stack full Nuitka compiles on top of each other.
+concurrency:
+  group: build-macos-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    # A full Nuitka --mode=app compile is long. The default 360-minute job cap
+    # would let a hung build burn hours, so cap well above the expected time
+    # but far below that.
+    timeout-minutes: 120
+
+    strategy:
+      # One architecture failing must not cancel the other. A half-result is
+      # more useful than none.
+      fail-fast: false
+      matrix:
+        include:
+          # RUNNER LABELS ARE NOT INTERCHANGEABLE AND THEY EXPIRE.
+          # macos-13 was retired on 2025-12-04 and macos-14 is deprecated. A
+          # job on a retired label is never assigned a runner and fails at
+          # provisioning — BEFORE the arch guard below runs, so nothing in
+          # this file can detect it. Check the live list in
+          # actions/runner-images before changing these.
+          - runner: macos-15 # Apple Silicon
+            arch: arm64
+          - runner: macos-15-intel # Intel
+            arch: x86_64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          # Do not leave a credential in .git/config for later steps. Nothing
+          # here pushes, and the build installs third-party packages.
+          persist-credentials: false
+
+      # SUPPORTED PYTHON IS 3.10-3.11, and this is not a style preference.
+      # pyswisseph's latest release (2.10.3.2, June 2023) publishes no wheels
+      # for 3.12+, so a newer interpreter forces a source build of a C
+      # extension inside CI. scripts/build_macos_nuitka.sh refuses 3.12+ for
+      # the same reason; pinning here keeps the two in agreement.
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      # setup-python resolves the runner's native architecture, but "native"
+      # is a property of the runner image and GitHub has changed it before
+      # (macos-latest moved from Intel to Apple Silicon). If that happens
+      # again, an unguarded build would publish a DMG whose filename says
+      # x86_64 while the binary inside is arm64. Fail loudly instead.
+      - name: Verify interpreter architecture matches the matrix
+        run: |
+          FOUND="$(python -c 'import platform; print(platform.machine())')"
+          echo "runner=${{ matrix.runner }} expected=${{ matrix.arch }} found=$FOUND"
+          if [ "$FOUND" != "${{ matrix.arch }}" ]; then
+            echo "::error::Interpreter is $FOUND but this job builds ${{ matrix.arch }}."
+            echo "The runner image's native architecture has changed. Update the matrix."
+            exit 1
+          fi
+          echo "PYTHON_BIN=$(which python)" >> "$GITHUB_ENV"
+
+      # Neither script knows anything about git tags: both read the VERSION
+      # file (build_macos_nuitka.sh for --macos-app-version, package_macos_dmg.sh
+      # for the artifact filename). Tagging v4.0.1 while VERSION still says
+      # 4.0.0 would therefore publish Varuna360Core-4.0.0-...dmg on the v4.0.1
+      # release, with 4.0.0 embedded in the bundle. VERSION stays authoritative
+      # — this only refuses to publish a release that disagrees with it.
+      - name: Tag must match the VERSION file
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          FILE_VERSION="$(tr -d ' \t\r\n' < VERSION)"
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          echo "tag=$TAG_VERSION VERSION=$FILE_VERSION"
+          if [ "$TAG_VERSION" != "$FILE_VERSION" ]; then
+            echo "::error::Tag $TAG_VERSION does not match the VERSION file ($FILE_VERSION)."
+            echo "Bump VERSION and re-sync the mirror before tagging."
+            exit 1
+          fi
+
+      # build_macos_nuitka.sh exports NUITKA_CACHE_DIR to this path, so the
+      # C-compilation cache survives between runs. Keyed on the compiler
+      # inputs that actually invalidate it.
+      - name: Cache Nuitka compilation
+        uses: actions/cache@v6
+        with:
+          path: build/nuitka-cache
+          key: nuitka-${{ matrix.arch }}-${{ hashFiles('requirements.txt') }}-${{ github.sha }}
+          restore-keys: |
+            nuitka-${{ matrix.arch }}-${{ hashFiles('requirements.txt') }}-
+            nuitka-${{ matrix.arch }}-
+
+      # requirements.txt is template-owned and holds only Core runtime deps.
+      # The second line is the build toolchain, deliberately NOT in
+      # requirements.txt: users installing from source do not need Nuitka.
+      #
+      # NUITKA IS PINNED. An unpinned `-U nuitka` re-resolves to whatever
+      # shipped this week, and Nuitka does rename flags between releases —
+      # build_macos_nuitka.sh already has to sniff --target-arch vs
+      # --macos-target-arch because of exactly that. 4.0.7 is the version the
+      # macOS packaging work was audited against.
+      #
+      # imageio is not optional: Nuitka converts the PNG icon to .icns through
+      # it and hard-exits late without it.
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install nuitka==4.0.7 ordered-set zstandard imageio
+
+      # Invoked through `bash` rather than ./script on purpose. The canonical
+      # templates are recorded in the private git index as mode 100644; they
+      # are executable in the working tree today only by accident of local
+      # permissions, and sync_to_mirror.py copies the on-disk mode. A fresh
+      # clone of the private repo would publish mode 644 and break ./scripts/…
+      # with Permission denied. `bash script` does not care about the mode.
+      #
+      # TARGET_ARCH is passed explicitly even though the script defaults to the
+      # detected architecture: the script cross-checks the two and aborts on a
+      # mismatch, making the arch guard above a second, independent check.
+      - name: Build Varuna360Core.app
+        env:
+          TARGET_ARCH: ${{ matrix.arch }}
+        run: bash ./scripts/build_macos_nuitka.sh
+
+      # Separate step on purpose: build_macos_nuitka.sh does NOT package.
+      # (scripts/build_macos_nuitka_x86_64.sh chains both, but it also insists
+      # on a .venv-x86_64 interpreter that does not exist on a native Intel
+      # runner, so CI calls the two base scripts directly for both arches.)
+      #
+      # This script also verifies timezonefinder/data landed inside the bundle
+      # — Nuitka has no packaging rule for timezonefinder, so its lookup data
+      # ships only because of --include-package-data. A silent miss there
+      # produces an app that cannot resolve a single timezone.
+      - name: Package .dmg and .zip
+        env:
+          TARGET_ARCH: ${{ matrix.arch }}
+        run: bash ./scripts/package_macos_dmg.sh
+
+      - name: Show build output
+        run: ls -lh dist/macos/
+
+      # BOTH artifacts are collected. package_macos_dmg.sh produces a .zip
+      # next to the .dmg (ditto -c -k), and for an unsigned app the zip is the
+      # friendlier download — no disk image to mount before the user can run
+      # `xattr -dr com.apple.quarantine`. Uploading only the DMG silently threw
+      # the zip away when the runner was torn down.
+      #
+      # compression-level: 0 because a UDZO disk image and a ditto zip are
+      # already compressed; re-deflating them at the default level 6 costs
+      # minutes and saves nothing.
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: Varuna360Core-macos-${{ matrix.arch }}
+          path: |
+            dist/macos/*.dmg
+            dist/macos/*.zip
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 90
+
+  # Attaching from inside the build matrix would have BOTH architectures race
+  # to create the same Release: the loser gets 422 already_exists, and with
+  # fail-fast disabled that shows up as an intermittently red job with an
+  # intermittently missing architecture on the release page. One job, after
+  # both builds, uploading once. It is also the only job that needs write.
+  release:
+    name: Attach to GitHub Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest # no macOS needed to upload files
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download both architectures
+        uses: actions/download-artifact@v8
+        with:
+          path: dist
+
+      - name: List what will be published
+        run: ls -lhR dist/
+
+      # The app is UNSIGNED — the filenames say so, and package_macos_dmg.sh
+      # prints the Gatekeeper recovery command. Signing and notarising would
+      # need a paid Apple Developer ID in repository secrets.
+      - name: Attach to release
+        uses: softprops/action-gh-release@v3
+        with:
+          files: |
+            dist/**/*.dmg
+            dist/**/*.zip
+          fail_on_unmatched_files: true

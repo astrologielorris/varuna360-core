@@ -25,10 +25,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
@@ -76,44 +76,113 @@ jobs:
           print("OK: no pro-namespace imports found.")
           PY
 
-      - name: Scan for `pro` textual leaks
+      - name: Scan for `pro` textual leaks (code only, not prose)
         run: |
           python - <<'PY'
+          import ast
+          import io
           import pathlib
           import re
           import sys
+          import tokenize
 
-          # Broad text scan: anywhere in any .py file, match references to
-          # the proprietary directory or its children.
+          # WHY THIS STEP BLANKS COMMENTS AND DOCSTRINGS
+          #
+          # This scan used to run over raw file text. On 2026-08-04 it failed
+          # the 4.0.0 release with 34 violations, and every single one was a
+          # COMMENT SAYING THE FILE DOES NOT IMPORT PRO:
+          #
+          #     apps/core_gui_qt.py:950: is not, and Core never imports pro."""
+          #     apps/widgets/parivartana_widget.py:51: # NO pro/ import (H11).
+          #
+          # The gate could not tell a `pro` import from a note explaining there
+          # is no `pro` import, so the better the Core/Pro boundary was
+          # documented, the more likely the boundary check was to fail. The AST
+          # step above passed cleanly on that same tree: there was no leak.
+          #
+          # It also silently diverged from the private pipeline's equivalent
+          # check, which carries an allowlist file. That file lives under
+          # release_gates/, which is deliberately never published, so this
+          # workflow cannot read it and the two checks can never be reconciled
+          # by sharing data. They are reconciled by this one not needing an
+          # allowlist at all.
+          #
+          # Ordinary string literals are KEPT: a runtime path like
+          # "pro/panels/x.py" is a real leak. Only comments and docstrings go.
           PATTERNS = [
               re.compile(r"\bpro[./]"),
-              re.compile(r'__import__\s*\(\s*[\'\"]pro'),
-              re.compile(r'importlib\.import_module\s*\(\s*[\'\"]pro'),
+              re.compile(r'__import__\s*\(\s*[\'"]pro'),
+              re.compile(r'importlib\.import_module\s*\(\s*[\'"]pro'),
               re.compile(r"\.dev_marker"),
           ]
 
+          def docstring_spans(tree):
+              spans = []
+              for node in ast.walk(tree):
+                  if isinstance(node, (ast.Module, ast.ClassDef,
+                                       ast.FunctionDef, ast.AsyncFunctionDef)):
+                      body = getattr(node, "body", None)
+                      if not body:
+                          continue
+                      first = body[0]
+                      if isinstance(first, ast.Expr) \
+                              and isinstance(first.value, ast.Constant) \
+                              and isinstance(first.value.value, str):
+                          spans.append((first.lineno, first.end_lineno or first.lineno))
+              return spans
+
+          def code_only(source):
+              """Source with comments and docstrings blanked, positions preserved."""
+              grid = [list(line) for line in source.splitlines(keepends=True)]
+              try:
+                  for tok in tokenize.generate_tokens(io.StringIO(source).readline):
+                      if tok.type == tokenize.COMMENT:
+                          (srow, scol), (erow, ecol) = tok.start, tok.end
+                          for r in range(srow, erow + 1):
+                              if not (1 <= r <= len(grid)):
+                                  continue
+                              row = grid[r - 1]
+                              a = scol if r == srow else 0
+                              b = ecol if r == erow else len(row)
+                              for c in range(a, min(b, len(row))):
+                                  if row[c] != "\n":
+                                      row[c] = " "
+              except (tokenize.TokenError, IndentationError, SyntaxError):
+                  pass
+              try:
+                  for start, end in docstring_spans(ast.parse(source)):
+                      for r in range(start, end + 1):
+                          if 1 <= r <= len(grid):
+                              grid[r - 1] = [" " if ch != "\n" else "\n"
+                                             for ch in grid[r - 1]]
+              except SyntaxError:
+                  pass
+              return "".join("".join(row) for row in grid)
+
           root = pathlib.Path(".")
           violations = []
-
           for path in sorted(root.rglob("*.py")):
-              if any(part in {"venv", ".venv", "build", "dist", "__pycache__"} for part in path.parts):
+              if any(part in {"venv", ".venv", "build", "dist", "__pycache__"}
+                     for part in path.parts):
                   continue
               try:
-                  text = path.read_text(encoding="utf-8", errors="replace")
+                  source = path.read_text(encoding="utf-8", errors="replace")
               except OSError:
                   continue
-              for lineno, line in enumerate(text.splitlines(), start=1):
-                  for pat in PATTERNS:
-                      if pat.search(line):
-                          violations.append(f"{path}:{lineno}: {line.strip()[:100]}")
-                          break
+              raw_lines = source.splitlines()
+              for lineno, line in enumerate(code_only(source).splitlines(), start=1):
+                  if any(pat.search(line) for pat in PATTERNS):
+                      original = raw_lines[lineno - 1].strip()[:100] \
+                          if lineno <= len(raw_lines) else ""
+                      violations.append(f"{path}:{lineno}: {original}")
 
           if violations:
-              print("FAIL: pro-namespace text references found in Core public mirror:")
+              print("FAIL: pro-namespace references found in EXECUTABLE code:")
               for v in violations[:50]:
                   print(f"  {v}")
               if len(violations) > 50:
                   print(f"  ... and {len(violations) - 50} more")
               sys.exit(1)
-          print("OK: no pro-namespace text references found.")
+          print("OK: no pro-namespace references in code "
+                "(comments and docstrings are not scanned, by design).")
           PY
