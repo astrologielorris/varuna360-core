@@ -143,21 +143,22 @@ jobs:
       #
       # imageio is not optional: Nuitka converts the PNG icon to .icns through
       # it and hard-exits late without it.
+      # cryptography MUST come from a prebuilt wheel. The project stopped
+      # publishing macOS Intel wheels after 48.0.1, so on the x86_64 runner an
+      # unconstrained resolve picks the newest sdist and compiles it locally,
+      # dynamically linked against the runner's Homebrew OpenSSL — and Nuitka's
+      # dependency scan then dies on that hand-built dylib chain ("FATAL:
+      # Error, problem with dependency scan of ..._rust.abi3.so with
+      # /usr/local/opt/openssl@3/lib/libssl.3.dylib", runs 31439312231 and
+      # 31440551410, x86_64 only; arm64 got the official statically-linked
+      # wheel and passed). --only-binary makes pip backtrack to the newest
+      # version that HAS a wheel for the platform: 48.0.1 on Intel, current on
+      # arm64 — no version pin to go stale.
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt
+          python -m pip install --only-binary cryptography -r requirements.txt
           python -m pip install nuitka==4.0.7 ordered-set zstandard imageio
-
-      # cryptography's _rust.abi3.so references Homebrew's openssl@3 dylibs.
-      # The arm64 runner image ships them under /opt/homebrew; the Intel image
-      # does NOT have /usr/local/opt/openssl@3, and Nuitka's dependency scan
-      # then dies with "FATAL: Error, problem with dependency scan of
-      # ..._rust.abi3.so with /usr/local/opt/openssl@3/lib/libssl.3.dylib"
-      # (seen on run 31439312231, x86_64 only). Installing it gives Nuitka a
-      # real file to resolve and bundle into the app.
-      - name: Install openssl@3 for cryptography's dylib references
-        run: brew list openssl@3 >/dev/null 2>&1 || brew install openssl@3
 
       # Invoked through `bash` rather than ./script on purpose. The canonical
       # templates are recorded in the private git index as mode 100644; they
