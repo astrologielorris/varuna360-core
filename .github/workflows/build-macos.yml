@@ -149,6 +149,16 @@ jobs:
           python -m pip install -r requirements.txt
           python -m pip install nuitka==4.0.7 ordered-set zstandard imageio
 
+      # cryptography's _rust.abi3.so references Homebrew's openssl@3 dylibs.
+      # The arm64 runner image ships them under /opt/homebrew; the Intel image
+      # does NOT have /usr/local/opt/openssl@3, and Nuitka's dependency scan
+      # then dies with "FATAL: Error, problem with dependency scan of
+      # ..._rust.abi3.so with /usr/local/opt/openssl@3/lib/libssl.3.dylib"
+      # (seen on run 31439312231, x86_64 only). Installing it gives Nuitka a
+      # real file to resolve and bundle into the app.
+      - name: Install openssl@3 for cryptography's dylib references
+        run: brew list openssl@3 >/dev/null 2>&1 || brew install openssl@3
+
       # Invoked through `bash` rather than ./script on purpose. The canonical
       # templates are recorded in the private git index as mode 100644; they
       # are executable in the working tree today only by accident of local
