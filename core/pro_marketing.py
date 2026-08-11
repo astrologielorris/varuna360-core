@@ -170,16 +170,21 @@ SUBSCRIPTION_SUGGESTED_DISPLAY: Final[str] = "€14.99 / month"
 SUBSCRIPTION_EXPLORER_THRESHOLD_DISPLAY: Final[str] = "€9.99 / month"
 
 # Welcome popup body — shown once per install before the main window
-# appears. Subscription-only language, product framing throughout.
+# appears, and ONLY when running from source (should_show_welcome() in
+# apps/widgets/welcome_dialog.py gates on is_frozen()). Users of the
+# packaged editions paid for their download; greeting them with "free as
+# long as you want" reads as a downgrade of what they bought. The
+# source-build audience is the one this message exists for.
+# Subscription-only language, product framing throughout.
 WELCOME_TITLE: Final[str] = "Welcome to Varuna360"
 WELCOME_BODY: Final[str] = (
-    "Varuna360 is a product. You can use the desktop app for free as long "
-    "as you want — every feature, no time limit, no nagging.\n\n"
+    "Varuna360 is a product. You are running the Core edition from source — "
+    "free to use for as long as you want, every feature, no time limit, "
+    "no nagging.\n\n"
     "When you decide it is worth paying for, you can subscribe at "
     "360heartsinthesky.com from €3 / month (suggested: €14.99 / month). "
-    "Subscribing at €9.99 / month or more also unlocks the Explorer tier "
-    "on the website: celebrity database, full transit, dignified planets, "
-    "Divine Cow, Shadbala, and 20 save slots on the web app.\n\n"
+    "Subscribing at €9.99 / month or more unlocks the full web app and "
+    "the mobile app.\n\n"
     "You can sign in anytime from the Account menu. No account is required "
     "to use the software."
 )
