@@ -225,6 +225,24 @@ def _geolocator():
         from geopy.geocoders import Nominatim
     except ImportError:
         return None
+    # geopy verifies TLS against the SYSTEM certificate store, not certifi.
+    # In a packaged build (Nuitka .app, AppImage) the bundled OpenSSL's
+    # default verify path does not exist on the user's machine, so every
+    # Nominatim call dies with CERTIFICATE_VERIFY_FAILED — silently, through
+    # forward()'s except — and geocoding "just fails" (mac VM test,
+    # 2026-08-11). certifi's cacert.pem IS bundled (requests pulls it in),
+    # so hand geopy an SSL context built on it. Falls back to the system
+    # store when certifi is unavailable (source runs are fine either way).
+    ssl_ctx = None
+    try:
+        import ssl
+        import certifi
+        ssl_ctx = ssl.create_default_context(cafile=certifi.where())
+    except Exception:
+        ssl_ctx = None
+    if ssl_ctx is not None:
+        return Nominatim(user_agent=USER_AGENT, timeout=NOMINATIM_TIMEOUT,
+                         ssl_context=ssl_ctx)
     return Nominatim(user_agent=USER_AGENT, timeout=NOMINATIM_TIMEOUT)
 
 
@@ -267,7 +285,10 @@ def forward(query: str, use_cache: bool = True) -> Optional[GeocodeResult]:
         with _rate_lock:
             _nominatim_calls += 1
         location = geolocator.geocode(query, language="en", addressdetails=True)
-    except Exception:
+    except Exception as e:
+        # A silent None here cost a full VM round-trip to diagnose the
+        # packaged-build SSL failure above. Name the reason, always.
+        print(f"[GEOCODE] Nominatim request failed for {query!r}: {e}")
         return None
     if not location:
         return None

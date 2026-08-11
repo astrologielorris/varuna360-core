@@ -511,6 +511,21 @@ def ensure_default_chart_folder(create: bool = True) -> Optional[str]:
         return existing
 
     target = platform_default_chart_folder()
+    # Packaged installs write inside the data directory the user chose in
+    # the first-run dialog instead of the per-OS Kala convention. On macOS
+    # ~/Documents is TCC-protected — the first-run default was picked to
+    # avoid it, so sending charts there anyway would either trigger a
+    # permission prompt or silently fail; and the user who just chose a
+    # folder expects their charts under it (mac VM test, 2026-08-11).
+    # Dev/source runs keep the Kala convention unchanged.
+    try:
+        from state.user_data import get_user_data_dir, is_frozen
+        if is_frozen():
+            base = get_user_data_dir()
+            if base:
+                target = Path(base) / "Charts"
+    except Exception:
+        pass
     try:
         if create:
             target.mkdir(parents=True, exist_ok=True)

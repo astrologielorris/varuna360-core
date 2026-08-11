@@ -516,10 +516,11 @@ DEFAULT_SETTINGS = {
         # settings files. DISPLAY-ONLY: never affects any calculation.
         "color_saturation": 100,
         # SPEC-SIC-002: which South Indian implementation renders the SI chart.
-        # "classic" (default) = today's image-backed view; "vector" = the
-        # experimental vector theme. Boot deep-merge (:773) propagates the key
-        # to existing settings files.
-        "south_indian_style": "classic",
+        # "vector" (default since the 4.0 macOS test round) = the Conventional
+        # clean vector theme; "classic" = the image-backed view. Fresh installs
+        # get vector; existing settings files already carry their stored choice
+        # and the boot deep-merge (:773) never overwrites present keys.
+        "south_indian_style": "vector",
         # SPEC-CAL-001: calendar convention for DISPLAYING pre-1582 dates.
         # 'astronomical' = Julian calendar pre-1582 (current behaviour, matches
         # NASA/Swiss Ephemeris). 'proleptic_gregorian' = Gregorian extended
