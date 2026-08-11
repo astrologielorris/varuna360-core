@@ -243,7 +243,7 @@ class Sign:
                 continue
             ret += f"{obj.name()} "
             if self.context.signize:
-                ret += f"{obj.longitude().split(" ")[0]}\n" # remove the sign name here since we are printing in a south indian chart
+                ret += f"{obj.longitude().split(' ')[0]}\n" # remove the sign name here since we are printing in a south indian chart
             else:
                 ret += f"{obj.raw_longitude()}\n" # remove the sign name here since we are printing in a south indian chart
             if self.context.print_nakshatras and (self.context.sysflg != const.BARY and self.context.sysflg != const.HELIO):
