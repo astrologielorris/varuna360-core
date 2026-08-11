@@ -524,6 +524,11 @@ class EditMapSubTab(ThemedStyleMixin, QWidget):
             return
 
         self._status("Searching...")
+        # Remember whether the user qualified the town with a country/region.
+        # Many towns share a name across countries (Brunswick: Germany, Maine,
+        # Georgia, Melbourne...), and Nominatim silently picks its top hit, so
+        # a bare one-word query gets an ambiguity warning when it resolves.
+        self._search_had_qualifier = ',' in query or ' ' in query
         # No loading_manager here: a modal overlay was the visible symptom of a
         # blocking call, and there is no longer a blocking call to cover.
         self._search_gen = self._bump_selection()
@@ -544,7 +549,8 @@ class EditMapSubTab(ThemedStyleMixin, QWidget):
         if self._search_gen != self._sel_gen:
             return                      # a click or another search superseded it
         if result is None:
-            self._status("❌ Location not found", STATUS['error'])
+            self._status("❌ Not found. Try 'Town, Country' "
+                         "(e.g. 'Brunswick, Germany')", STATUS['error'])
             return
 
         if self.has_map and self.map_widget:
@@ -559,7 +565,14 @@ class EditMapSubTab(ThemedStyleMixin, QWidget):
                               resolve_name=not (result.city or result.country))
 
         label = result.label or f"{result.lat:.4f}, {result.lon:.4f}"
-        self._status(f"✓ Found: {label[:50]}", STATUS['success'])
+        if getattr(self, '_search_had_qualifier', True):
+            self._status(f"✓ Found: {label[:50]}", STATUS['success'])
+        else:
+            # One-word query: the hit may be the wrong same-name town.
+            # Show WHICH one was picked and how to override it.
+            self._status(f"⚠ Found: {label[:40]}. Wrong one? "
+                         "Search 'Town, Country'", STATUS['warning'])
+        self.search_status.setToolTip(label)
 
     @Slot()
     def _on_detent_reached(self):
