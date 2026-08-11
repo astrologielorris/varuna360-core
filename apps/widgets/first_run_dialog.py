@@ -115,6 +115,18 @@ class FirstRunDialog(QDialog):
         path = Path(chosen)
         try:
             set_user_data_dir(path)
+            # Establish the chart folder under the directory the user just
+            # chose, so Settings > Default Folders shows it immediately
+            # instead of sitting empty until the first chart is saved
+            # (mac VM test, 2026-08-11). Best-effort: a failure here must
+            # never block first-run setup.
+            try:
+                from managers.chart_creation_pipeline import (
+                    ensure_default_chart_folder,
+                )
+                ensure_default_chart_folder(create=True)
+            except Exception:
+                pass
             self.accept()
         except Exception as e:
             from PySide6.QtWidgets import QMessageBox
