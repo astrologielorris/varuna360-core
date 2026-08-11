@@ -45,7 +45,18 @@ FLAG_FILE = FLAG_DIR / ".welcome_shown"
 
 
 def should_show_welcome() -> bool:
-    """Return True if the welcome popup has not been shown yet on this install."""
+    """Return True if the welcome popup should appear on this launch.
+
+    Source runs only. The packaged editions (Nuitka .app, AppImage,
+    PyInstaller) are what paying users download — the welcome message's
+    "free as long as you want" framing is written for people who built
+    Core from source, and showing it to a buyer misdescribes what they
+    paid for. is_frozen() is the project-wide packaged-build detection
+    (state/user_data — sys.frozen alone misses Nuitka).
+    """
+    from state.user_data import is_frozen
+    if is_frozen():
+        return False
     return not FLAG_FILE.exists()
 
 
