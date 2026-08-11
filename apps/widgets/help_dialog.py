@@ -33,7 +33,7 @@ MANUAL_SECTIONS = [
     ("info-panels", "Info Panels (Right Side)"),
     ("dasha-system", "Dasha System (Left Side)"),
     ("chart-memory", "Chart Memory & Profiles"),
-    ("edit-chart", "Edit Chart"),
+    ("edit-chart", "New & Edit"),
     ("human-design", "Human Design"),
     ("toolbar", "Toolbar (Left to Right)"),
     ("varga-charts", "Varga (Divisional) Charts"),

@@ -793,11 +793,11 @@ class ChartGUI(QMainWindow):
         # === EDIT CHART TAB (lazy loading) ===
         self._edit_chart_placeholder = QWidget()
         _ecl = QVBoxLayout(self._edit_chart_placeholder)
-        _ecl_label = QLabel("Click to load Edit Chart...")
+        _ecl_label = QLabel("Click to load New & Edit...")
         _ecl_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         _ecl_label.setStyleSheet(f"color: #888; font-size: {scaled_px(14)}px;")
         _ecl.addWidget(_ecl_label)
-        self.tab_widget.addTab(self._edit_chart_placeholder, "Edit Chart")
+        self.tab_widget.addTab(self._edit_chart_placeholder, "New & Edit")
         self.edit_chart_panel = None
 
         # === FIND CHART TAB (lazy loading, available in all editions) ===
@@ -1061,7 +1061,7 @@ class ChartGUI(QMainWindow):
             if index >= 0:
                 self.edit_chart_panel = EditChartPanel(self)
                 self.tab_widget.removeTab(index)
-                self.tab_widget.insertTab(index, self.edit_chart_panel, "Edit Chart")
+                self.tab_widget.insertTab(index, self.edit_chart_panel, "New & Edit")
                 if not self._preloading:
                     self.tab_widget.setCurrentIndex(index)
                 self._edit_chart_placeholder = None
@@ -2304,7 +2304,7 @@ class ChartGUI(QMainWindow):
         # Find the Edit Chart tab
         for i in range(self.tab_widget.count()):
             tab_text = self.tab_widget.tabText(i)
-            if "Edit Chart" in tab_text:
+            if "New & Edit" in tab_text:
                 self.tab_widget.setCurrentIndex(i)
                 break
 
@@ -2317,7 +2317,7 @@ class ChartGUI(QMainWindow):
         # Find the Edit Chart tab
         for i in range(self.tab_widget.count()):
             tab_text = self.tab_widget.tabText(i)
-            if "Edit Chart" in tab_text:
+            if "New & Edit" in tab_text:
                 self.tab_widget.setCurrentIndex(i)
                 break
 
