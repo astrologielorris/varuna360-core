@@ -24,10 +24,12 @@ APP_BUNDLE_ID="com.varuna360.core"
 OUT_DIR="$ROOT_DIR/dist/macos"
 NUITKA_CACHE_DIR="$ROOT_DIR/build/nuitka-cache"
 
-# The icon Nuitka converts to .icns. icon/varuna360.png is the same source the
-# AppImage and Windows builds use. The old script pointed at a varuna-logo.webp
-# that has never existed in this repository, so it could not run at all.
-ICON_SRC="${ICON_SRC:-$ROOT_DIR/icon/varuna360.png}"
+# The icon Nuitka converts to .icns. varuna360_lite.png is the BLUE cat — the
+# Core/Lite brand. varuna360.png (the red cat) is the full/Pro app's icon; the
+# Windows/AppImage Core builds still ship it by accident of the same default,
+# so this script is deliberately the first to use the Core-blue asset.
+# (The old script pointed at a varuna-logo.webp that never existed.)
+ICON_SRC="${ICON_SRC:-$ROOT_DIR/icon/varuna360_lite.png}"
 
 # Version comes from the VERSION file, never from a constant in this script.
 # A hardcoded value goes stale silently and ships a wrong CFBundleVersion.
