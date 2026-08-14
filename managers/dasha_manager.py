@@ -347,6 +347,8 @@ class DashaManager:
         if jd is not None:
             if dasha_type == "vedanga":
                 cycle_offset = self.gui.dasha_cycle_offset_vedanga
+            elif dasha_type == "nisarga":
+                cycle_offset = 0
             else:
                 cycle_offset = self.gui.dasha_cycle_offset_vimshottari
             if cycle_offset != 0:

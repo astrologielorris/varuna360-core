@@ -24,6 +24,16 @@ Format rules, because a script parses this file:
 
 ---
 
+## 4.4.1 (2026-08-14)
+
+### Fixed
+
+- **On macOS, "Move a chart to another profile" did nothing when clicked.**
+  The submenu actions could silently disconnect; the move now always fires.
+- **The right-click menu on Nisarga dasha rows was permanently greyed out**,
+  and when it acted it used Vimshottari cycle math. Nisarga rows now carry
+  their own dates and their own rules.
+
 ## 4.4.0 (2026-08-14)
 
 The chart-entry release: the Edit Chart tab is rebuilt from the ground up as

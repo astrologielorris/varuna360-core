@@ -185,55 +185,15 @@ To report a security vulnerability, see [`SECURITY.md`](SECURITY.md).
 <!-- Generated at sync time from VERSION + CHANGELOG.md. Edits here are
      overwritten on the next sync; edit CHANGELOG.md instead. -->
 
-## Current release: 4.4.0 (2026-08-14)
-
-The chart-entry release: the Edit Chart tab is rebuilt from the ground up as
-"New & Edit", and the macOS packages are fixed.
-
-### Added
-
-- **The New & Edit tab**, a full redesign of chart entry. Type or paste a
-  birth line ("Marie 12 June 1990 14:30 Paris, France") into the new token
-  bar and it parses into editable chips that fill the form; click a chip to
-  correct its token. Creating a chart is one click: create, save and open.
-- **A simpler, safer form.** Time-zone fields are locked by default and
-  filled by the map or the place search (unlock them if you need to), the
-  UTC time derives live as you type, a missing birth time falls back to noon
-  with a visible warning, and impossible dates and times are blocked at the
-  keyboard. DST is now a single "DST applied" toggle, resolved automatically
-  from the place and the date.
-- **Every field is selectable and copyable**, plus a copy-all button that
-  puts the whole birth data on the clipboard in one move.
-- **Rodden rating** on a chart, with a help popup explaining the scale.
-- **Elevation** looked up for the selected place and shown as a chip.
-- **Save & open** in edit mode: save the correction, then show the chart.
-- **Drag a chart onto the TRANSIT button** to overlay it on the current
-  chart, or right-click a saved chart and pick "Overlay on current chart".
-- **Move a chart to another profile** from the saved-chart right-click menu.
-- **The Birth Time popup redrawn**: a live preview recomputes the chart as
-  you drag, highlights what changed in red, follows the light theme, and a
-  "Revert to saved" undoes the whole adjustment. The window title now shows
-  seconds, for D60-level work.
-- **A near-black variant** of the dark themes, opt-in, for OLED screens and
-  late nights.
-- **Place-search ambiguity warning.** A one-word search ("Brunswick") tells
-  you which town it picked and how to ask for a different one.
+## Current release: 4.4.1 (2026-08-14)
 
 ### Fixed
 
-- **The macOS app could not add a chart**: the packaged .app was missing its
-  timezone database, so entering a birth place crashed. The data is now
-  bundled and verified on every build. The app also starts correctly on
-  Intel Macs and carries the blue Core icon.
-- **The chart folder chosen during first-run setup was not applied.**
-- **The South Indian chart now defaults to the conventional style.**
-- **Online place search failed on some machines** because the system TLS
-  certificates were not found; the app now carries its own.
-- **Dignity had one-point holes at exact degree boundaries** (a planet at
-  precisely 3.0 degrees could miss its mulatrikona).
-- **Aryama's yaksha is Rathauja**, not Athauja.
-- **TOML charts round-trip faithfully**: civil date stays in sync with the
-  calendar, notes survive, tags are not duplicated.
+- **On macOS, "Move a chart to another profile" did nothing when clicked.**
+  The submenu actions could silently disconnect; the move now always fires.
+- **The right-click menu on Nisarga dasha rows was permanently greyed out**,
+  and when it acted it used Vimshottari cycle math. Nisarga rows now carry
+  their own dates and their own rules.
 
 Earlier releases are in [CHANGELOG.md](CHANGELOG.md).
 
