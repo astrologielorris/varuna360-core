@@ -187,6 +187,11 @@ To report a security vulnerability, see [`SECURITY.md`](SECURITY.md).
 
 ## Current release: 4.4.2 (2026-08-14)
 
+A note on Cards of Truth: the view works and is ready to explore, but it is
+still early in its testing cycle, and the timing periods may contain slight
+errors. This version ships now because of the other improvements it carries;
+refinements to the Cards of Truth timing will follow in a coming release.
+
 ### Fixed
 
 - **The map had no tiles in the macOS app**: the packaged .app looked for
