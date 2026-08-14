@@ -192,12 +192,6 @@ still early in its testing cycle, and the timing periods may contain slight
 errors. This version ships now because of the other improvements it carries;
 refinements to the Cards of Truth timing will follow in a coming release.
 
-### Fixed
-
-- **The map had no tiles in the macOS app**: the packaged .app looked for
-  its bundled tile cache in the wrong place, so the map rendered empty
-  until the network filled it. It now finds the cache and works offline.
-
 Earlier releases are in [CHANGELOG.md](CHANGELOG.md).
 
 <!-- RELEASE-BLOCK:END -->
