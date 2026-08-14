@@ -73,10 +73,11 @@ MAX_ONLINE_ROWS = 20000
 OSM_TILE_URL = "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
 USER_AGENT = "Varuna360/1.0 (Vedic Astrology App; astrologielorris@gmail.com)"
 
-DEFAULT_DB_PATH = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-    "map_tiles_cache.db",
-)
+def _default_db_path():
+    from state.user_data import get_project_root
+    return os.path.join(str(get_project_root()), "map_tiles_cache.db")
+
+DEFAULT_DB_PATH = _default_db_path()
 
 TileKey = Tuple[int, int, int]  # (zoom, x, y)
 

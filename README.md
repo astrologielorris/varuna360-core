@@ -185,15 +185,13 @@ To report a security vulnerability, see [`SECURITY.md`](SECURITY.md).
 <!-- Generated at sync time from VERSION + CHANGELOG.md. Edits here are
      overwritten on the next sync; edit CHANGELOG.md instead. -->
 
-## Current release: 4.4.1 (2026-08-14)
+## Current release: 4.4.2 (2026-08-14)
 
 ### Fixed
 
-- **On macOS, "Move a chart to another profile" did nothing when clicked.**
-  The submenu actions could silently disconnect; the move now always fires.
-- **The right-click menu on Nisarga dasha rows was permanently greyed out**,
-  and when it acted it used Vimshottari cycle math. Nisarga rows now carry
-  their own dates and their own rules.
+- **The map had no tiles in the macOS app**: the packaged .app looked for
+  its bundled tile cache in the wrong place, so the map rendered empty
+  until the network filled it. It now finds the cache and works offline.
 
 Earlier releases are in [CHANGELOG.md](CHANGELOG.md).
 
