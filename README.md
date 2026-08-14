@@ -192,6 +192,34 @@ still early in its testing cycle, and the timing periods may contain slight
 errors. This version ships now because of the other improvements it carries;
 refinements to the Cards of Truth timing will follow in a coming release.
 
+### Added
+
+- **Cards of Truth inside the wheel.** Every sign can show the card of its
+  ruling planet directly in the wheel and in the South and North Indian
+  charts, so the card index reads without leaving the chart. Probably the
+  most important update of this release.
+- **Full-size chart overlay.** The second chart is no longer a miniature:
+  it overlays the current chart at full size. You can overlay a varga chart
+  on top of the D1, and overlay a Vimshottari transit date on top of the
+  current chart in one click.
+- **Avastha reworked.** The panel is recalculated and rebuilt, and double
+  clicking opens a much better view: descriptions, help, cleaner visuals,
+  and many more details.
+- **A new Yogas screen** covering exchange yogas and the Nabhasa yogas,
+  each with its diagram and description.
+- **Tajika yogas**: a calculation bug fixed and a better presentation.
+- **Colour saturation control**, a feature requested by a member: tone the
+  whole interface down or up in one move without leaving your theme.
+
+### Fixed
+
+- On macOS, "Move a chart to another profile" did nothing when clicked.
+- The right-click menu on Nisarga dasha rows was permanently greyed out.
+- The chart folder chosen during first-run setup was not applied.
+- The South Indian chart now defaults to the conventional style.
+
+Questions and bug reports: astrologielorris@gmail.com
+
 Earlier releases are in [CHANGELOG.md](CHANGELOG.md).
 
 <!-- RELEASE-BLOCK:END -->
