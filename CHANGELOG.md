@@ -24,6 +24,14 @@ Format rules, because a script parses this file:
 
 ---
 
+## 4.4.2 (2026-08-14)
+
+### Fixed
+
+- **The map had no tiles in the macOS app**: the packaged .app looked for
+  its bundled tile cache in the wrong place, so the map rendered empty
+  until the network filled it. It now finds the cache and works offline.
+
 ## 4.4.1 (2026-08-14)
 
 ### Fixed
