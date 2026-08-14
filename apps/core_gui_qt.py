@@ -2049,8 +2049,9 @@ class ChartGUI(QMainWindow):
         self.dasha_manager.show_dasha_context_menu(self.vedanga_list, pos, "vedanga")
 
     def _on_vimshottari_context_menu(self, pos):
-        """Handle right-click on Vimshottari dasha item. Delegates to DashaManager."""
-        self.dasha_manager.show_dasha_context_menu(self.vimshottari_list, pos, "vimshottari")
+        """Handle right-click on Vimshottari/Nisarga dasha item. Delegates to DashaManager."""
+        dasha_type = getattr(self, 'right_dasha_mode', 'vimshottari') or 'vimshottari'
+        self.dasha_manager.show_dasha_context_menu(self.vimshottari_list, pos, dasha_type)
 
     def _extract_parent_chain_from_entry(self, entry, all_entries, entry_index):
         """Extract parent chain for dasha entry. Delegates to DashaManager."""

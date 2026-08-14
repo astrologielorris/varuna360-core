@@ -1513,12 +1513,14 @@ class ChartMemoryPanel:
                     others = []
                 if others:
                     move_menu = menu.addMenu("Move to profile")
+                    cid = chart.get('id')
                     for prof in others:
                         act = move_menu.addAction(prof.get('name') or prof.get('id'))
-                        act.triggered.connect(
-                            lambda checked=False, cid=chart.get('id'), pid=prof.get('id'):
-                                self._move_chart_to_profile(cid, pid)
-                        )
+                        act.setData(prof.get('id'))
+                    move_menu.triggered.connect(
+                        lambda action, chart_id=cid:
+                            self._move_chart_to_profile(chart_id, action.data())
+                    )
                     menu.addSeparator()
 
         remove_action = menu.addAction("Remove from memory")

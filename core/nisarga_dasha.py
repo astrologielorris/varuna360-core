@@ -18,6 +18,7 @@ Source: Ernst Wilhelm, "Ages of the Grahas"
 
 from datetime import date, timedelta
 from dateutil.relativedelta import relativedelta
+import swisseph as swe
 
 # Short planet abbreviations (standard: Mo, Ma, Me, Ve, Ju, Su, Sa)
 PLANET_ABBREV = {
@@ -162,15 +163,16 @@ def format_nisarga_level1(birth_year, birth_month, birth_day):
         dur = period["duration"]
         desc = period["description"]
 
-        # Calculate actual dates from birth
         start_str = ""
         end_str = ""
+        start_jd = None
         if birth:
             try:
                 start_dt = birth + relativedelta(years=start)
                 end_dt = birth + relativedelta(years=end)
                 start_str = start_dt.strftime("%m/%d/%Y")
                 end_str = end_dt.strftime("%m/%d/%Y")
+                start_jd = swe.julday(start_dt.year, start_dt.month, start_dt.day, 12.0)
             except (ValueError, OverflowError):
                 pass
 
@@ -186,6 +188,7 @@ def format_nisarga_level1(birth_year, birth_month, birth_day):
             "is_maturation": False,
             "is_separator": False,
             "lord": lord,
+            "jd": start_jd,
         })
 
     # --- Separator ---
@@ -206,12 +209,14 @@ def format_nisarga_level1(birth_year, birth_month, birth_day):
 
         start_str = ""
         end_str = ""
+        start_jd = None
         if birth:
             try:
                 start_dt = birth + relativedelta(years=start)
                 end_dt = birth + relativedelta(years=mat_age)
                 start_str = start_dt.strftime("%m/%d/%Y")
                 end_str = end_dt.strftime("%m/%d/%Y")
+                start_jd = swe.julday(start_dt.year, start_dt.month, start_dt.day, 12.0)
             except (ValueError, OverflowError):
                 pass
 
@@ -227,6 +232,7 @@ def format_nisarga_level1(birth_year, birth_month, birth_day):
             "is_maturation": is_mat_current,
             "is_separator": False,
             "lord": lord,
+            "jd": start_jd,
         })
 
     return entries
@@ -263,20 +269,19 @@ def format_nisarga_level2(birth_year, birth_month, birth_day):
             sub_days = total_days / SUB_PERIOD_COUNT
 
         for sub_idx in range(1, SUB_PERIOD_COUNT + 1):
-            # Calculate sub-period start date and age
+            sub_jd = None
             if birth:
                 sub_start_dt = period_start_dt + timedelta(days=(sub_idx - 1) * sub_days)
                 date_str = sub_start_dt.strftime("%m/%d/%Y")
                 time_str = sub_start_dt.strftime("%H:%M")
 
-                # Age string
                 delta = relativedelta(sub_start_dt, birth)
                 age_months = delta.years * 12 + delta.months
                 age_text = _age_str(age_months)
 
-                # Is this sub-period current?
                 sub_end_dt = period_start_dt + timedelta(days=sub_idx * sub_days)
                 is_current = (sub_start_dt <= today < sub_end_dt)
+                sub_jd = swe.julday(sub_start_dt.year, sub_start_dt.month, sub_start_dt.day, 12.0)
             else:
                 date_str = ""
                 time_str = ""
@@ -293,6 +298,7 @@ def format_nisarga_level2(birth_year, birth_month, birth_day):
                 "is_maturation": False,
                 "lord": lord,
                 "sub_index": sub_idx,
+                "jd": sub_jd,
             })
 
     return entries
