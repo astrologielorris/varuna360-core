@@ -8,7 +8,7 @@ Supports nesting (multiple overlapping operations) and minimum display time
 to prevent flicker.
 """
 
-from PySide6.QtWidgets import QMainWindow, QApplication
+from PySide6.QtWidgets import QMainWindow
 from PySide6.QtCore import QTimer, QElapsedTimer
 
 from apps.widgets.loading_overlay import LoadingOverlay

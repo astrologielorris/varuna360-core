@@ -8,7 +8,7 @@ import json
 from pathlib import Path
 
 from PySide6.QtWidgets import QWidget, QSizePolicy
-from PySide6.QtCore import Qt, QRectF, QRect, QSize
+from PySide6.QtCore import Qt, QRectF, QSize
 from PySide6.QtGui import (
     QPainter, QColor, QFont, QLinearGradient, QPen, QBrush,
     QPixmap, QImage,

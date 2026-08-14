@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt
 
 # Import centralized theme - use theme colors for checked state
-from ui.qt_theme import TEXT, get_theme_colors, scaled_px, scaled_area_px
+from ui.qt_theme import get_theme_colors, scaled_px, scaled_area_px
 from core.varga_codes import varga_display_label
 
 

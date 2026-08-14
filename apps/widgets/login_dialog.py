@@ -13,7 +13,6 @@ from PySide6.QtWidgets import (
     QPushButton, QFrame,
 )
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QFont
 
 from ui.qt_theme import (
     BG, SURFACE, BORDER, TEXT_PRIMARY, TEXT_SECONDARY, GOLD,

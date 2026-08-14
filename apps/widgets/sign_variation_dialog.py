@@ -14,20 +14,28 @@ import re
 from pathlib import Path
 
 from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QFrame, QTextBrowser, QWidget, QApplication, QGraphicsDropShadowEffect
+    QDialog,
+    QVBoxLayout,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QFrame,
+    QTextBrowser,
+    QWidget,
+    QApplication,
 )
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QFont, QPixmap, QImage, QColor
+from PySide6.QtGui import QPixmap, QImage
 
 from ui.qt_theme import (
-    BG, SURFACE, TEXT_PRIMARY, TEXT_SECONDARY, TEXT_TERTIARY, GOLD,
-    ACCENTS, FONT_PRIMARY, FONT_MONO, BORDER, STATUS, get_theme_colors,
-    scaled_area_font, scaled_area_px, desat_image,
+    TEXT_SECONDARY,
+    get_theme_colors,
+    scaled_area_font,
+    scaled_area_px,
+    desat_image,
 )
 
 # Import rotating widget from planet dialog
-from apps.widgets.planet_dialog import RotatingPlanetWidget
 
 # Import shared Aditya data
 from core.aditya_data import (

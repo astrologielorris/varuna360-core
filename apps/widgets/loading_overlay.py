@@ -15,10 +15,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QEvent
 from PySide6.QtGui import QPainter, QColor
 
-from ui.qt_theme import (
-    SURFACE, TEXT_PRIMARY, BORDER, ACCENTS,
-    get_theme_accent, get_theme_colors, scaled_area_px,
-)
+from ui.qt_theme import get_theme_accent, get_theme_colors, scaled_area_px
 
 
 class LoadingOverlay(QWidget):

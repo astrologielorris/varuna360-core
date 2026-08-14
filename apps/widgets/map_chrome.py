@@ -22,7 +22,7 @@ palette without anyone having to invalidate a module global.
 """
 
 import math
-from typing import List, Optional, Sequence, Tuple
+from typing import Optional, Sequence, Tuple
 
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import (
@@ -78,7 +78,13 @@ def _device_pixel_ratio() -> float:
     app = QApplication.instance()
     try:
         screen = app.primaryScreen() if app is not None else None
-        return float(screen.devicePixelRatio()) if screen is not None else 1.0
+        if screen is None:
+            return 1.0
+        # Clamped at 1: a ratio below 1 (or a 0 from a headless/offscreen
+        # screen stub) would size the backing store smaller than the logical
+        # label and clip it, which is the failure this whole path exists to
+        # avoid. Over-sampling is only wasted memory.
+        return max(1.0, float(screen.devicePixelRatio()))
     except Exception:
         return 1.0
 
@@ -299,13 +305,27 @@ def _halo_item(text: str, font: QFont, ink: QColor, halo: QColor,
     height = int(math.ceil(rect.height() + pad * 2))
 
     dpr = _device_pixel_ratio()
-    pixmap = QPixmap(max(1, int(width * dpr)), max(1, int(height * dpr)))
+    # ceil, not int: a fractional DPR (1.25, 1.5, 2.5 — Windows and Wayland all
+    # produce them) truncates to a backing store slightly SMALLER than the
+    # logical size it claims, and the missing fraction is taken off the right
+    # and bottom halo.
+    pixmap = QPixmap(max(1, int(math.ceil(width * dpr))),
+                     max(1, int(math.ceil(height * dpr))))
     pixmap.setDevicePixelRatio(dpr)
     pixmap.fill(Qt.GlobalColor.transparent)
 
     painter = QPainter(pixmap)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-    painter.scale(dpr, dpr)
+    # NO painter.scale(dpr, dpr) here. A QPainter opened on a paint device that
+    # carries a devicePixelRatio ALREADY works in device-independent units — the
+    # engine applies the ratio itself, and `painter.transform()` still reports
+    # the identity, which is exactly why the extra scale looked harmless. It was
+    # not: every drawing landed at dpr * dpr device pixels inside a backing store
+    # only dpr times as large, so at DPR 1 (this Linux box) nothing happened and
+    # at DPR 2 (a Retina Mac) the label was drawn at 4x and the pixmap clipped it
+    # after about two and a half glyphs — "TORONTO" came out as "Tor" with a
+    # straight vertical cut. Measured, both before and after, by
+    # test/test_map_label_dpr.py.
     # Halo FIRST, glyphs on top. This ordering is the whole point of rendering
     # to a pixmap: QGraphicsPathItem paints its brush then its pen, so a 3 px
     # halo pen on ~10 px glyphs covered the letterforms and the place name

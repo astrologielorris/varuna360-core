@@ -62,9 +62,7 @@ from __future__ import annotations
 import math
 
 from PySide6.QtCore import QPointF, QRectF, Qt
-from PySide6.QtGui import (
-    QBrush, QColor, QFont, QFontMetrics, QLinearGradient, QPainterPath, QPen,
-)
+from PySide6.QtGui import QBrush, QColor, QFont, QFontMetrics, QPainterPath, QPen
 
 from apps.widgets.card_suit_art import suit_pixmap
 

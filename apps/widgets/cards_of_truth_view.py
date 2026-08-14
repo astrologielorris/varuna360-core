@@ -58,12 +58,11 @@ Contract highlights (full text in SPEC-COT-001 §3)
   bodies between cards. (v1 of this spec claimed a varga spread was undefined.
   It is defined, and the engine computes it natively.)
 """
-from pathlib import Path
 from functools import lru_cache
 import math
 import weakref
 
-from PySide6.QtCore import Qt, QRect, QRectF, QPointF, QSize
+from PySide6.QtCore import Qt, QRectF, QPointF, QSize
 from PySide6.QtGui import (
     QPainter, QColor, QFont, QPen, QBrush, QPainterPath, QLinearGradient,
     QRadialGradient, QImage, QPixmap, QFontMetrics,
@@ -76,8 +75,11 @@ from apps.widgets.card_suit_art import SUIT_INK, suit_pixmap
 from apps.widgets import cot_ladder
 from core.cards_of_truth_data import progression_blocks
 from core.cards_of_truth_data import (
-    assemble_progression_spread, assemble_spread, CardsOfTruthUnavailable,
-    DEFAULT_ORDER, GRID, GRID_COLS,
+    assemble_progression_spread,
+    assemble_spread,
+    CardsOfTruthUnavailable,
+    GRID,
+    GRID_COLS,
 )
 
 # SPEC-COT-007 §3.1/§3.2 — the Age-N quadration engine, owned by another track

@@ -8,19 +8,31 @@ Right-side stacked panels showing karaka assignments, planetary strengths, and a
 Extracted from core_gui_qt.py for modularity
 """
 from PySide6.QtWidgets import (
-    QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QListWidget,
-    QTableWidget, QTableWidgetItem, QHeaderView, QStackedWidget, QPushButton,
-    QTextEdit, QTextBrowser
+    QApplication,
+    QWidget,
+    QVBoxLayout,
+    QHBoxLayout,
+    QLabel,
+    QTableWidget,
+    QHeaderView,
+    QStackedWidget,
+    QPushButton,
+    QTextEdit,
+    QTextBrowser,
 )
 from PySide6.QtCore import Qt, QObject, QEvent, QSize
 from PySide6.QtGui import QIcon
 
 # Import centralized theme
 from ui.qt_theme import (
-    elevation_color, elevation_divider, DIVIDER_ALPHA_MATRIX,
-    BG, SURFACE, TEXT_PRIMARY, FONT_MONO,
-    ACCENTS, get_header_style, get_panel_style, get_frame_style,
-    get_theme_colors, scaled_px, scaled_area_px
+    elevation_color,
+    elevation_divider,
+    DIVIDER_ALPHA_MATRIX,
+    get_panel_style,
+    get_frame_style,
+    get_theme_colors,
+    scaled_px,
+    scaled_area_px,
 )
 
 def avastha_compact_table_style():

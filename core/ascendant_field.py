@@ -81,6 +81,7 @@ __all__ = [
     "compute_bands",
     "zone_strips",
     "tiled_polygons",
+    "smooth_polygon",
     "zone_of_active",
     "row_intervals",
     "SIGN_THRESHOLDS",
@@ -145,6 +146,13 @@ BISECT_STEPS = 24
 #: Rows per `BandScan.step()`. One row costs ~1440 free evaluations plus ~13
 #: probes, so a slice stays well inside a 16 ms frame.
 CHUNK_ROWS = 2
+
+#: Max longitude gap (degrees) at which `_link_rows` still treats an interval as
+#: the continuation of an open strip when they do not overlap. A narrow zone
+#: drifts up to ~16 deg/row near the polar pinch, so a bridge this wide re-links
+#: the real band; distinct risings of the same sign are separated by far more,
+#: so it never fuses two genuinely-separate components below the polar circle.
+LINK_GAP_DEG = 20.0
 
 _probe_count = 0
 
@@ -623,6 +631,141 @@ def latitude_rows(lat_limit: float = LAT_LIMIT,
 
 
 # ---------------------------------------------------------------------------
+# Adaptive row refinement
+# ---------------------------------------------------------------------------
+#
+# WHY A FIXED ROW SCHEDULE IS NOT ENOUGH ABOVE THE POLAR CIRCLE
+# ------------------------------------------------------------
+# `latitude_rows` samples the boundary curves on a latitude grid, and a band is
+# drawn by joining consecutive samples with straight segments. That is a good
+# parameterisation while the curves run north-south. Above the polar circle they
+# turn: the ascending point's longitude races as latitude creeps, so one
+# 1.5-degree row can carry a boundary 28 degrees of longitude, and the straight
+# segment between two such samples is a chord cutting clean across a hard bend.
+# Measured against a per-pixel evaluation of the closed form at 2026-08-12
+# 17:46 UTC, that chord left the drawn band bowed away from the true boundary by
+# up to 3.3 degrees, produced flat truncated triangles where a band pinches out,
+# and let one band's taper cross a neighbour's edge — the polar artifacts.
+#
+# Shrinking `ROW_FINE_DEG` globally does not fix it: the defect is concentrated
+# in a few row pairs and a uniform schedule fine enough for those would spend
+# most of its probes where nothing bends. So the schedule above stays the base,
+# and the pairs that need it are split — the latitude analogue of `_subdivide`,
+# which already does this along a row.
+#
+# The test is CURVATURE, not speed. A boundary that moves fast in a straight
+# line is drawn perfectly by one segment; one that bows away from its own chord
+# is not. So a pair is split when the boundary at the midpoint latitude lies
+# further from the chord between the two rows than `ROW_SAG_TOL_DEG` — the
+# sagitta. An earlier criterion keyed to raw longitude drift spent about a third
+# more rows for a worse result, because it refined the steep-but-straight
+# stretches that were already exact.
+
+#: How far a boundary may bow away from the straight segment drawn between two
+#: adjacent rows before a row is inserted between them. 0.35 degrees of
+#: longitude at 80 N is about 7 km — well under a pixel at any zoom the map
+#: offers, and an order of magnitude below the ~3 degree bow it removes.
+ROW_SAG_TOL_DEG = 0.35
+
+#: Smallest latitude gap a bowing pair is split to. Reached only where the
+#: curvature is genuinely unbounded (at a cusp), where stopping leaves a corner
+#: — which is what a cusp is.
+ROW_SPLIT_FLOOR_DEG = 0.10
+
+#: Smallest latitude gap a pair is split to when its TOPOLOGY changes — a zone
+#: appears or vanishes between the two rows. There is no chord to measure across
+#: a structural break, so the split runs on geometry alone; it stops sooner than
+#: `ROW_SPLIT_FLOOR_DEG` because what it buys is the LOCATION of the break (the
+#: latitude where a band pinches out), and 0.25 degrees places that to ~28 km.
+#:
+#: These three are a measured trade, not preferences. Against a per-pixel
+#: evaluation of the closed form over 66-85 N (2026-08-12 17:46, trimsamsa
+#: fifths of Vishnu), the share of the polar field painted with the wrong zone
+#: runs: no refinement 0.439%, 0.50/0.15/0.35 0.029%, THIS SET 0.027%,
+#: 0.25/0.05/0.15 0.015%. The tightest set costs ~46% more wall clock for a
+#: difference no display can show, so the knee is here.
+ROW_TOPO_FLOOR_DEG = 0.25
+
+#: Refinement starts this far BELOW a polar circle. The bend begins before the
+#: circle itself, and the pair straddling it is one of the worst.
+ROW_REFINE_MARGIN = 2.0
+
+
+def _row_zone_pairs(a: Sequence[Tuple[int, float, float]],
+                    b: Sequence[Tuple[int, float, float]]
+                    ) -> Optional[List[Tuple[int, int]]]:
+    """Index pairs matching row `a`'s intervals to row `b`'s, or None.
+
+    None means the two rows do not share a topology — a different number of
+    intervals, or a different sequence of zones — which is a structural break,
+    not a curve.
+
+    The match is CYCLIC. `row_intervals` starts its list at the first crossing
+    it meets walking east from -180, so a crossing drifting across that seam
+    rotates the whole list by one without anything having happened to the field.
+    Comparing the sequences rigidly would read that rotation as a topology
+    change and spend a full subdivision on it.
+
+    Where MORE than one rotation fits the zone sequence, the zones alone cannot
+    say which is the physical continuation, and the lowest index is not an
+    answer — it is a coin toss. A zone may rise twice in one polar row, so a
+    sequence like A,B,A,B is possible in principle (not observed in 720 polar
+    rows across a 24-hour sweep, but the code should not depend on that), and
+    every rotation of it fits. The tie is broken by LONGITUDE: the rotation whose
+    intervals sit closest to their partners is the one that continues them.
+    """
+    n = len(a)
+    if n == 0 or n != len(b):
+        return None
+    za = [z for z, _lo, _hi in a]
+    zb = [z for z, _lo, _hi in b]
+    best = None
+    best_move = 0.0
+    for r in range(n):
+        if not all(za[i] == zb[(i + r) % n] for i in range(n)):
+            continue
+        move = sum(abs(_wrap180(b[(i + r) % n][1] - a[i][1])) for i in range(n))
+        if best is None or move < best_move:
+            best, best_move = r, move
+    if best is None:
+        return None
+    return [(i, (i + best) % n) for i in range(n)]
+
+
+def _row_sagitta(a: Sequence[Tuple[int, float, float]],
+                 m: Sequence[Tuple[int, float, float]],
+                 b: Sequence[Tuple[int, float, float]],
+                 zones: Optional[set] = None) -> float:
+    """How far the middle row's boundaries bow off the chord from `a` to `b`.
+
+    Returns `inf` when the three rows do not share one topology: a zone appeared
+    or vanished between them, and there is no chord to measure against.
+
+    Only boundaries of `zones` are measured when it is given — the eclipse
+    overlay draws one sign out of twelve, and refining rows for the eleven it
+    throws away costs probes and buys nothing.
+    """
+    am = _row_zone_pairs(a, m)
+    mb = _row_zone_pairs(m, b)
+    if am is None or mb is None:
+        return float("inf")
+    to_b = {i: j for i, j in mb}
+    worst = 0.0
+    for ia, im in am:
+        zone = a[ia][0]
+        if zones is not None and zone not in zones:
+            continue
+        ib = to_b[im]
+        for k in (1, 2):                       # the interval's two edges
+            va, vm, vb = a[ia][k], m[im][k], b[ib][k]
+            # Chord midpoint, measured the short way round so a boundary sitting
+            # near the seam is not read as half a globe of bow.
+            chord = va + _wrap180(vb - va) / 2.0
+            worst = max(worst, abs(_wrap180(vm - chord)))
+    return worst
+
+
+# ---------------------------------------------------------------------------
 # Band assembly
 # ---------------------------------------------------------------------------
 
@@ -740,6 +883,17 @@ def _link_rows(rows: Sequence[Tuple[float, List[Tuple[int, float, float]]]]
     lats = [lat for lat, _iv in rows]
 
     def _close(strip: _Strip) -> None:
+        # A strip that spanned only ONE data row (never extended past the row it
+        # opened on) is a disconnected fragment: an interval appeared where the
+        # field tore just above the polar circle and matched nothing in the
+        # adjacent rows. It is not a band. `taper` would otherwise manufacture a
+        # ~1.5-degree diamond from that single point (padding it half a row each
+        # way), which is exactly the spurious polar artifact that litters the
+        # Arctic. Drop it BEFORE taper. Fork children always start with two rows
+        # (the parent's last row plus their own first extend), so this never
+        # drops a legitimate split — only the orphans taper used to inflate.
+        if len(strip.left) < 2:
+            return
         strip.taper(lats)
         band = strip.finish()
         if band is not None:
@@ -771,6 +925,35 @@ def _link_rows(rows: Sequence[Tuple[float, List[Tuple[int, float, float]]]]
                 fork.append((si, a, b))        # the strip splits here
             else:
                 extend[si] = (a, b)
+
+        # A zone narrower in longitude than its own drift between rows shares NO
+        # longitude with its continuation, so overlap linking alone shatters one
+        # band into detached one-row strips (drawn as the "diamonds" over the
+        # Arctic and, at the 6-degree coarse rows, mid-latitude too). An
+        # unmatched interval continues the NEAREST unmatched strip of its sign
+        # when the gap is small enough to be row-to-row drift rather than a
+        # different rising of the zone. Below the polar circle every degree rises
+        # once per row, so this re-creates the continuity the pre-td-ccmf
+        # curve-based assembler had structurally; above it, a genuine second
+        # rising is separated by far more than LINK_GAP_DEG and stays distinct.
+        near = []
+        for si, strip in enumerate(open_strips):
+            if si in extend:
+                continue
+            s_mid = (strip.lo + strip.hi) / 2.0
+            for ii, (sign, lo, hi) in enumerate(intervals):
+                if ii in used_intervals or sign != strip.sign:
+                    continue
+                shift = round((s_mid - (lo + hi) / 2.0) / 360.0) * 360.0
+                a, b = lo + shift, hi + shift
+                gap = max(a - strip.hi, strip.lo - b)
+                if gap <= LINK_GAP_DEG:
+                    near.append((gap, si, ii, a, b))
+        for _gap, si, ii, a, b in sorted(near):
+            if ii in used_intervals or si in extend:
+                continue
+            used_intervals.add(ii)
+            extend[si] = (a, b)
 
         # Forks are built BEFORE the parents advance: a child's first row is the
         # parent's last, which is the row they still shared.
@@ -839,7 +1022,8 @@ class BandScan:
                  step_deg: float = WALK_STEP_DEG, verify: bool = True,
                  thresholds: Sequence[float] = SIGN_THRESHOLDS,
                  verify_zones: Optional[set] = None,
-                 max_asc_step: Optional[float] = None):
+                 max_asc_step: Optional[float] = None,
+                 refine: bool = True):
         self.jd = jd
         self.mode = mode
         self.ayanamsa = ayanamsa
@@ -857,7 +1041,7 @@ class BandScan:
         self._eps = _obliquity_deg(jd)
         self._offset = frame_offset_deg(jd, mode, ayanamsa)
 
-        polar = polar_limit_deg(self._eps)
+        self._polar = polar_limit_deg(self._eps)
         if rows:
             # Explicit row count: uniform, for tests and CLI reproducibility.
             # One row spans no latitude, so it cannot make a band; treat it as
@@ -867,35 +1051,112 @@ class BandScan:
             self._lats = [(-limit + (2 * limit) * i / (n - 1))
                           for i in range(n)]
         else:
-            self._lats = latitude_rows(lat_limit, polar)
+            self._lats = latitude_rows(lat_limit, self._polar)
+
+        #: A caller that asked for an exact row count asked for a UNIFORM scan;
+        #: honour that literally rather than handing back rows it did not ask
+        #: for. Everything else refines (see the refinement block above).
+        self.refine = bool(refine) and not rows
 
         self._rows: List[Tuple[float, List[Tuple[int, float, float]]]] = []
+        self._by_lat: dict = {}
+        #: Rows added by refinement, kept apart from `_rows` so `_lats` stays
+        #: the schedule the scan was configured with.
+        self._extra: dict = {}
+        #: Latitude pairs still to test. None until the base rows are all in.
+        self._pending: Optional[List[Tuple[float, float]]] = None
         self._i = 0
         self.done = False
+
+    def _row(self, lat: float,
+             verify: Optional[bool] = None) -> List[Tuple[int, float, float]]:
+        return row_intervals(
+            self.jd, lat, self._gst, self._eps, self._offset, self.mode,
+            self.ayanamsa, step_deg=self.step_deg,
+            verify=self.verify if verify is None else verify,
+            max_asc_step=self.max_asc_step,
+            thresholds=self.thresholds, verify_zones=self.verify_zones)
+
+    def _refine_pairs(self) -> List[Tuple[float, float]]:
+        """Adjacent base-row pairs worth testing for curvature.
+
+        Only the polar ones. Below `ROW_REFINE_MARGIN` under the polar circle
+        the boundaries are near enough to straight between rows that the
+        measured bow is under 0.32 degrees on the whole schedule — smaller than
+        the tolerance, so every test there would cost a row and split nothing.
+        """
+        if not self.refine:
+            return []
+        edge = self._polar - ROW_REFINE_MARGIN
+        return [(self._lats[i], self._lats[i + 1])
+                for i in range(len(self._lats) - 1)
+                if max(abs(self._lats[i]), abs(self._lats[i + 1])) >= edge]
+
+    def _refine_one(self) -> None:
+        """Test one latitude pair and split it if its boundaries bow.
+
+        The TEST row is computed without the confirming probes. Asking "does
+        this curve bend" is a question about geometry, and the closed form is
+        exact for that (0.00000 degrees against the engine); the probes answer a
+        different question — whether the zone is the sign the engine says it is
+        — and most test rows are discarded, so verifying them buys an answer
+        nobody reads. Six in ten tests end in no split, and that is where the
+        cost of refinement was going.
+
+        A row that is KEPT is recomputed WITH verification, because it will be
+        drawn, and INV-2 admits no geometry the engine has not confirmed. If
+        verification ever does disagree with the free walk, the kept row simply
+        stops matching its neighbours' topology and the pair splits further —
+        the failure direction is more sampling, never unconfirmed ink.
+        """
+        lo, hi = self._pending.pop()
+        mid = (lo + hi) / 2.0
+        row = self._row(mid, verify=False)
+        sag = _row_sagitta(self._by_lat[lo], row, self._by_lat[hi],
+                           self.verify_zones)
+        floor = ROW_TOPO_FLOOR_DEG if math.isinf(sag) else ROW_SPLIT_FLOOR_DEG
+        if hi - lo <= floor or sag <= ROW_SAG_TOL_DEG:
+            # Flat enough (or as close to the break as we go): the segment
+            # already drawn between `lo` and `hi` IS the curve, to under the
+            # tolerance. Keeping the row would add vertices that carry no shape.
+            return
+        row = self._row(mid)
+        self._by_lat[mid] = row
+        self._extra[mid] = row
+        self._pending.append((lo, mid))
+        self._pending.append((mid, hi))
 
     def step(self) -> bool:
         """Compute one slice. Returns True when the whole scan is finished."""
         if self.done:
             return True
 
-        for _ in range(self.chunk_rows):
-            if self._i >= len(self._lats):
-                break
+        budget = self.chunk_rows
+        while budget > 0 and self._i < len(self._lats):
             lat = self._lats[self._i]
-            self._rows.append((lat, row_intervals(
-                self.jd, lat, self._gst, self._eps, self._offset, self.mode,
-                self.ayanamsa, step_deg=self.step_deg, verify=self.verify,
-                max_asc_step=self.max_asc_step,
-                thresholds=self.thresholds, verify_zones=self.verify_zones)))
+            row = self._row(lat)
+            self._rows.append((lat, row))
+            self._by_lat[lat] = row
             self._i += 1
+            budget -= 1
 
-        if self._i >= len(self._lats):
-            self.done = True
+        if self._i < len(self._lats):
+            return False
+
+        if self._pending is None:
+            self._pending = self._refine_pairs()
+        while budget > 0 and self._pending:
+            self._refine_one()
+            budget -= 1
+
+        self.done = not self._pending
         return self.done
 
     def result(self) -> List[BandResult]:
         """Assemble the bands. Meaningless before `done`."""
-        return _link_rows(self._rows)
+        if not self._extra:
+            return _link_rows(self._rows)
+        return _link_rows(sorted(self._by_lat.items()))
 
 
 def compute_bands(jd: float, mode: str, ayanamsa: int = 1,
@@ -903,7 +1164,8 @@ def compute_bands(jd: float, mode: str, ayanamsa: int = 1,
                   should_cancel=None, step_deg: float = WALK_STEP_DEG,
                   verify: bool = True,
                   thresholds: Sequence[float] = SIGN_THRESHOLDS,
-                  verify_zones: Optional[set] = None
+                  verify_zones: Optional[set] = None,
+                  refine: bool = True
                   ) -> List[BandResult]:
     """Ascendant bands for one instant, computed in one go.
 
@@ -914,7 +1176,7 @@ def compute_bands(jd: float, mode: str, ayanamsa: int = 1,
     """
     scan = BandScan(jd, mode, ayanamsa, rows=rows, lat_limit=lat_limit,
                     step_deg=step_deg, verify=verify, thresholds=thresholds,
-                    verify_zones=verify_zones)
+                    verify_zones=verify_zones, refine=refine)
     while not scan.step():
         if should_cancel is not None and should_cancel():
             return []
@@ -924,7 +1186,8 @@ def compute_bands(jd: float, mode: str, ayanamsa: int = 1,
 def zone_strips(jd: float, zones: Sequence[int], mode: str = "aditya",
                 ayanamsa: int = 1, thresholds: Sequence[float] = SIGN_THRESHOLDS,
                 lat_limit: float = LAT_LIMIT, rows: Optional[int] = None,
-                should_cancel=None, verify: bool = True
+                should_cancel=None, verify: bool = True,
+                refine: bool = True
                 ) -> List[BandResult]:
     """The strips for SOME zones only — the eclipse overlay's entry point.
 
@@ -943,8 +1206,139 @@ def zone_strips(jd: float, zones: Sequence[int], mode: str = "aditya",
     wanted = set(int(z) for z in zones)
     bands = compute_bands(jd, mode, ayanamsa, rows=rows, lat_limit=lat_limit,
                           should_cancel=should_cancel, verify=verify,
-                          thresholds=thresholds, verify_zones=wanted)
+                          thresholds=thresholds, verify_zones=wanted,
+                          refine=refine)
     return [b for b in bands if b.sign_index in wanted]
+
+
+#: Longest straight edge (in degrees, lat-lon plane) left after smoothing.
+SMOOTH_MAX_SEG_DEG = 1.5
+
+#: A vertex that turns more sharply than this is a real corner (a band's taper
+#: tip, or a structural break above the polar circle) and is kept hard; gentler
+#: bends are the row grid faceting a smooth curve, and get rounded through it.
+SMOOTH_CORNER_DEG = 55.0
+
+
+def _turn_angle_deg(a, b, c):
+    """Turn angle at b for the path a->b->c, in degrees (0 = straight)."""
+    v1x, v1y = b[0] - a[0], b[1] - a[1]
+    v2x, v2y = c[0] - b[0], c[1] - b[1]
+    n1 = math.hypot(v1x, v1y)
+    n2 = math.hypot(v2x, v2y)
+    if n1 < 1e-9 or n2 < 1e-9:
+        return 0.0
+    cosv = max(-1.0, min(1.0, (v1x * v2x + v1y * v2y) / (n1 * n2)))
+    return math.degrees(math.acos(cosv))
+
+
+def _catmull_rom_centripetal(p0, p1, p2, p3, s, alpha=0.5):
+    """Point at local parameter s in [0, 1] on the centripetal Catmull-Rom
+    spline segment between p1 and p2.
+
+    Centripetal (alpha=0.5), not uniform: the knots are spaced by chord length,
+    so a sudden jump in point spacing near the polar pinch (where the boundary's
+    longitude leaps tens of degrees in one latitude row) no longer makes the
+    spline overshoot the samples. Coincident points (the duplicated taper apex
+    in `left + reversed(right)`) give a zero-length chord; the knot is nudged so
+    the parameterisation never divides by zero, and the segment degrades to the
+    straight line the identical endpoints already describe.
+    """
+    def knot(ti, a, b):
+        d = math.hypot(b[0] - a[0], b[1] - a[1])
+        return ti + (d ** alpha if d > 1e-12 else 1e-6)
+
+    t0 = 0.0
+    t1 = knot(t0, p0, p1)
+    t2 = knot(t1, p1, p2)
+    t3 = knot(t2, p2, p3)
+    t = t1 + (t2 - t1) * s
+
+    def lerp(a, b, ta, tb):
+        if tb - ta < 1e-12:
+            return a
+        w = (t - ta) / (tb - ta)
+        return (a[0] + (b[0] - a[0]) * w, a[1] + (b[1] - a[1]) * w)
+
+    a1 = lerp(p0, p1, t0, t1)
+    a2 = lerp(p1, p2, t1, t2)
+    a3 = lerp(p2, p3, t2, t3)
+    b1 = lerp(a1, a2, t0, t2)
+    b2 = lerp(a2, a3, t1, t3)
+    return lerp(b1, b2, t1, t2)
+
+
+def smooth_polygon(coords: Sequence[Tuple[float, float]],
+                   max_seg: float = SMOOTH_MAX_SEG_DEG,
+                   corner_deg: float = SMOOTH_CORNER_DEG,
+                   closed: bool = True
+                   ) -> List[Tuple[float, float]]:
+    """Round the row-grid facets out of a zone polygon, for DISPLAY only.
+
+    The band boundary is a smooth curve; `latitude_rows` samples it on a coarse
+    grid (6 deg away from the poles) and the straight segments between samples
+    read as kinks on the map. This inserts Catmull-Rom points along each gentle
+    segment so the drawn edge follows the curve the samples already lie on. It
+    adds NO Ascendant probes — it interpolates existing points — and it does not
+    touch the computed geometry (`zone_strips`/`BandResult` are unchanged), so
+    the golden, the width gate and the CLI `--json` contract all still see the
+    raw samples. Smooth first, THEN `tiled_polygons`: the copies stay identical.
+
+    `closed` (default) treats the input as a ring — the eclipse fill polygon
+    (`left + reversed(right)`). Pass `closed=False` for an OPEN edge (the main
+    map draws `left` and `right` as separate stroked paths): the two endpoints
+    are kept and rounded with clamped one-sided tangents, and the ring is not
+    joined, so an edge is never closed into a loop.
+
+    A vertex sharper than `corner_deg` is a real corner — the taper tip where
+    the two edges meet, or a structural break above the polar circle — and is
+    left hard; a segment touching one is not rounded either, so a genuine point
+    is never bulged into a loop. Measured fidelity on the 1991-02-22 sweep: the
+    rounded edge stays within 0.14 deg of the sampled polyline below 60 deg
+    latitude and 0.29 deg anywhere — an order of magnitude below the ~1.5 deg
+    facet it removes, so it moves the drawn line by well under a pixel at the
+    zoom the overlay is read at. The centripetal parameterisation is what keeps
+    the anywhere figure small: uniform Catmull-Rom overshot to ~1.8 deg near the
+    polar pinch, where one latitude row can leap tens of degrees of longitude.
+    """
+    n = len(coords)
+    if n < 4:
+        return [(float(a), float(b)) for a, b in coords]
+    pts = [(float(a), float(b)) for a, b in coords]
+
+    def _nb(i):
+        return i % n if closed else max(0, min(n - 1, i))
+
+    # Sharp corners are kept hard. An open curve's two endpoints are curve ENDS,
+    # not corners: keep them but let their segment round (clamped tangents).
+    sharp = [False] * n
+    for i in range(n):
+        if closed or 0 < i < n - 1:
+            sharp[i] = _turn_angle_deg(
+                pts[_nb(i - 1)], pts[i], pts[_nb(i + 1)]) > corner_deg
+
+    out: List[Tuple[float, float]] = []
+    last = n if closed else n - 1
+    for i in range(last):
+        p0 = pts[_nb(i - 1)]; p1 = pts[i]
+        p2 = pts[_nb(i + 1)]; p3 = pts[_nb(i + 2)]
+        out.append(p1)
+        seg = math.hypot(p2[0] - p1[0], p2[1] - p1[1])
+        if seg <= max_seg:
+            continue
+        # ceil, not floor: floor leaves sub-segments longer than the target.
+        steps = int(math.ceil(seg / max_seg))
+        keep_straight = sharp[i] or sharp[_nb(i + 1)]
+        for s in range(1, steps):
+            t = s / steps
+            if keep_straight:
+                out.append((p1[0] + (p2[0] - p1[0]) * t,
+                            p1[1] + (p2[1] - p1[1]) * t))
+            else:
+                out.append(_catmull_rom_centripetal(p0, p1, p2, p3, t))
+    if not closed:
+        out.append(pts[n - 1])
+    return out
 
 
 def tiled_polygons(coords: Sequence[Tuple[float, float]],

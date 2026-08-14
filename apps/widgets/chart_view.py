@@ -12,7 +12,6 @@ Contains:
 """
 import sys
 import json
-import re
 from pathlib import Path
 
 from PySide6.QtWidgets import (
@@ -43,14 +42,26 @@ from apps.widgets.center_mini import (
 
 # Import centralized theme
 from ui.qt_theme import (
-    BG, SURFACE, TEXT_PRIMARY, TEXT_SECONDARY, TEXT_TERTIARY,
-    GOLD, ACCENTS, FONT_CHART, get_theme_colors, desat_image, sat_key, desat_hex,
+    GOLD,
+    FONT_CHART,
+    get_theme_colors,
+    desat_image,
+    sat_key,
+    desat_hex,
 )
 
 # Import settings manager for chart display customization
 from managers.settings_manager import get_settings
 from core.aditya_mode import displayed_sign_name, get_planet_display_name
 from state.user_data import get_settings_path as _get_settings_path
+
+# Canonical element palette (td-s6u7 dedupe): one source of truth for the
+# Fire/Earth/Air/Water hex values, shared with north_indian_items and the
+# wheel renderers. desat_hex stays at the use sites (SPEC-SAT-001).
+from visualizations.wheel_constants import (
+    ELEMENT_COLORS as _WHEEL_ELEMENT_COLORS,
+    ELEMENT_CYCLE as _WHEEL_ELEMENT_CYCLE,
+)
 
 # Background images folder - NEW location (no fallback)
 BACKGROUNDS_PATH = PROJECT_ROOT / "img" / "background"
@@ -247,21 +258,14 @@ class SouthIndianView(QGraphicsView):
         "Pluto": 100,    # Smaller - outer planet
     }
 
-    # Element colors for ascendant stripe (by zodiac index)
-    # Fire=Red, Earth=Brown, Air=Green, Water=Blue
+    # Element colors for ascendant stripe (by zodiac index 0-11).
+    # td-s6u7: derived from the canonical name-keyed palette in
+    # visualizations/wheel_constants.py (Fire #E57373, Earth #A67C52,
+    # Air #F0C75E, Water #1E4D8C) via the Fire-Earth-Air-Water cycle —
+    # byte-identical values to the old inline dict, single source of truth.
     ELEMENT_COLORS = {
-        0: "#E57373",   # Dhata (Aries) - Fire - Coral red
-        1: "#A67C52",   # Aryama (Taurus) - Earth - Brown/tan
-        2: "#F0C75E",   # Mitra (Gemini) - Air - Golden yellow
-        3: "#1E4D8C",   # Varuna (Cancer) - Water - Deep blue
-        4: "#E57373",   # Indra (Leo) - Fire - Coral red
-        5: "#A67C52",   # Vivasvan (Virgo) - Earth - Brown/tan
-        6: "#F0C75E",   # Tvasta (Libra) - Air - Golden yellow
-        7: "#1E4D8C",   # Vishnu (Scorpio) - Water - Deep blue
-        8: "#E57373",   # Amzu (Sagittarius) - Fire - Coral red
-        9: "#A67C52",   # Bhaga (Capricorn) - Earth - Brown/tan
-        10: "#F0C75E",  # Pusha (Aquarius) - Air - Golden yellow
-        11: "#1E4D8C",  # Parjanya (Pisces) - Water - Deep blue
+        i: _WHEEL_ELEMENT_COLORS[_WHEEL_ELEMENT_CYCLE[i % 4]]
+        for i in range(12)
     }
 
     # Enhanced element glow colors for Ascendant effect
@@ -3232,16 +3236,6 @@ class SouthIndianView(QGraphicsView):
         if mini is not None:
             mini.deleteLater()
 
-    def notify_zodiac_changed(self):
-        """Re-render Mode 2 when the Z4 zodiac radio (aditya_mode) changes.
-
-        Called by the parent GUI after switching aditya_mode between
-        'zodiac' / 'classic' / 'sidereal'. Idempotent and a no-op when
-        Mode 2 is not active.
-        """
-        self._center_ni_cache.invalidate()
-        self._apply_center_precedence()
-
     def _apply_center_precedence(self):
         """SPEC-VGC-001 §3.2, in ONE place.
 
@@ -3324,8 +3318,12 @@ class SouthIndianView(QGraphicsView):
                       if self._center_varga_code is not None
                       else self._varga_code)
 
+        # td-2uj2: aditya_mode is a signature term (like the SI signature in
+        # _show_center_si_mini) so a zodiac-mode switch invalidates the mini
+        # by key. The dead notify_zodiac_changed() hook that used to claim
+        # this job (but had zero callers) is deleted.
         signature = (id(self._chart), varga_code, lagna_zodiac_idx,
-                     bool(self.use_western_names))
+                     bool(self.use_western_names), self.aditya_mode)
         picture = self._center_ni_cache.get(signature)
         if picture is None:
             if self._mini_north_indian_view is None:

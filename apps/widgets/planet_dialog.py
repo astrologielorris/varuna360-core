@@ -13,7 +13,6 @@ Features:
 - Planet image variation selection
 - Horizontal oscillation animation for planet icons
 """
-import re
 import math
 from pathlib import Path
 
@@ -23,15 +22,18 @@ from PySide6.QtWidgets import (
     QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QListWidget,
     QListWidgetItem, QSplitter
 )
-from PySide6.QtCore import Qt, Signal, QTimer, QUrl
-from PySide6.QtGui import QFont, QPixmap, QImage, QColor, QTextDocument, QPainter
+from PySide6.QtCore import Qt, Signal, QTimer
+from PySide6.QtGui import QPixmap, QImage, QColor, QPainter
 
 from ui.qt_theme import (
-    BG, SURFACE, TEXT_PRIMARY, TEXT_SECONDARY, TEXT_TERTIARY, GOLD,
-    ACCENTS, FONT_PRIMARY, FONT_MONO, BORDER, HOVER,
-    get_theme_colors, get_primary_button_style, get_secondary_button_style,
-    get_3d_button_style, STATUS, desat_hex,
-    scaled_area_font, is_light_theme, desat_image,
+    TEXT_SECONDARY,
+    GOLD,
+    get_theme_colors,
+    STATUS,
+    desat_hex,
+    scaled_area_font,
+    is_light_theme,
+    desat_image,
 )
 
 # Import shared Aditya data

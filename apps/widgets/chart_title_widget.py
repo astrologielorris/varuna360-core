@@ -6,18 +6,29 @@ Chart Title Widget
 Displays chart name with close button (centered above chart)
 """
 from PySide6.QtWidgets import (
-    QWidget, QHBoxLayout, QVBoxLayout, QLabel, QPushButton, QMenu,
-    QDialog, QTextEdit, QApplication, QProgressBar, QScrollArea, QFrame,
-    QLineEdit, QListWidget, QListWidgetItem
+    QWidget,
+    QHBoxLayout,
+    QVBoxLayout,
+    QLabel,
+    QPushButton,
+    QMenu,
+    QDialog,
+    QApplication,
+    QLineEdit,
+    QListWidget,
+    QListWidgetItem,
 )
-from PySide6.QtCore import Qt, QThread, QTimer, Signal
-from PySide6.QtGui import QFont, QPixmap
+from PySide6.QtCore import Qt, QTimer
 
 # Import centralized theme
 from ui.qt_theme import (
-    TEXT_PRIMARY, TEXT_SECONDARY, STATUS, SURFACE, BG, BORDER, GOLD,
-    get_theme_colors, get_secondary_button_style, FONT_MONO, scaled_px, scaled_size,
-    scaled_area_px, scaled_area_size, scaled_area_font, desat_hex
+    STATUS,
+    GOLD,
+    get_theme_colors,
+    get_secondary_button_style,
+    scaled_area_px,
+    scaled_area_font,
+    desat_hex,
 )
 
 import urllib.parse
@@ -234,6 +245,105 @@ def _get_nisarga_entries(gui):
         })
 
     return entries
+
+
+_TRANSIT_IDLE_TOOLTIP = ("Show current planetary transits overlay. "
+                         "Drop a chart here to overlay it.")
+
+
+def _style_overlay_chip(gui):
+    """Theme the overlay chip (SPEC-TRN-006, Rule 20 — no hardcoded hex)."""
+    if not hasattr(gui, 'overlay_chip'):
+        return
+    theme = get_theme_colors()
+    gui.overlay_chip.setStyleSheet(f"""
+        QWidget {{
+            background-color: {theme["secondary_dark"]};
+            border: 1px solid {theme["primary"]};
+            border-radius: 11px;
+        }}
+    """)
+    gui.overlay_chip_label.setStyleSheet(f"""
+        QLabel {{
+            color: {theme["secondary_text"]};
+            background: transparent;
+            border: none;
+            font-family: 'Inter', 'Segoe UI', 'Arial', sans-serif;
+            font-size: {scaled_area_px('buttons')}px;
+        }}
+    """)
+    gui.overlay_chip_clear.setStyleSheet(f"""
+        QPushButton {{
+            color: {theme["secondary_text"]};
+            background: transparent;
+            border: none;
+            font-size: {scaled_area_px('buttons')}px;
+            font-weight: bold;
+        }}
+        QPushButton:hover {{ color: {theme["primary_text"]}; }}
+    """)
+
+
+def update_overlay_chip(gui, mgr):
+    """Sync the overlay chip + TRANSIT button idle text from manager state.
+
+    Single call site (the _on_transit_state_changed mediator). The manager is the
+    source of truth for the display name; the GUI never derives it. Setting the
+    button's idle text/tooltip here is what TransitDropButton snapshots live on
+    drag-enter, so an active overlay restores "⟐ Overlay" correctly after a hover.
+    """
+    if not hasattr(gui, 'overlay_chip'):
+        return
+    is_overlay = (getattr(mgr, 'transit_mode', '') == "overlay_chart"
+                  and getattr(mgr, 'transit_enabled', False))
+    if is_overlay:
+        name = mgr.overlay_label or "chart"
+        shown = name if len(name) <= 18 else name[:17] + "…"
+        gui.overlay_chip_label.setText(f"⟐ {shown}")
+        gui.overlay_chip_label.setToolTip(name)
+        # Do not reveal the chip in compact mode: the TRANSIT button is hidden
+        # there, so a visible chip would be a dead control (reachable when an
+        # overlay is started while already compact, e.g. via the right-click entry).
+        gui.overlay_chip.setVisible(not getattr(gui, '_title_is_compact', False))
+        if hasattr(gui, 'transit_btn'):
+            gui.transit_btn.setText("⟐ Overlay")
+            gui.transit_btn.setToolTip(
+                f"Overlay: {name}. Click to turn the rim off, or use the x on "
+                f"the chip to go back to live sky.")
+    else:
+        gui.overlay_chip.setVisible(False)
+        if hasattr(gui, 'transit_btn'):
+            gui.transit_btn.setText("⟐ Transit")
+            gui.transit_btn.setToolTip(_TRANSIT_IDLE_TOOLTIP)
+
+
+def _show_transit_context_menu(gui, button, pos):
+    """Right-click menu on the TRANSIT button (SPEC-TRN-006 D-1).
+
+    Actions are enabled only while an overlay chart is active. Gives users who
+    never notice the chip the same clear / back-to-live-sky operations.
+    """
+    mgr = getattr(gui, 'transit_overlay_manager', None)
+    is_overlay = (mgr is not None
+                  and getattr(mgr, 'transit_mode', '') == "overlay_chart"
+                  and getattr(mgr, 'transit_enabled', False))
+    if not is_overlay:
+        return
+    theme = get_theme_colors()
+    menu = QMenu(button)
+    menu.setStyleSheet(f"""
+        QMenu {{
+            background-color: {theme["secondary"]};
+            color: {theme["secondary_text"]};
+            border: 1px solid {theme["secondary_dark"]};
+        }}
+        QMenu::item:selected {{ background-color: {theme["secondary_light"]}; }}
+    """)
+    menu.addAction("Back to live sky").triggered.connect(
+        lambda _=False: gui.chart_overlay_manager.back_to_live_sky())
+    menu.addAction("Clear overlay chart").triggered.connect(
+        lambda _=False: gui.chart_overlay_manager.clear())
+    menu.exec(button.mapToGlobal(pos))
 
 
 def _show_pill_context_menu(gui, button, pos):
@@ -818,14 +928,24 @@ def create_chart_title_widget(gui):
             border: 2px solid {theme["primary_light"]};
         }}
     """
-    gui.transit_btn = QPushButton("⟐ Transit")
+    # SPEC-TRN-006: TransitDropButton also accepts chart drops for overlay.
+    from apps.widgets.transit_drop_button import TransitDropButton
+    gui.transit_btn = TransitDropButton("⟐ Transit", gui)
     gui.transit_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-    gui.transit_btn.setToolTip("Show current planetary transits overlay")
+    gui.transit_btn.setToolTip("Show current planetary transits overlay. "
+                               "Drop a chart here to overlay it.")
     gui.transit_btn.setStyleSheet(transit_btn_style)
     gui.transit_btn.setCheckable(True)
     gui.transit_btn.setChecked(False)
     gui.transit_btn.setVisible(True)  # Visible on all chart views (SPEC-TRN-002)
+    # Fix width so the text can swap to "⟐ Overlay chart" mid-drag without a jump.
+    _tfm = gui.transit_btn.fontMetrics()
+    gui.transit_btn.setMinimumWidth(_tfm.horizontalAdvance("⟐ Overlay chart") + 28)
     gui.transit_btn.clicked.connect(gui._toggle_transit_rim)
+    gui.transit_btn.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+    gui.transit_btn.customContextMenuRequested.connect(
+        lambda pos: _show_transit_context_menu(gui, gui.transit_btn, pos)
+    )
     layout.addWidget(gui.transit_btn)
 
     layout.addSpacing(8)
@@ -929,6 +1049,27 @@ def create_chart_title_widget(gui):
     gui.chart_close_button.clicked.connect(gui._close_current_chart)
 
     container_layout.addWidget(gui.chart_close_button)
+
+    # SPEC-TRN-006: overlay chip — shown only in overlay-chart mode, right of the
+    # close button. Reading order: base chart, remove base, overlay on top, remove
+    # overlay. Hidden by default; update_overlay_chip() drives its state.
+    gui.overlay_chip = QWidget()
+    _chip_layout = QHBoxLayout(gui.overlay_chip)
+    _chip_layout.setContentsMargins(8, 2, 6, 2)
+    _chip_layout.setSpacing(6)
+    gui.overlay_chip_label = QLabel("")
+    _chip_layout.addWidget(gui.overlay_chip_label)
+    gui.overlay_chip_clear = QPushButton("×")
+    gui.overlay_chip_clear.setFixedSize(18, 18)
+    gui.overlay_chip_clear.setFlat(True)
+    gui.overlay_chip_clear.setCursor(Qt.CursorShape.PointingHandCursor)
+    gui.overlay_chip_clear.setToolTip("Remove overlay chart (back to live sky)")
+    gui.overlay_chip_clear.clicked.connect(
+        lambda: gui.chart_overlay_manager.back_to_live_sky())
+    _chip_layout.addWidget(gui.overlay_chip_clear)
+    gui.overlay_chip.setVisible(False)
+    _style_overlay_chip(gui)
+    container_layout.addWidget(gui.overlay_chip)
 
     # Add container to main layout (centered)
     layout.addWidget(container)
@@ -1134,6 +1275,18 @@ def set_chart_title_compact(gui, compact):
             btn = getattr(gui, attr, None)
             if btn:
                 btn.setVisible(False)
+    # SPEC-TRN-006: the overlay chip has no meaning without the TRANSIT button
+    # to re-enter the state, so hide it in compact (state is kept, not cleared).
+    _chip = getattr(gui, 'overlay_chip', None)
+    if _chip is not None:
+        if compact:
+            _chip.setVisible(False)
+        else:
+            _mgr = getattr(gui, 'transit_overlay_manager', None)
+            _chip.setVisible(
+                _mgr is not None
+                and getattr(_mgr, 'transit_mode', '') == "overlay_chart"
+                and getattr(_mgr, 'transit_enabled', False))
 
     # --- 2. Style all remaining visible buttons ---
     # Compact: small, fixed-height, no min-width, tight padding
@@ -1383,7 +1536,16 @@ def refresh_chart_title_theme(gui):
     for attr in ('transit_btn', 'dual_rim_btn'):
         btn = getattr(gui, attr, None)
         if btn:
+            # SPEC-TRN-006 B-6: clear any live drop-hover snapshot first, so a
+            # theme refresh mid-drag cannot leave the button restoring a stale
+            # captured stylesheet on drag-leave.
+            _exit = getattr(btn, '_exit_drop_look', None)
+            if callable(_exit):
+                _exit()
             btn.setStyleSheet(checkable_style)
+
+    # SPEC-TRN-006: re-theme the overlay chip.
+    _style_overlay_chip(gui)
 
     # Apply to inactive-style buttons (with min-width)
     inactive_style = btn_style.replace("padding: 8px 12px;", "padding: 8px 12px; min-width: 100px;")
@@ -1420,7 +1582,7 @@ def _debug_log(msg):
 # They are imported here so existing references in this file (the panel
 # button wiring and _fetch_chart_info below) keep working unchanged.
 # Dependency is one-way: chart_info_dialog does NOT import this module.
-from apps.widgets.chart_info_dialog import ChartInfoDialog, ChartInfoWorker
+from apps.widgets.chart_info_dialog import ChartInfoDialog
 
 
 def _fetch_chart_info(gui):

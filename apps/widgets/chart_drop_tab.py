@@ -5,12 +5,18 @@ last one becomes the active chart (mirrors the menu's Open Chart behavior
 with multi-select). Dropping a folder reuses the Chart Memory Panel's
 load_folder_charts_from_path, the same core used by the "📁 Load Folder"
 button. No loader logic is duplicated here — this widget only dispatches.
-"""
 
-from pathlib import Path
+SPEC-TRN-006: a chart file dropped on the TRANSIT button overlays it on the
+active chart instead of loading it as active. That is handled by TransitDropButton
+(a child of this tab); Qt delivers the drop to the deepest accepting widget, so
+once the button accepts drops it wins over this ancestor. Tab-body drops keep the
+load-as-active behavior below unchanged.
+"""
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QWidget
+
+from apps.widgets.chart_drop_common import classify_chart_drop
 
 
 class ChartDropTab(QWidget):
@@ -22,23 +28,12 @@ class ChartDropTab(QWidget):
         self.setAcceptDrops(True)
 
     def _collect_paths(self, mime):
-        """Return (chtk_files, folders) from a QMimeData, or (None, None) if unsupported."""
-        if not mime.hasUrls():
-            return None, None
+        """Return (chtk_files, folders) from a QMimeData, or (None, None) if unsupported.
 
-        chtk_files = []
-        folders = []
-        for url in mime.urls():
-            if not url.isLocalFile():
-                continue
-            p = Path(url.toLocalFile())
-            if p.is_dir():
-                folders.append(p)
-            elif p.is_file() and p.suffix.lower() in (".chtk", ".toml"):
-                # SPEC-IMPORT-001 §6.1: accept .toml too. ChartManager.load_chart
-                # dispatches by extension (create_birth_data_from_file).
-                chtk_files.append(p)
-
+        Classification is shared with TransitDropButton via classify_chart_drop
+        (SPEC-IMPORT-001 §6.1 / SPEC-TRN-006) — one accept rule, no duplicate lists.
+        """
+        chtk_files, folders = classify_chart_drop(mime)
         if not chtk_files and not folders:
             return None, None
         return chtk_files, folders

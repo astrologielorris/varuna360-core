@@ -1,9 +1,13 @@
 from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QLabel, QScrollArea, QFrame,
-    QPushButton, QHBoxLayout, QSizePolicy,
+    QDialog,
+    QVBoxLayout,
+    QLabel,
+    QScrollArea,
+    QFrame,
+    QPushButton,
+    QHBoxLayout,
 )
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont
 
 from ui.qt_theme import (
     get_theme_colors, is_light_theme, scaled_area_font,

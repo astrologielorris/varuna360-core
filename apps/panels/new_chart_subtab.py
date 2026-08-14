@@ -15,10 +15,19 @@ Creates a new chart by calculating planetary positions and adding to memory pane
 """
 
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QGridLayout,
-    QLineEdit, QRadioButton, QButtonGroup, QPushButton, QLabel,
-    QScrollArea, QFrame, QGroupBox, QSpacerItem, QSizePolicy,
-    QMessageBox, QApplication
+    QWidget,
+    QVBoxLayout,
+    QHBoxLayout,
+    QGridLayout,
+    QLineEdit,
+    QRadioButton,
+    QButtonGroup,
+    QPushButton,
+    QLabel,
+    QScrollArea,
+    QFrame,
+    QMessageBox,
+    QApplication,
 )
 from PySide6.QtCore import Signal, Slot, Qt
 from PySide6.QtGui import QIntValidator, QDoubleValidator
@@ -27,7 +36,7 @@ from PySide6.QtGui import QIntValidator, QDoubleValidator
 from ui.qt_theme import get_theme_colors, scaled_area_px
 
 # Time conversion utilities (extracted to core/)
-from core.time_utils import local_to_utc, utc_to_local, invert_chtk_timezone
+from core.time_utils import local_to_utc, utc_to_local
 HAS_TIME_UTILS = True
 
 class NewChartSubTab(QWidget):
@@ -762,17 +771,30 @@ class NewChartSubTab(QWidget):
         self._update_location_display()
 
     def _update_location_display(self):
-        """Update the visible location label from hidden city/country fields."""
+        """Update the visible location label from hidden city/country fields,
+        folding in any routing note (SPEC-MAP-004 §4.4)."""
         city = self.city_input.text().strip()
         country = self.country_input.text().strip()
         if city and country:
-            self.location_display_label.setText(f"{city}, {country}")
+            base = f"{city}, {country}"
         elif city:
-            self.location_display_label.setText(city)
+            base = city
         elif country:
-            self.location_display_label.setText(country)
+            base = country
         else:
-            self.location_display_label.setText("No location selected")
+            base = "No location selected"
+        note = getattr(self, "_location_note", "")
+        if note:
+            base = note if base == "No location selected" else f"{base}  ·  {note}"
+        self.location_display_label.setText(base)
+
+    def set_location_note(self, note: str):
+        """SPEC-MAP-004 §4.4: a routing note to show beside the location (e.g.
+        'Timezone unresolved for this point'). Empty clears it; the host slot
+        calls this unconditionally so a stale warning never survives the next
+        resolved pick."""
+        self._location_note = note or ""
+        self._update_location_display()
 
     def set_timezone(self, tz_str: str):
         """Set timezone from external source (IANA name or offset string)"""
@@ -1016,6 +1038,16 @@ class NewChartSubTab(QWidget):
                 errors.append("Latitude must be -90 to 90")
             if not (-180 <= lon <= 180):
                 errors.append("Longitude must be -180 to 180")
+
+        # SPEC-MAP-004 §4.3 (F-1 refusal). The map clears the offset field when
+        # it cannot resolve the timezone (routed tz_name None). Read the RAW
+        # widget here, BEFORE collect_data substitutes '+00:00' for an empty
+        # field (:961) — otherwise a silent-UTC chart wears a resolved look.
+        # Local mode only: UTC mode deliberately needs no offset.
+        if self.time_mode != 'UTC' and not self.timezone_input.text().strip():
+            errors.append("Timezone is unresolved for this location. Pick a "
+                          "location whose timezone resolves, type the offset, "
+                          "or switch to UTC mode.")
 
         if errors:
             QMessageBox.warning(self, "Validation Error", "\n".join(errors))

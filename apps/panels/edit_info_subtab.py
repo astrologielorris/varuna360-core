@@ -15,9 +15,17 @@ Supports bidirectional Local ↔ UTC time synchronization.
 """
 
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QGridLayout,
-    QLineEdit, QRadioButton, QButtonGroup, QPushButton, QLabel,
-    QScrollArea, QFrame, QGroupBox, QSpacerItem, QSizePolicy
+    QWidget,
+    QVBoxLayout,
+    QHBoxLayout,
+    QGridLayout,
+    QLineEdit,
+    QRadioButton,
+    QButtonGroup,
+    QPushButton,
+    QLabel,
+    QScrollArea,
+    QFrame,
 )
 from PySide6.QtCore import Signal, Slot, Qt
 from PySide6.QtGui import QIntValidator, QDoubleValidator
@@ -26,7 +34,7 @@ from PySide6.QtGui import QIntValidator, QDoubleValidator
 from ui.qt_theme import get_theme_colors, BORDER, scaled_area_px
 
 # Time conversion utilities (extracted to core/)
-from core.time_utils import local_to_utc, utc_to_local, invert_chtk_timezone, format_offset
+from core.time_utils import local_to_utc, utc_to_local, format_offset
 HAS_TIME_UTILS = True
 
 class EditInfoSubTab(QWidget):
@@ -1081,17 +1089,30 @@ class EditInfoSubTab(QWidget):
         self._update_location_display()
 
     def _update_location_display(self):
-        """Update the visible location label from hidden city/country fields."""
+        """Update the visible location label from hidden city/country fields,
+        folding in any routing note (SPEC-MAP-004 §4.4)."""
         city = self.city_input.text().strip()
         country = self.country_input.text().strip()
         if city and country:
-            self.location_display_label.setText(f"{city}, {country}")
+            base = f"{city}, {country}"
         elif city:
-            self.location_display_label.setText(city)
+            base = city
         elif country:
-            self.location_display_label.setText(country)
+            base = country
         else:
-            self.location_display_label.setText("No location selected")
+            base = "No location selected"
+        note = getattr(self, "_location_note", "")
+        if note:
+            base = note if base == "No location selected" else f"{base}  ·  {note}"
+        self.location_display_label.setText(base)
+
+    def set_location_note(self, note: str):
+        """SPEC-MAP-004 §4.4: a routing note to show beside the location (e.g.
+        'Timezone unresolved for this point'). Empty clears it; the host slot
+        calls this unconditionally so a stale warning never survives the next
+        resolved pick."""
+        self._location_note = note or ""
+        self._update_location_display()
 
     def set_timezone(self, timezone: str):
         """Set timezone from external source - populates both IANA and offset fields"""

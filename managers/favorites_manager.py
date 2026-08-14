@@ -221,32 +221,17 @@ def _quarantine_unreadable_favorites() -> bool:
         return False
 
 
-def toggle_favorite(entry: dict) -> bool:
-    """Add or remove a memory-panel chart entry from favorites.
+def _toggle_mutate(favorites: list, entry: dict, recipe: dict):
+    """Pure add/remove decision for a star toggle -> (new_list, is_fav, changed).
 
-    Returns True if the chart is a favorite AFTER the toggle.
-    Adding an existing favorite replaces it (latest recipe wins).
+    Adding an existing favorite replaces it (latest recipe wins). Shared by
+    the locked and unlocked `toggle_favorite` paths so they cannot drift.
     """
-    recipe = entry.get('recipe')
-    if not isinstance(recipe, dict):
-        return False
-
-    # load_favorites() maps every failure to [], so a corrupt file looks like
-    # "no stars". Starring anything would then atomically overwrite a
-    # salvageable file with a one-entry list — and for a favorite whose chart
-    # file moved or never existed (SPEC-FAV-001 S2), that favorite is the only
-    # copy of the chart. The sync already refuses in this situation; the
-    # toggle, which is the far more frequent writer, did not.
-    _quarantine_unreadable_favorites()
-
-    favorites = load_favorites()
     kept = [f for f in favorites if not _same_chart(recipe, f['recipe'])]
-
     if len(kept) < len(favorites):
-        _save_favorites(kept)  # was favorite -> removed
-        return False
-
+        return kept, False, True   # was favorite -> removed
     base_dir = favorites_file().parent
+    kept = list(kept)
     kept.append({
         'recipe': dict(recipe),
         'mode': entry.get('mode', 'aditya'),
@@ -261,17 +246,87 @@ def toggle_favorite(entry: dict) -> bool:
         # could never reach the panel.
         'updated_at': _utc_now(),
     })
-    _save_favorites(kept)
-    return True
+    return kept, True, True        # added
+
+
+def toggle_favorite(entry: dict, profiles_dir=None) -> bool:
+    """Add or remove a memory-panel chart entry from favorites.
+
+    Returns True if the chart is a favorite AFTER the toggle.
+
+    When `profiles_dir` is given the write goes through the locked
+    read-modify-write (`_run_locked_favorites`) so a concurrent star and the
+    move's `unstar_checked` serialise on `favorites.json` instead of the last
+    writer clobbering the other (SPEC-PROF-003 finding 5). It NEVER falls back
+    to an unlocked write in that case: a `'locked'`/`'failed'` result returns
+    the star's CURRENT (unchanged) state — a star click that no-ops for a
+    ~0.25 s lock hiccup is a cosmetic retry, whereas an unlocked write under
+    contention could clobber the concurrent mutation it was meant to serialise
+    with (INV-D; GPT Sol finding 3). Only when `profiles_dir` is omitted (the
+    historical callers) does the best-effort unlocked path run.
+
+    `_quarantine_unreadable_favorites` guards the corrupt-file case in both
+    paths: `load_favorites()` maps every failure to `[]`, so starring against
+    a salvageable-but-unreadable file would atomically overwrite it with a
+    one-entry list — and a favorite whose chart file moved or never existed
+    (SPEC-FAV-001 S2) is the only copy of that chart.
+    """
+    recipe = entry.get('recipe')
+    if not isinstance(recipe, dict):
+        return False
+
+    if profiles_dir is not None:
+        result = _run_locked_favorites(
+            profiles_dir, lambda favs: _toggle_mutate(favs, entry, recipe))
+        if result in (True, False):
+            return result
+        # 'locked' / 'failed': do NOT write unlocked. Report the star's current
+        # state without changing it; the user can click again.
+        debug_print(f"[FAVORITES] toggle skipped ({result}); star unchanged")
+        return is_favorite(recipe)
+
+    _quarantine_unreadable_favorites()
+    favorites = load_favorites()
+    new_list, is_fav, _ = _toggle_mutate(favorites, entry, recipe)
+    _save_favorites(new_list)
+    return is_fav
+
+
+def _partition_unstar(favorites: list, recipe, entry_id=None):
+    """Split favorites into (removed, kept) for an unstar. Pure, no I/O.
+
+    The single matching predicate shared by `unstar` (best-effort) and
+    `unstar_checked` (locked, reports the outcome) so the two can never drift.
+
+    id-first, then recipe fallback — see `unstar`'s docstring for WHY the id
+    matters. The recipe fallback only ever considers id-LESS favorites: a
+    favorite that HAS an id and was not matched by it is a different chart,
+    however close its recipe looks.
+    """
+    if entry_id:
+        removed = [f for f in favorites if f.get('id') == entry_id]
+        if removed:
+            kept = [f for f in favorites if f.get('id') != entry_id]
+            return removed, kept
+        # An id that matched nothing is not proof of absence: a pre-1.1
+        # favorite carries no id at all. Fall through to the recipe.
+    if not isinstance(recipe, dict):
+        return [], list(favorites)
+    removed = [f for f in favorites
+               if not f.get('id') and _same_chart(recipe, f.get('recipe') or {})]
+    if not removed:
+        return [], list(favorites)
+    kept = [f for f in favorites
+            if f.get('id') or not _same_chart(recipe, f.get('recipe') or {})]
+    return removed, kept
 
 
 def unstar(recipe: dict, entry_id=None) -> bool:
     """Remove a chart from favorites. True if one was removed.
 
     SPEC-PROF-002 §5.1.0 rule 1: deleting a chart from the panel also
-    unstars it. Nothing writes tombstones yet (SPEC-SES-002 is unbuilt), so
-    today this is the ONLY thing standing between a deleted starred chart
-    and its resurrection at the next sync. It has to be exact.
+    unstars it. This is best-effort (it does not report a write failure);
+    the MOVE uses `unstar_checked` instead, which locks and reports.
 
     **`entry_id` is why this takes two arguments.** Matching on the recipe
     alone is wrong in both directions:
@@ -293,26 +348,76 @@ def unstar(recipe: dict, entry_id=None) -> bool:
     _quarantine_unreadable_favorites()
 
     favorites = load_favorites()
-    if entry_id:
-        kept = [f for f in favorites if f.get('id') != entry_id]
-        if len(kept) < len(favorites):
-            _save_favorites(kept)
-            debug_print(f"[FAVORITES] Unstarred by id {entry_id}")
-            return True
-        # An id that matched nothing is not proof of absence: a pre-1.1
-        # favorite carries no id at all. Fall through to the recipe.
-
-    if not isinstance(recipe, dict):
-        return False
-    # Only consider ID-LESS favorites here. One that HAS an id and was not
-    # matched above is a different chart, however close its recipe looks.
-    kept = [f for f in favorites
-            if f.get('id') or not _same_chart(recipe, f.get('recipe') or {})]
-    if len(kept) == len(favorites):
+    removed, kept = _partition_unstar(favorites, recipe, entry_id)
+    if not removed:
         return False
     _save_favorites(kept)
-    debug_print(f"[FAVORITES] Unstarred {recipe.get('name')} by recipe (no id)")
+    debug_print(f"[FAVORITES] Unstarred {len(removed)} favorite(s)")
     return True
+
+
+def _run_locked_favorites(profiles_dir, mutate_fn):
+    """Load -> mutate -> save favorites.json under the FAVORITES profile lock.
+
+    The reliable read-modify-write the move needs (SPEC-PROF-003 finding 5).
+    `favorites.json` writes were unlocked, so a concurrent star could be
+    overwritten by a stale unstar, and `_save_favorites`'s boolean was
+    ignored. This takes the SAME cross-process lock `_locked_sync` holds while
+    it rewrites `favorites.json` (`profile_lock(FAVORITES_PROFILE_ID)`), so a
+    star, an unstar and a sync serialise on one file instead of racing.
+
+    `mutate_fn(favorites_list) -> (new_list, result, changed)`. Returns:
+      - `result` (verbatim) when `changed` is False (nothing to write) OR when
+        the write persisted;
+      - `'failed'` when the store is unavailable, the file is unreadable, or
+        the write did not persist;
+      - `'locked'` when another instance holds the lock.
+    Never raises. Locks are taken here and released here — never nested inside
+    a session lock (SPEC-PROF-003 §5 lock-ordering rule).
+    """
+    try:
+        from state.profile_store import ProfileStore
+    except Exception:  # noqa: BLE001
+        debug_print("[FAVORITES] No profile store; locked mutation skipped")
+        return 'failed'
+    store = ProfileStore(profiles_dir)
+    try:
+        with store.profile_lock(FAVORITES_PROFILE_ID) as held:
+            if not held:
+                debug_print("[FAVORITES] Another instance is saving; mutation skipped")
+                return 'locked'
+            # Quarantine + readability check INSIDE the lock: the same guard
+            # toggle_favorite/sync use, now serialised with them.
+            _quarantine_unreadable_favorites()
+            if not _favorites_file_is_readable():
+                return 'failed'
+            favorites = load_favorites()
+            new_list, result, changed = mutate_fn(favorites)
+            if not changed:
+                return result
+            if _save_favorites(new_list):
+                return result
+            return 'failed'
+    except Exception as e:  # noqa: BLE001
+        debug_print(f"[FAVORITES] Locked mutation failed: {e}")
+        return 'failed'
+
+
+def unstar_checked(profiles_dir, recipe, entry_id=None):
+    """Unstar under the favorites lock, reporting the real outcome.
+
+    Returns `'removed'`, `'absent'`, `'failed'`, or `'locked'`. Unlike
+    `unstar` (best-effort, swallows write failures), this is what the move
+    calls so it can abort truthfully when the star could not be cleared: a
+    still-starred moved chart reappears in Favorites on the next sync
+    (SPEC-PROF-002 §5.1.0), turning "move" silently into "copy".
+    """
+    def _mutate(favorites):
+        removed, kept = _partition_unstar(favorites, recipe, entry_id)
+        if not removed:
+            return favorites, 'absent', False
+        return kept, 'removed', True
+    return _run_locked_favorites(profiles_dir, _mutate)
 
 
 def _recipe_with_consistent_jd(recipe: dict) -> dict:

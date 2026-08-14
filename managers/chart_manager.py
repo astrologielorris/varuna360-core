@@ -13,15 +13,13 @@ This module manages:
 Extracted from core_gui_qt.py to reduce complexity and improve maintainability.
 """
 
-import re
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtWidgets import QFileDialog, QMessageBox, QApplication
+from PySide6.QtWidgets import QFileDialog
 from PySide6.QtGui import QImage, QPainter
 from PySide6.QtCore import Qt
 
-from utils.debug import debug_print
 
 # Project root is one level up from this managers/ directory.
 _MANAGERS_DIR = Path(__file__).parent
@@ -61,6 +59,7 @@ def _format_chart_title(chart, aditya_mode="aditya", chart_data=None, timezone_s
     day = chart_data['local_day'] if 'local_day' in chart_data else chart_data.get('day', 1)
     hour = chart_data['local_hour'] if 'local_hour' in chart_data else chart_data.get('hour', 0)
     minute = chart_data['local_minute'] if 'local_minute' in chart_data else chart_data.get('minute', 0)
+    second = chart_data['local_second'] if 'local_second' in chart_data else chart_data.get('second', 0)
     # SPEC-CAL-001: DISPLAY-ONLY calendar convention. Re-express the stored
     # (astronomical) civil date for the title string; the tz-offset math below
     # keeps the astronomical year/month/day (the offset lookup must not shift
@@ -68,7 +67,8 @@ def _format_chart_title(chart, aditya_mode="aditya", chart_data=None, timezone_s
     from core.time_utils import display_civil_date
     disp_year, disp_month, disp_day = display_civil_date(year, month, day)
     date_str = f"{disp_month:02d}/{disp_day:02d}/{disp_year}"
-    time_str = f"{hour:02d}:{minute:02d}"
+    # Seconds shown for D60 precision (birth-time adjustment works to the second).
+    time_str = f"{hour:02d}:{minute:02d}:{int(second):02d}"
 
     tz_part = ""
     try:
@@ -222,27 +222,12 @@ class ChartManager:
             latitude = birth_data.get('latitude', 0)
             longitude = birth_data.get('longitude', 0)
 
-            # UTC time for calculations (already converted in BirthDataManager)
-            # Note: We use individual values instead of datetime to support BCE dates
-            utc_year = birth_data['utc_year']
-            utc_month = birth_data['utc_month']
-            utc_day = birth_data['utc_day']
-            utc_hour = birth_data['utc_hour']
-            utc_minute = birth_data['utc_minute']
-            utc_second = birth_data['utc_second']
-
-            # Calculate Julian Day for mode switching.
-            # SPEC-IMPORT-001 §6.2: a .toml file may carry an authoritative
-            # [moment].jd (canonical birth_data['julian_day']); prefer it so the
-            # chart uses the file's exact JD instead of recomputing from civil
-            # time. CHTK files have julian_day None -> compute from civil UTC.
-            from core.time_utils import julday
-            _bd_jd = birth_data.get('julian_day')
-            if _bd_jd is not None:
-                birth_jd = float(_bd_jd)
-            else:
-                hour_decimal = utc_hour + utc_minute / 60.0 + utc_second / 3600.0
-                birth_jd = julday(utc_year, utc_month, utc_day, hour_decimal)
+            # Calculate Julian Day for mode switching (SPEC-IMPORT-001 §6.2:
+            # honor an authoritative TOML [moment].jd, else compute from civil
+            # UTC). Shared with build_chart_from_file via jd_from_birth_data so
+            # the two paths cannot drift.
+            from core.chart_factory import jd_from_birth_data
+            birth_jd = jd_from_birth_data(birth_data)
 
             # Store birth parameters for mode switching
             self.gui.birth_jd = birth_jd
@@ -363,6 +348,51 @@ class ChartManager:
             traceback.print_exc()
         finally:
             self._loading_chart = False
+
+    def build_chart_from_file(self, chtk_path, *, mode=None, ayanamsa=None,
+                              hsys=None):
+        """Build a Chart from a file WITHOUT activating it (SPEC-TRN-006).
+
+        Shares the canonical parse + exact-JD logic with load_chart, but does not
+        dispatch SetActiveChart, does not add to memory, does not refresh the GUI,
+        and RAISES on failure (load_chart swallows and returns None). Used to build
+        an overlay chart from an OS .chtk/.toml file dropped on the TRANSIT button.
+
+        canonicalize=False: a file dropped only for a transient overlay must never
+        be rewritten (a .toml without [moment].jd would otherwise be canonicalised
+        back to disk).
+
+        Returns (chart, birth_data). Both mode and ayanamsa/hsys default to the
+        active chart's current frame so the overlay renders in the same zodiac.
+        """
+        from pathlib import Path
+        from core.chart_factory import build_chart_from_params, jd_from_birth_data
+        from managers.birth_data_manager import BirthDataManager
+
+        chtk_path = Path(chtk_path) if isinstance(chtk_path, str) else chtk_path
+
+        birth_data = BirthDataManager.create_birth_data_from_file(
+            str(chtk_path), canonicalize=False)
+        birth_jd = jd_from_birth_data(birth_data)
+
+        if mode is None:
+            mode = self.state.aditya_mode
+        if ayanamsa is None:
+            ayanamsa = getattr(self.gui, 'chart_sidereal_ayanamsa_id', 100)
+        if hsys is None:
+            hsys = self.state.house_system_code
+
+        chart = build_chart_from_params(
+            jd=birth_jd,
+            lat=birth_data.get('latitude', 0),
+            lon=birth_data.get('longitude', 0),
+            mode=mode,
+            name=birth_data.get('name', ''),
+            utcoffset=birth_data.get('utc_offset_hours', 0.0),
+            ayanamsa=ayanamsa,
+            hsys=hsys,
+        )
+        return chart, birth_data
 
     # =========================================================================
     # CHART CLOSING

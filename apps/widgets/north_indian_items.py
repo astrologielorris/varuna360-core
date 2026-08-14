@@ -11,24 +11,28 @@ Contains:
 - NorthIndianPlanetItem - Planet icon with click signal
 - NorthIndianZodiacItem - Zodiac icon for house display
 """
-import math
 from pathlib import Path
 
 from PySide6.QtWidgets import (
-    QGraphicsPolygonItem, QGraphicsPixmapItem, QGraphicsTextItem,
-    QGraphicsDropShadowEffect, QGraphicsItem, QGraphicsRectItem
+    QGraphicsPolygonItem,
+    QGraphicsPixmapItem,
+    QGraphicsTextItem,
 )
-from PySide6.QtCore import Qt, Signal, QObject, QPointF
-from PySide6.QtGui import (
-    QPen, QBrush, QColor, QFont, QPixmap, QPolygonF,
-    QLinearGradient, QRadialGradient
-)
+from PySide6.QtCore import Qt, Signal, QObject
+from PySide6.QtGui import QPen, QBrush, QColor, QFont, QPolygonF, QRadialGradient
 
 # Project root for absolute paths
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 
 # Import theme for consistent colors
-from ui.qt_theme import TEXT_PRIMARY, ACCENTS, get_theme_colors, GOLD, desat_hex
+from ui.qt_theme import GOLD, desat_hex
+
+# Canonical element palette (td-s6u7 dedupe): single source of truth shared
+# with chart_view and the wheel renderers.
+from visualizations.wheel_constants import (
+    ELEMENT_COLORS as _WHEEL_ELEMENT_COLORS,
+    ELEMENT_CYCLE as _WHEEL_ELEMENT_CYCLE,
+)
 
 
 class NorthIndianPlanetClickSignal(QObject):
@@ -51,15 +55,12 @@ class DiamondCellItem(QGraphicsPolygonItem):
     - Subtle gradient for 3D effect
     """
 
-    # Element colors (matching wheel_items.py for consistency)
-    ELEMENT_COLORS = {
-        "Fire": "#E57373",      # Coral red
-        "Earth": "#A67C52",     # Brown/tan
-        "Air": "#F0C75E",       # Golden yellow
-        "Water": "#1E4D8C",     # Deep blue
-    }
+    # Element colors — canonical palette shared via wheel_constants
+    # (td-s6u7 dedupe; values unchanged: Fire #E57373, Earth #A67C52,
+    # Air #F0C75E, Water #1E4D8C). desat_hex stays at the use sites.
+    ELEMENT_COLORS = _WHEEL_ELEMENT_COLORS
 
-    ELEMENT_CYCLE = ["Fire", "Earth", "Air", "Water"]
+    ELEMENT_CYCLE = _WHEEL_ELEMENT_CYCLE
 
     def __init__(self, house_number: int, polygon: QPolygonF,
                  sign_index: int = 0, parent=None):

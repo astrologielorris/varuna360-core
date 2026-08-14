@@ -20,21 +20,32 @@ import math
 from pathlib import Path
 
 from PySide6.QtWidgets import (
-    QGraphicsPathItem, QGraphicsEllipseItem, QGraphicsPixmapItem,
-    QGraphicsTextItem, QGraphicsLineItem, QGraphicsPolygonItem,
-    QGraphicsDropShadowEffect, QGraphicsItem, QGraphicsSimpleTextItem
+    QGraphicsPathItem,
+    QGraphicsEllipseItem,
+    QGraphicsPixmapItem,
+    QGraphicsTextItem,
+    QGraphicsLineItem,
+    QGraphicsPolygonItem,
+    QGraphicsItem,
+    QGraphicsSimpleTextItem,
 )
 from PySide6.QtCore import Qt, Signal, QObject, QPointF, QRectF
 from PySide6.QtGui import (
-    QPen, QBrush, QColor, QPainterPath, QFont, QPixmap, QImage,
-    QPolygonF, QLinearGradient, QConicalGradient, QRadialGradient, QPainter
+    QPen,
+    QBrush,
+    QColor,
+    QPainterPath,
+    QFont,
+    QPolygonF,
+    QRadialGradient,
+    QPainter,
 )
 
 # Project root for absolute paths
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 
 # Import theme for consistent colors
-from ui.qt_theme import TEXT_PRIMARY, ACCENTS, get_theme_colors, scaled_area_font, desat_hex
+from ui.qt_theme import scaled_area_font, desat_hex
 from core.aditya_mode import displayed_sign_name
 
 

@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
     QWidget, QGroupBox, QApplication, QScrollArea
 )
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont, QColor
+from PySide6.QtGui import QColor
 
 from ui.qt_theme import (
     FONT_MONO, get_theme_colors, get_secondary_button_style,

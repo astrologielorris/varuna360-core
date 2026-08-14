@@ -561,7 +561,8 @@ class BirthDataManager:
         Returns:
             Canonical birth_data dict
         """
-        from core.time_utils import local_to_utc
+        from core.time_utils import (
+            local_to_utc_total, utc_to_local_total, _parse_offset)
 
         local_year = form_data.get('year', 1970)
         local_month = form_data.get('month', 1)
@@ -581,27 +582,11 @@ class BirthDataManager:
         tz_warnings: List[str] = []
         utc_input_mode = False
 
-        if time_mode == 'UTC':
-            # UTC-entered chart: utc_* == local_* by definition; the timezone
-            # field stays informational. Check A is skipped via utc_input_mode
-            # (SPEC-TZ-001 8a, pre-mortem pm-20260610-005).
-            utc_input_mode = True
-            utc_year, utc_month, utc_day = local_year, local_month, local_day
-            utc_hour, utc_minute, utc_second = local_hour, local_minute, local_second
-        else:
-            utc_result = local_to_utc(
-                local_year, local_month, local_day,
-                local_hour, local_minute, local_second,
-                tz_offset, dst_flag,
-            )
-            utc_year, utc_month, utc_day = utc_result[0], utc_result[1], utc_result[2]
-            utc_hour, utc_minute, utc_second = utc_result[3], utc_result[4], utc_result[5]
-
-        # Compute UTC offset in hours via canonical parser (SPEC-TZ-001 Section 2).
+        # Compute the TOTAL UTC offset FIRST, then convert local<->UTC with that
+        # one numeric offset in whichever direction the input mode requires.
         # ref_year: IANA names must resolve with the birth year's historical
         # rules (spec Section 1); unused for +HH:MM offset strings.
         try:
-            from core.time_utils import _parse_offset
             _h, _m = _parse_offset(tz_offset, ref_year=local_year if local_year >= 1 else 1)
             utc_offset_hours = _h + _m / 60.0
         except (ValueError, TypeError):
@@ -623,6 +608,36 @@ class BirthDataManager:
         else:
             dst = float(dst)  # defensive against Decimal/str (tomllib: float)
         utc_offset_hours += dst
+
+        # Convert with the TOTAL offset (not the offset-string + integer flag).
+        # This is what makes a fractional/non-1h DST correct: the old
+        # local_to_utc(tz_offset, dst_flag) path could only add whole hours, so
+        # a 0.5h DST silently dropped the half hour and jd came out 30 min off.
+        # For integer DST this is byte-identical to the old conversion (proven
+        # against a Paris/NY/India/war-time/midnight-roll baseline).
+        if time_mode == 'UTC':
+            # UTC-entered chart ("hardcore geek mode"): the typed fields ARE the
+            # authoritative UTC instant. Keep utc_* = typed and DERIVE the true
+            # local civil time from it, so the stored local_* is the real local
+            # clock rather than a copy of UTC. Without this the [civil]/jd
+            # derived from local_* is wrong by the whole offset -- a UTC-mode
+            # Paris summer chart saved a jd 2h early (civil "10:00 local +2" ->
+            # UTC 08:00 instead of the true UTC 10:00). utc_input_mode stays
+            # True: Check A is skipped for UTC-entered charts (SPEC-TZ-001 8a,
+            # pre-mortem pm-20260610-005) and the chtk_timezone string is
+            # unaffected.
+            utc_input_mode = True
+            utc_year, utc_month, utc_day = local_year, local_month, local_day
+            utc_hour, utc_minute, utc_second = local_hour, local_minute, local_second
+            (local_year, local_month, local_day,
+             local_hour, local_minute, local_second) = utc_to_local_total(
+                utc_year, utc_month, utc_day,
+                utc_hour, utc_minute, utc_second, utc_offset_hours)
+        else:
+            (utc_year, utc_month, utc_day,
+             utc_hour, utc_minute, utc_second) = local_to_utc_total(
+                local_year, local_month, local_day,
+                local_hour, local_minute, local_second, utc_offset_hours)
 
         if not iana_tz:
             iana_tz = BirthDataManager._detect_timezone(latitude, longitude)

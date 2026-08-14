@@ -33,7 +33,6 @@ from PySide6.QtWidgets import (
     QHeaderView, QSizePolicy,
 )
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont, QFontMetrics
 
 from ui.qt_theme import (
     get_theme_colors, scaled_area_px, scaled_area_font, elevation_table_style,

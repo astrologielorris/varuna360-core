@@ -115,11 +115,13 @@ class CoT:
         # cindex is the index of the desired card in the quad
         # so cindex-pos is the index of the birth card
         # if cindex-pos>=0 this is fine, we can call getbirthspreadfromquad(cindex-pos,quad)
-        # otherwise, if cindex-pos=-1, then the index is actually 51, i.e, 52-1
+        # otherwise, if cindex-pos=-1, then the index is actually 51, i.e, 52+(-1)
+        # (td-eek4: this used to be 52-(cindex-pos), which for -1 gives 53 and
+        # walks off the end of the 52-card quadration -> IndexError)
         if cindex-pos>=0:
             return CoT.get_birthspread_from_quadration(cardsc.cards[quad[cindex-pos]],quad)
         else:
-            return CoT.get_birthspread_from_quadration(cardsc.cards[quad[52-(cindex-pos)]],quad)
+            return CoT.get_birthspread_from_quadration(cardsc.cards[quad[52+(cindex-pos)]],quad)
 
     @staticmethod
     def get_birth_spread_with_card_in_position(card,pos):

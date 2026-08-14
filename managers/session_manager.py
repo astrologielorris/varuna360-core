@@ -35,7 +35,6 @@ try:
         QVBoxLayout, QHBoxLayout, QWidget
     )
     from PySide6.QtCore import QTimer, Qt
-    from PySide6.QtGui import QFont
     QT_AVAILABLE = True
 except ImportError:
     QT_AVAILABLE = False
@@ -806,7 +805,7 @@ class SessionManager:
         Returns:
             True if user chose to restore, False otherwise
         """
-        from ui.qt_theme import get_theme_colors, STATUS, scaled_area_px
+        from ui.qt_theme import get_theme_colors, scaled_area_px
 
         # Build dialog message
         if not properly_closed:

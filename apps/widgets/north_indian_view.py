@@ -34,9 +34,11 @@ North Indian: Houses are FIXED, Signs ROTATE with Ascendant.
 from pathlib import Path
 
 from PySide6.QtWidgets import (
-    QGraphicsView, QGraphicsScene, QGraphicsTextItem,
-    QGraphicsLineItem, QGraphicsRectItem, QGraphicsPolygonItem,
-    QGraphicsPixmapItem
+    QGraphicsView,
+    QGraphicsScene,
+    QGraphicsTextItem,
+    QGraphicsLineItem,
+    QGraphicsRectItem,
 )
 from PySide6.QtCore import Qt, QPointF
 from PySide6.QtGui import (
@@ -54,7 +56,7 @@ from .north_indian_items import (
 )
 
 # Import theme
-from ui.qt_theme import BG, SURFACE, TEXT_PRIMARY, GOLD, get_theme_colors, scaled_area_font, desat_image, sat_key
+from ui.qt_theme import GOLD, get_theme_colors, scaled_area_font, desat_image, sat_key
 from core.aditya_mode import displayed_sign_name, get_planet_display_name
 
 # SPEC-COT-001 §4.10 — the in-chart card index. The setting, the memoised

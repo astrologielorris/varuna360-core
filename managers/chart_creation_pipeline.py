@@ -68,6 +68,15 @@ WARN_NO_TIME = "no_time"
 WARN_GEOCODE_FAILED = "geocode_failed"
 WARN_GAP_TIME = "gap_time"  # nonexistent local time (DST spring-forward gap)
 
+# Warning MESSAGE text, hoisted so other roads (the New & Edit form road, which
+# does not go through this text pipeline) can reuse the exact wording. One
+# string, one home (WI-2). WARN_NO_TIME above is the ID; this is the sentence.
+MSG_NO_TIME = (
+    "No birth time was found in the text.\n"
+    "Defaulting to 12:00 (noon). Edit the chart afterwards to set "
+    "the correct time."
+)
+
 # error_stage values
 STAGE_PARSE = "parse"
 STAGE_GEOCODE = "geocode"
@@ -756,12 +765,7 @@ def create_chart_from_text(
     if parsed.get("date_warning"):
         _warn(WARN_DATE_AMBIGUITY, parsed["date_warning"])
     if not parsed.get("has_time"):
-        _warn(
-            WARN_NO_TIME,
-            "No birth time was found in the text.\n"
-            "Defaulting to 12:00 (noon). Edit the chart afterwards to set "
-            "the correct time.",
-        )
+        _warn(WARN_NO_TIME, MSG_NO_TIME)
 
     # ---- Stage 2: geocode ----------------------------------------------
     _progress("geocoding")

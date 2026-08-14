@@ -158,13 +158,12 @@ def cache_store(key: str, result: GeocodeResult):
 # --------------------------------------------------------------------------
 
 def _local_lookup(query: str) -> Optional[GeocodeResult]:
-    try:
-        from core.world_capitals import WORLD_CAPITALS
-    except Exception:
-        try:
-            from tools.capitals_data import WORLD_CAPITALS
-        except Exception:
-            return None
+    # SPEC-MAP-003: the ONE city table, the union of both sources. Reading a
+    # single table with an ImportError fallback missed six well-known cities
+    # (New York, Los Angeles, Toronto, Dubai, Mumbai, Sydney), so searching for
+    # them skipped the local tier and, offline, found nothing.
+    from core.place_naming import capital_table
+    WORLD_CAPITALS = capital_table()
 
     wanted = _norm(query)
     if not wanted:
@@ -189,10 +188,8 @@ def local_suggestions(prefix: str, limit: int = 8):
     Local only, deliberately: Nominatim's usage policy forbids autocomplete
     querying, so the network tier is reached on Enter/Search only.
     """
-    try:
-        from core.world_capitals import WORLD_CAPITALS
-    except Exception:
-        return []
+    from core.place_naming import capital_table   # SPEC-MAP-003: one table
+    WORLD_CAPITALS = capital_table()
     p = _norm(prefix)
     if not p:
         return []
