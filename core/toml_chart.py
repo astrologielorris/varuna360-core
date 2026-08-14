@@ -622,10 +622,15 @@ class TOMLChartWriter:
         name = birth_data.get("name") or ""
         gender = self._gender_for_write(birth_data, top_extra)
         rodden = birth_data.get("rodden")
+        # An unrated Rodden is the empty string (the form reports '' exactly like
+        # gender), and a whitespace-only value is equally empty. §5.3 omits
+        # empty optional metadata: never emit rodden = "" (a spec violation that
+        # also round-trips back as a bogus empty rating).
+        rodden = rodden.strip() if isinstance(rodden, str) else rodden
         tags = birth_data.get("tags")
         notes = birth_data.get("notes")
 
-        has_meta = bool(name) or gender is not None or rodden is not None \
+        has_meta = bool(name) or gender is not None or bool(rodden) \
             or (tags) or (notes) or self._has_real_extra(top_extra)
         if has_meta:
             buf.write("\n")
@@ -633,10 +638,20 @@ class TOMLChartWriter:
             buf.write(f"name = {_toml_str(name)}\n")
         if gender is not None:
             buf.write(f"gender = {_toml_str(gender)}\n")
-        if rodden is not None:
+        if rodden:
             buf.write(f"rodden = {_toml_str(str(rodden))}\n")
         if tags:
-            rendered = ", ".join(_toml_str(str(t)) for t in tags)
+            # De-duplicate while preserving first-seen order: a chart re-saved
+            # after a metadata edit could otherwise accumulate the same tag
+            # twice ("astro", "astro"), which §5.3 does not sanction.
+            seen = set()
+            uniq = []
+            for t in tags:
+                key = str(t)
+                if key not in seen:
+                    seen.add(key)
+                    uniq.append(key)
+            rendered = ", ".join(_toml_str(t) for t in uniq)
             buf.write(f"tags = [{rendered}]\n")
         if notes:
             buf.write(self._render_notes(notes))
@@ -674,8 +689,29 @@ class TOMLChartWriter:
         # --- [civil] (derived; numeric fields only, never display strings) ---
         base_offset, dst_hours = self._recover_offsets(birth_data)
         ly, lm, ld, lh, lmi, ls = self._local_fields(birth_data)
+        # Calendar convention (SPEC-CAL-001): the stored local_* date is always
+        # ASTRONOMICAL (Julian pre-1582). Render the human-readable [civil].date
+        # under display.calendar_convention so it matches how the app shows the
+        # date. DISPLAY-ONLY: jd above stays authoritative and untouched, and the
+        # renamed date is NEVER fed back into a civil->JD path. Default
+        # ('astronomical') returns the fields unchanged, so post-1582 charts and
+        # the default setting are byte-identical; only a 'proleptic_gregorian'
+        # user with a pre-1582 chart sees the Gregorian name (which is what the
+        # format's own proleptic jd<->civil expects, i.e. more conformant).
+        #
+        # ONLY shift when an authoritative julian_day is present. Without one,
+        # _resolve_jd DERIVED the jd above from these very civil fields (as
+        # proleptic Gregorian); shifting the date then would make [civil] and
+        # [moment].jd describe instants ~10 days apart for a pre-1582 chart. With
+        # an authoritative jd the civil block is advisory, so a proleptic rename
+        # is not only safe but agrees with that Julian-based jd.
+        from core.time_utils import display_civil_date
+        if birth_data.get("julian_day") is not None:
+            cy, cm, cd = display_civil_date(ly, lm, ld)
+        else:
+            cy, cm, cd = ly, lm, ld
         buf.write("\n[civil]\n")
-        buf.write(f'date = "{_format_iso_date(ly, lm, ld)}"\n')
+        buf.write(f'date = "{_format_iso_date(cy, cm, cd)}"\n')
         buf.write(f'time = "{lh:02d}:{lmi:02d}:{ls:02d}"\n')
         buf.write(f"utc_offset = {repr(float(base_offset))}\n")
         # dst_offset: emit whenever non-zero (positive OR negative; a negative
@@ -737,10 +773,14 @@ class TOMLChartWriter:
             and not notes.endswith('"')
             and not any(ord(c) < 0x20 and c not in ("\t", "\n") for c in notes)
         ):
+            # The newline immediately after the opening delimiter is trimmed by
+            # TOML, so the content round-trips exactly as written. Do NOT force a
+            # trailing newline before the closing delimiter: a note without one
+            # (\"line1\\nline2\") would otherwise gain a \\n on every save and
+            # drift. A note that already ends in \\n keeps it because the closing
+            # \"\"\" then sits on its own line.
             out = 'notes = """\n'
             out += notes
-            if not notes.endswith("\n"):
-                out += "\n"
             out += '"""\n'
             return out
         return f"notes = {_toml_str(notes)}\n"
@@ -781,7 +821,15 @@ class TOMLChartWriter:
         offset = float(offset)
         dst = birth_data.get("dst_offset_hours")
         if dst is None:
-            dst = float(birth_data.get("time_change_flag", 0) or 0)
+            # Fall back to the integer time_change_flag as a DST *duration* (1h/2h).
+            # A NEGATIVE flag is the CHTK/Kala "auto" SENTINEL ("re-resolve from the
+            # zone"), NOT an hours quantity — the .toml format has no auto field
+            # (§4.3), so it must never become a negative dst_offset. Treat it as
+            # unresolved (0). A genuine fractional negative DST (e.g. Irish Standard
+            # Time -0.5h) arrives as an explicit float dst_offset_hours, not via the
+            # flag, so this cannot swallow a real value.
+            flag = birth_data.get("time_change_flag", 0) or 0
+            dst = float(flag) if flag > 0 else 0.0
         dst = float(dst)
         is_canonical = "local_year" in birth_data
         base = offset - dst if is_canonical else offset

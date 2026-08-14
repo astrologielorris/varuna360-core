@@ -270,32 +270,12 @@ class _ImagePasteTextEdit(QPlainTextEdit):
         super().dropEvent(event)
 
 
-class _ImageExtractionWorker(QThread):
-    """Run the injected extractor OFF the GUI thread.
+# The extraction worker moved to a shared Core module so the Add Chart dialog
+# and the New & Edit token bar run the extractor identically. The alias keeps the
+# old private name and its ``finished_with`` signal for the callers below.
+from ui.image_extraction_worker import ImageExtractionWorker
 
-    The extractor performs a network call that can take seconds; running it
-    inline would freeze the dialog. Emits a plain dict (see
-    ``pro.managers.chart_image_extraction``) — never a Pro type, so this Core
-    widget stays edition-agnostic.
-    """
-
-    finished_with = Signal(dict)
-
-    def __init__(self, extractor, data: bytes, media_type: str, parent=None):
-        super().__init__(parent)
-        self._extractor = extractor
-        self._data = data
-        self._media_type = media_type
-
-    def run(self):
-        try:
-            result = self._extractor(self._data, self._media_type)
-            if not isinstance(result, dict):
-                result = {"ok": False,
-                          "error": "extractor returned an unexpected result"}
-        except Exception as exc:  # noqa: BLE001 — must reach the UI legibly
-            result = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
-        self.finished_with.emit(result)
+_ImageExtractionWorker = ImageExtractionWorker
 
 
 class AddChartDialog(QDialog):

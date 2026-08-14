@@ -396,6 +396,25 @@ def local_to_utc_total(year, month, day, hour, minute, second,
                           -total_offset_hours, 0)
 
 
+def utc_to_local_total(year, month, day, hour, minute, second,
+                       total_offset_hours):
+    """UTC -> local with a TOTAL numeric offset (DST already included).
+
+    Companion to utc_to_local (which takes a STANDARD offset string plus
+    dst_flag) and the mirror of local_to_utc_total. Used by the UTC-input
+    path so the derived LOCAL civil time is exact for fractional/non-1h
+    offsets (never bakes DST into a string; SPEC-TZ-001 Section 1).
+    BCE-safe via _manual_offset.
+    """
+    if year >= 1:
+        utc_dt = datetime(year, month, day, hour, minute, second)
+        local_dt = utc_dt + timedelta(hours=total_offset_hours)
+        return (local_dt.year, local_dt.month, local_dt.day,
+                local_dt.hour, local_dt.minute, local_dt.second)
+    return _manual_offset(year, month, day, hour, minute, second,
+                          total_offset_hours, 0)
+
+
 def _manual_offset(year, month, day, hour, minute, second,
                    delta_hours, delta_minutes):
     """Apply hour/minute delta without datetime (handles BCE years)."""

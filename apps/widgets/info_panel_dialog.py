@@ -20,9 +20,12 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QFont, QColor, QBrush
 
 from ui.qt_theme import (
-    BG, SURFACE, TEXT_PRIMARY, TEXT_SECONDARY, BORDER, TEXT_TERTIARY,
-    get_theme_colors, get_secondary_button_style, is_light_theme,
-    scaled_area_px, scaled_area_size, scaled_area_font, FONT_MONO
+    get_theme_colors,
+    get_secondary_button_style,
+    is_light_theme,
+    scaled_area_px,
+    scaled_area_size,
+    scaled_area_font,
 )
 
 
@@ -167,8 +170,11 @@ def _get_delegate_colors(gui, attr_name, row, col):
 # `from apps.widgets.info_panel_dialog import split_expression, _AVASTHA_7` keep working.
 from ui.themed_style import ThemedStyleMixin
 from ui.qt_theme import (
-    elevation_color, elevation_surface_style, elevation_table_style,
-    elevation_divider, apply_elevation_shadow, elevation_margin,
+    elevation_color,
+    elevation_surface_style,
+    elevation_table_style,
+    apply_elevation_shadow,
+    elevation_margin,
 )
 
 from core.avastha_totals import (  # noqa: F401

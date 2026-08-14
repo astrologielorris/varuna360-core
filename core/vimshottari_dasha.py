@@ -389,7 +389,14 @@ def calculate_sub_dashas_for_period(parent_start_jd, parent_end_jd, parent_lord,
             break
 
     if start_idx is None:
-        print(f"[DASHA DEBUG] WARNING: Could not find lord '{last_lord}' (from '{last_lord_abbrev}') in DASHAS")
+        # Real invalid-input warning, not debug noise: an unknown lord means
+        # the caller handed us a name outside the Vimshottari set and gets an
+        # empty result back. stderr (not warnings.warn) so every occurrence
+        # stays visible instead of being deduplicated per call site.
+        import sys
+        print(f"[dasha] WARNING: unknown dasha lord '{last_lord}' "
+              f"(from '{last_lord_abbrev}') — not in DASHAS; returning no "
+              f"sub-periods", file=sys.stderr)
         return []  # Invalid lord
 
     # Calculate sub-periods using Vimshottari proportions

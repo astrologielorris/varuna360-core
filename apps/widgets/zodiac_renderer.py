@@ -13,7 +13,6 @@ and adds QGraphicsItems directly to the scene. No `self`, no class state.
 Items classes (ZodiacSectorItem, SectorDividerLine, etc.) remain in wheel_items.py.
 Geometry helpers come from visualizations/wheel_geometry.py.
 """
-import json
 import math
 from pathlib import Path
 

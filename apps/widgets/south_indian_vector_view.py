@@ -53,13 +53,11 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import (
     QApplication,
-    QGraphicsItem,
     QGraphicsLineItem,
     QGraphicsPathItem,
     QGraphicsPixmapItem,
     QGraphicsRectItem,
     QGraphicsScene,
-    QGraphicsSimpleTextItem,
     QGraphicsTextItem,
     QGraphicsView,
     QStackedLayout,
@@ -87,7 +85,13 @@ from apps.widgets.center_mini import (
 
 # INV-7/INV-8: colors come ONLY from the theme module and the shared element
 # table — no raw hex literals in this file.
-from ui.qt_theme import GOLD, get_theme_colors, scaled_area_font, desat_image, get_ui_saturation, desat_hex
+from ui.qt_theme import (
+    GOLD,
+    get_theme_colors,
+    desat_image,
+    get_ui_saturation,
+    desat_hex,
+)
 from visualizations.wheel_constants import (
     ELEMENT_COLORS,
     element_text_color,
@@ -98,12 +102,7 @@ from core.aditya_mode import displayed_sign_name, get_planet_display_name
 # SPEC-COT-001 §4.10 — the in-sign card index. The setting, the memoised
 # spread and the plaque art are shared with the wheel and North Indian views;
 # only WHERE the plaque goes is this view's business.
-from apps.widgets.cot_index_item import (
-    COT_ORDER_KEY,
-    COT_SETTING_KEY,
-    CotIndexMixin,
-    CotPlaque,
-)
+from apps.widgets.cot_index_item import COT_SETTING_KEY, CotIndexMixin, CotPlaque
 
 ZODIAC_POSITIONS = SouthIndianView.ZODIAC_POSITIONS
 

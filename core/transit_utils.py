@@ -15,10 +15,18 @@ from typing import Optional, Tuple
 # Chart-Everywhere Issue 14: get_all_planets_data import removed —
 # transit chart now built via core.chart_factory.
 
-# Module-level cache for geolocation (avoids repeated API calls)
+# Module-level cache for geolocation (avoids repeated API calls).
+#
+# There is deliberately NO timezone cache here. There used to be
+# (`_cached_iana_timezone`), and it was read before its own arguments: two
+# different coordinates resolved in one session both got the FIRST one's zone.
+# `set_location`/`clear_location` cleared it, which hid the defect from every
+# caller that writes the location before asking — but not from the ones that
+# do not, e.g. the natal fallback in eclipse_panel._resolve_natal_location_snapshot.
+# `core.tz_finder` holds a warm singleton and answers in ~0.7 ms, so a module
+# cache buys nothing and can only be wrong. See SPEC-MAP-004 F-6.
 _cached_location: Optional[Tuple[float, float]] = None
 _cached_location_name: Optional[str] = None
-_cached_iana_timezone: Optional[str] = None
 
 
 def format_place(*parts: str) -> str:
@@ -32,41 +40,38 @@ def format_place(*parts: str) -> str:
       'City, ,' + 'Country'     -> 'City, Country'
       'City, , Country' + ''    -> 'City, Country'
     Non-string parts (None, dicts) are ignored. Rejoining is idempotent for
-    legitimate multi-part names ('Washington, D.C.' stays intact)."""
-    tokens = []
-    for p in parts:
-        if isinstance(p, str):
-            for piece in p.split(','):
-                piece = piece.strip()
-                if piece:
-                    tokens.append(piece)
-    return ", ".join(tokens)
+    legitimate multi-part names ('Washington, D.C.' stays intact).
+
+    Backwards-compatible alias for `core.place_naming.clean_place_parts`, which
+    is now the single home for this logic. It used to be the ONLY copy, so only
+    Eclipse (which called it) cleaned its map selection while the other hosts
+    assigned the raw field — the divergence SPEC-MAP-004 INV-5 retires. Every
+    existing caller (the F-6 cache path here, Eclipse's `_place_label`) keeps
+    identical behaviour."""
+    from core.place_naming import clean_place_parts
+    return clean_place_parts(*parts)
 
 
 def set_location(lat: float, lon: float, name: str = ""):
     """
     Override the cached location (e.g., from map selection).
 
-    Clears the IANA timezone cache so it's re-detected for the new coordinates.
-
     Args:
         lat: Latitude
         lon: Longitude
         name: Display name (e.g., "New York, US")
     """
-    global _cached_location, _cached_location_name, _cached_iana_timezone
+    global _cached_location, _cached_location_name
 
     _cached_location = (float(lat), float(lon))
     _cached_location_name = name or f"({lat:.2f}, {lon:.2f})"
-    _cached_iana_timezone = None  # Force re-detection for new coords
 
 
 def clear_location():
     """Clear cached location so next call auto-detects via IP geolocation."""
-    global _cached_location, _cached_location_name, _cached_iana_timezone
+    global _cached_location, _cached_location_name
     _cached_location = None
     _cached_location_name = None
-    _cached_iana_timezone = None
 
 
 def get_cached_location() -> Tuple[float, float]:
@@ -146,35 +151,43 @@ def get_current_location_name() -> str:
 
 def get_iana_timezone(lat: float, lon: float) -> str:
     """
-    Get IANA timezone string from coordinates using timezonefinder.
+    Get an IANA timezone name for these coordinates. Never returns None.
 
-    Uses cache only if coordinates match the cached location.
+    Always resolves the coordinates it was given: there is no module cache, so
+    two different points in one session cannot share an answer. Delegates to the
+    process-wide `core.tz_finder` singleton rather than constructing a
+    TimezoneFinder here.
+
+    Cost, measured in this venv 2026-08-06: ~0.005 ms warm. The FIRST call in a
+    process is ~1.7 s (module import plus construction) unless something called
+    `start_warmup()` earlier — today only the map sub-tab does. That is not a
+    regression: the old code paid the same on its first call and paid it AGAIN
+    on every coordinate change.
 
     Args:
         lat: Latitude
         lon: Longitude
 
     Returns:
-        IANA timezone string (e.g., 'Indian/Reunion', 'Europe/Paris'), or 'UTC' on failure.
+        An IANA timezone name, e.g. 'Europe/Paris'. For a point in no timezone
+        polygon — open water — this is the nautical zone for the longitude,
+        e.g. 'Etc/GMT+11', which is correct for that point.
+
+        KNOWN GAP (td-7eet, review finding): `core.tz_finder` collapses three
+        states into one — no polygon, finder unavailable, query raised — and
+        answers all of them with the longitude zone. So on a machine where
+        timezonefinder cannot construct, a Paris click returns 'Etc/GMT+0'
+        silently, and the Now road persists that into the recipe and chart
+        memory. An offset zone for a LAND point means the engine is degraded,
+        not that the answer is right. It is still an improvement on the hard
+        'UTC' this replaced, which was wrong for every coordinate on Earth and
+        looked identical to a real answer; but it is not the "impossible to
+        confuse with a default" that an earlier draft of this docstring
+        claimed. Distinguishing the three states belongs in tz_finder, above
+        this function.
     """
-    global _cached_iana_timezone
-
-    if _cached_iana_timezone is not None:
-        return _cached_iana_timezone
-
-    try:
-        from timezonefinder import TimezoneFinder
-        tf = TimezoneFinder()
-        tz_str = tf.timezone_at(lat=lat, lng=lon)
-        if tz_str:
-            _cached_iana_timezone = tz_str
-            return tz_str
-    except ImportError:
-        print("[TRANSIT] timezonefinder not installed")
-    except Exception as e:
-        print(f"[TRANSIT] Timezone detection error: {e}")
-
-    return "UTC"
+    from core.tz_finder import timezone_at_or_offset
+    return timezone_at_or_offset(lat, lon)
 
 
 def calculate_transit_now(lat: Optional[float] = None, lon: Optional[float] = None,

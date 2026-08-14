@@ -13,9 +13,18 @@ Dependency direction is one-way: chart_title_widget imports from this module.
 This module must NOT import chart_title_widget (would create a cycle).
 """
 from PySide6.QtWidgets import (
-    QWidget, QHBoxLayout, QVBoxLayout, QLabel, QPushButton,
-    QDialog, QTextEdit, QApplication, QScrollArea, QFrame,
-    QComboBox, QLineEdit, QMessageBox
+    QWidget,
+    QHBoxLayout,
+    QVBoxLayout,
+    QLabel,
+    QPushButton,
+    QDialog,
+    QTextEdit,
+    QApplication,
+    QScrollArea,
+    QFrame,
+    QComboBox,
+    QLineEdit,
 )
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import QPixmap

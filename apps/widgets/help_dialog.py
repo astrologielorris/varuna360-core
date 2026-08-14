@@ -16,12 +16,8 @@ from PySide6.QtWidgets import (
     QTextBrowser
 )
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont
 
-from ui.qt_theme import (
-    get_theme_colors, get_secondary_button_style, FONT_PRIMARY,
-    scaled_area_font, scaled_area_size,
-)
+from ui.qt_theme import get_theme_colors, get_secondary_button_style, scaled_area_font
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 

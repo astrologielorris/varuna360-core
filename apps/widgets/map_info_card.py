@@ -16,7 +16,6 @@ which is why the basis line exists: it names the instant the bands belong to
 rather than leaving the user to assume the two agree.
 """
 
-from typing import Optional
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QFrame, QLabel, QVBoxLayout

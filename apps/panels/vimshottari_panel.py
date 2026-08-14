@@ -17,8 +17,11 @@ from ui.qt_theme import scaled_px, scaled_area_px, get_dasha_header_height, get_
 
 # Import centralized theme
 from ui.qt_theme import (
-    ACCENTS, get_list_style, get_header_style, get_panel_style,
-    get_3d_button_style, get_panel_header_3d_style, get_theme_colors
+    ACCENTS,
+    get_list_style,
+    get_panel_style,
+    get_3d_button_style,
+    get_theme_colors,
 )
 
 # Import delegate for highlighting

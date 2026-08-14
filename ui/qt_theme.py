@@ -652,6 +652,101 @@ import math
 
 _UI_SATURATION = 100  # module state, 0-100; 100 == fully saturated (no-op)
 
+# =============================================================================
+# DEEP DARK (SPEC-THM-001 — opt-in near-black variant of the active dark theme)
+# =============================================================================
+# The shipped dark themes sit around #232629; the New & Edit mockup is built on
+# a near-black ground (#0D0D0D-#1C1C1E). This makes that an OPTION rather than a
+# new theme: the SAME dark palette with its background family deepened, so the
+# user's chosen accent and every existing contrast relationship survive.
+#
+# It rides the SAME single application point as the saturation rewrite
+# (desaturated_theme_path -> apply_stylesheet), which is what keeps the
+# stylesheet and every get_theme_colors() call site in agreement. Deepening
+# get_theme_colors() instead would leave the qt-material chrome behind and
+# reintroduce exactly the split SPEC-SAT-001 was written to avoid.
+#
+# None means "not read yet": the flag is resolved lazily from settings on first
+# use, so a fresh BOOT picks it up with no boot-path change, and the settings
+# page overrides it live via set_deep_dark().
+_DEEP_DARK = None
+
+#: Multiplier applied to the secondary (background) family only. 0.55 takes
+#: dark_blue's #232629 to ~#131517 — near-black — while PRESERVING the relative
+#: order of secondary / secondary_dark / secondary_light. Remapping them onto
+#: the mockup's literal values would invert that order (the mockup's field is
+#: darker than its card; qt-material's secondary_dark is LIGHTER than secondary)
+#: and every panel in the app reads those keys, not just this one tab.
+_DEEP_DARK_FACTOR = 0.55
+
+#: Only these are deepened. Accents and text are untouched: darkening the accent
+#: would change the user's chosen theme colour, and darkening the text would
+#: cancel the contrast the darker ground just bought.
+_DEEP_DARK_KEYS = ("secondaryColor", "secondaryLightColor", "secondaryDarkColor")
+
+
+def _read_deep_dark_setting():
+    """Resolve the persisted flag. Imported lazily to keep ui.qt_theme free of
+    a manager dependency at import time."""
+    try:
+        from managers.settings_manager import get_settings
+        return bool(get_settings().get("appearance.deep_dark", False))
+    except Exception:
+        return False
+
+
+def get_deep_dark() -> bool:
+    """True when the near-black variant is active (dark themes only)."""
+    global _DEEP_DARK
+    if _DEEP_DARK is None:
+        _DEEP_DARK = _read_deep_dark_setting()
+    return _DEEP_DARK
+
+
+def set_deep_dark(enabled):
+    """Set the flag for the CURRENT process. Persisting is the caller's job —
+    the settings page writes appearance.deep_dark and then re-applies the theme.
+    """
+    global _DEEP_DARK
+    _DEEP_DARK = bool(enabled)
+
+
+def deep_key() -> str:
+    """Cache-key fragment, '' when off — same convention as ``sat_key()`` so a
+    cached pixmap cannot survive a change of ground."""
+    return "_deep" if get_deep_dark() else ""
+
+
+def _deepen_hex(hex_color, factor=None):
+    """Scale a colour toward black by ``factor``, preserving hue."""
+    if factor is None:
+        factor = _DEEP_DARK_FACTOR
+    h = str(hex_color).lstrip("#")
+    if len(h) == 3:
+        h = "".join(c * 2 for c in h)
+    try:
+        r, g, b = (int(h[i:i + 2], 16) for i in (0, 2, 4))
+    except (ValueError, IndexError):
+        return hex_color
+    return "#%02x%02x%02x" % tuple(
+        max(0, min(255, int(round(c * factor)))) for c in (r, g, b))
+
+
+def _is_dark_theme_file(theme_file) -> bool:
+    """True for a DARK theme file. Positive test, deliberately.
+
+    The obvious spelling — "light" not in the name — is wrong on this theme set:
+    ``dark_lightgreen.xml`` is a DARK theme with "light" in its filename, so the
+    negative test silently skipped the rewrite on it and greyed out the option
+    for a whole theme. Every shipped theme is named ``dark_*`` or ``light_*``,
+    so asking for "dark" answers correctly for all of them.
+
+    An unrecognised custom path is treated as NOT dark: declining to deepen
+    something we cannot classify is the recoverable failure; deepening a light
+    theme into mud is not.
+    """
+    return "dark" in os.path.basename(str(theme_file)).lower()
+
 
 def set_ui_saturation(pct):
     """Set the global UI saturation (0-100). Clamped; non-numeric or non-finite
@@ -674,14 +769,23 @@ def get_ui_saturation():
 
 
 def sat_key():
-    """Cache-key suffix encoding the current saturation, for icon/image caches.
+    """Cache-key suffix encoding the current PALETTE VARIANT (saturation and
+    deep dark), for icon/image caches.
 
     Returns '' at 100 so cache keys stay byte-identical to today (SPEC-SAT-001
     WI-4), else '_s<pct>' so a slider change produces DIFFERENT keys and a stale
     pixmap can never be served. Append to every string cache key that feeds a
     desat_image()-processed pixmap; for tuple keys append get_ui_saturation().
     """
-    return "" if _UI_SATURATION >= 100 else f"_s{_UI_SATURATION}"
+    # Also carries the deep-dark variant. Every image cache in the app already
+    # appends this one key, so folding the second palette variant in here wires
+    # the whole invariant at ONE point instead of editing eight call sites —
+    # and it makes the guarantee true rather than merely claimed: deep_key()
+    # existed but had no callers, so a cached pixmap COULD have survived a
+    # change of ground. Still '' in the default state, so keys stay
+    # byte-identical to today.
+    sat = "" if _UI_SATURATION >= 100 else f"_s{_UI_SATURATION}"
+    return sat + deep_key()
 
 
 def desat_hex(hex_color):
@@ -755,8 +859,13 @@ def _desat_hex_at(hex_color, sat):
     return f"#{alpha}{R:02x}{G:02x}{B:02x}"
 
 
-def desaturated_theme_path(theme_file, sat=None):
-    """Return a path to a desaturated COPY of a qt-material theme XML (WI-2).
+def desaturated_theme_path(theme_file, sat=None, deep=None):
+    """Return a path to a REWRITTEN copy of a qt-material theme XML (WI-2).
+
+    Handles BOTH palette rewrites — desaturation (SPEC-SAT-001) and the opt-in
+    near-black ground (deep dark) — because they must share one application
+    point. Two separate generated files would race each other: whichever was
+    handed to ``apply_stylesheet`` last would silently discard the other.
 
     qt-material's ``get_theme()`` accepts an absolute path that exists on disk
     (``else: theme = theme_name`` branch) and sets every color into the
@@ -778,10 +887,16 @@ def desaturated_theme_path(theme_file, sat=None):
     caller keeps passing that to ``_save_theme_preference``. Only the
     ``apply_fn(theme=...)`` call uses this returned path.
     """
+    import hashlib
     import re
+    import tempfile
     if sat is None:
         sat = _UI_SATURATION
-    if sat >= 100:
+    if deep is None:
+        deep = get_deep_dark()
+    # Deep dark is a DARK-theme option; a light theme passes through untouched.
+    deep = bool(deep) and _is_dark_theme_file(theme_file)
+    if sat >= 100 and not deep:
         return theme_file
     try:
         # Resolve the source XML: a built-in name lives under qt_material/themes,
@@ -799,15 +914,76 @@ def desaturated_theme_path(theme_file, sat=None):
         os.makedirs(out_dir, exist_ok=True)
         base = os.path.basename(theme_file)
         stem, ext = os.path.splitext(base)  # ("dark_blue", ".xml")
-        out_path = os.path.join(out_dir, f"{stem}_sat{int(sat)}{ext or '.xml'}")
+        # The generated name must still carry "dark"/"light" (qt-material reads
+        # the substring off the path we hand it), and must differ per variant or
+        # a stale file would be reused after the option changed.
+        # The name carries a hash of the RESOLVED SOURCE path, not just the
+        # basename: two different theme files with the same basename would
+        # otherwise generate to the same output and quietly serve each other's
+        # palette.
+        src_tag = hashlib.sha1(os.path.abspath(src).encode("utf-8")).hexdigest()[:8]
+        out_path = os.path.join(
+            out_dir,
+            f"{stem}_sat{int(sat)}{'_deep' if deep else ''}"
+            f"_{src_tag}{ext or '.xml'}")
 
         with open(src, "r", encoding="utf-8") as f:
             xml = f.read()
-        # Rewrite every #RRGGBB (and #RGB) hex through the pure desaturator.
-        hex_re = re.compile(r"#(?:[0-9a-fA-F]{6}|[0-9a-fA-F]{3})\b")
-        desat_xml = hex_re.sub(lambda m: _desat_hex_at(m.group(0), sat), xml)
-        with open(out_path, "w", encoding="utf-8") as f:
-            f.write(desat_xml)
+        if sat < 100:
+            # Rewrite every #RRGGBB (and #RGB) hex through the pure desaturator.
+            hex_re = re.compile(r"#(?:[0-9a-fA-F]{6}|[0-9a-fA-F]{3})\b")
+            xml = hex_re.sub(lambda m: _desat_hex_at(m.group(0), sat), xml)
+        if deep:
+            # By NAME, not by value: only the background family moves, so the
+            # accent the user picked and the text colours are left alone.
+            for key in _DEEP_DARK_KEYS:
+                xml = re.sub(
+                    r'(<color\s+name="%s"\s*>)\s*(#[0-9a-fA-F]{3,6})\s*(</color>)'
+                    % re.escape(key),
+                    lambda m: m.group(1) + _deepen_hex(m.group(2)) + m.group(3),
+                    xml)
+        # Written atomically, via a temp file in the SAME directory then
+        # os.replace(). Truncating the shared output in place is a real hazard
+        # here rather than a theoretical one: two app instances run against this
+        # tree (full and --lite), and both applying the same variant could hand
+        # qt-material a half-written XML.
+        # mkstemp, not pid: a pid-suffixed name is unique per PROCESS but not
+        # per CALL, so two threads in one process regenerating the same variant
+        # shared a temp file and one lost the os.replace() race — a review probe
+        # reproduced exactly that, one good path and one fallback. The
+        # cross-process case (Lite + full, the real risk here) was already
+        # covered; this closes the same-process one for the cost of one call.
+        fd, tmp_path = tempfile.mkstemp(dir=out_dir, suffix=".tmp")
+        # mkstemp returns a RAW descriptor, and ownership of it passes to the
+        # file object only once os.fdopen SUCCEEDS. So fdopen sits outside the
+        # write block with its own handler: cleaning up the path without
+        # closing the descriptor leaks an fd on every failure, which a theme
+        # switch can repeat for as long as the app runs. BaseException, not
+        # Exception — a MemoryError or a KeyboardInterrupt landing here leaks
+        # exactly the same descriptor.
+        try:
+            handle = os.fdopen(fd, "w", encoding="utf-8")
+        except BaseException:
+            os.close(fd)
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
+        try:
+            with handle as f:
+                f.write(xml)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_path, out_path)
+        except Exception:
+            # Never leave the temp behind on a failed write.
+            try:
+                if os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
         return out_path
     except Exception:
         return theme_file

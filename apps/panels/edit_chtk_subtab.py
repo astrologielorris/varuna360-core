@@ -23,12 +23,21 @@ CHTK Format (UTF-16 encoded):
 """
 
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
-    QLineEdit, QLabel, QPushButton, QScrollArea, QFrame,
-    QMessageBox, QFileDialog, QTextEdit, QGroupBox, QSplitter
+    QWidget,
+    QVBoxLayout,
+    QHBoxLayout,
+    QGridLayout,
+    QLineEdit,
+    QLabel,
+    QPushButton,
+    QScrollArea,
+    QFrame,
+    QMessageBox,
+    QFileDialog,
+    QTextEdit,
+    QGroupBox,
 )
-from PySide6.QtCore import Signal, Slot, Qt
-from PySide6.QtGui import QFont
+from PySide6.QtCore import Signal
 
 # Theme imports - use dynamic colors for proper light/dark support
 from ui.qt_theme import get_theme_colors, scaled_area_px

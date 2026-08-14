@@ -362,6 +362,20 @@ class ViewFloatManager:
     def is_fullscreen(self):
         return self._container is not None
 
+    def dialog_parent(self, default):
+        """Return the top-level a modal popup should parent to.
+
+        While fullscreen the chart surface is reparented into the frameless
+        container, which sits IN FRONT of the main window. A popup parented to
+        the (hidden-behind) main window makes Qt raise that window to host the
+        modal exec(), dropping the container to the back: the chart vanishes,
+        the windowed layout shows its now-empty slot, and only Esc tears the
+        container down (the reported after-effect). Parenting to the container
+        instead keeps it in front and returns activation to it on close, so a
+        planet/sign description opens over the fullscreen chart and closes back
+        into it. Falls back to ``default`` (the main window) when windowed."""
+        return self._container if self.is_fullscreen else default
+
     # -- target resolution ------------------------------------------------
 
     def _resolve_target(self):

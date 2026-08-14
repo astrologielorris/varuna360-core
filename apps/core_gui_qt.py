@@ -43,14 +43,29 @@ if platform.system() == "Linux":
 from datetime import datetime
 
 from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QVBoxLayout, QHBoxLayout, QWidget,
-    QFileDialog, QMessageBox, QTabWidget, QListWidget, QListWidgetItem,
-    QTextEdit, QPushButton, QLabel, QStackedWidget, QSizePolicy, QProgressBar,
-    QScrollArea
+    QApplication,
+    QMainWindow,
+    QVBoxLayout,
+    QHBoxLayout,
+    QWidget,
+    QFileDialog,
+    QMessageBox,
+    QTabWidget,
+    QPushButton,
+    QLabel,
+    QStackedWidget,
+    QSizePolicy,
+    QProgressBar,
+    QScrollArea,
 )
 from PySide6.QtCore import (
-    QProcess, Qt, QTimer, QSize, QRunnable, QThreadPool, QObject, Signal, Slot,
-    QPropertyAnimation, QEasingCurve,
+    QProcess,
+    Qt,
+    QTimer,
+    QSize,
+    Signal,
+    QPropertyAnimation,
+    QEasingCurve,
 )
 import json
 import signal
@@ -68,7 +83,7 @@ def _get_apply_stylesheet():
             _qt_material_apply = False
     return _qt_material_apply
 
-from PySide6.QtGui import QAction, QKeySequence, QActionGroup, QColor, QBrush, QIcon
+from PySide6.QtGui import QAction, QKeySequence, QActionGroup, QColor, QIcon
 
 # Project root for absolute paths
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -78,8 +93,6 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 # Import theme functions for styling (must be after sys.path modification)
 from ui.qt_theme import get_tab_bar_style, get_theme_colors, get_menu_bar_style, scaled_px, scaled_area_px, desat_hex, desat_qss
-
-from core.chtk_reader import CHTKReader
 
 # Import title formatting from chart_manager
 from managers.chart_manager import _format_chart_title
@@ -94,7 +107,7 @@ VARGA_NAMES = {
 
 
 # Import modular widgets
-from apps.widgets.chart_view import SouthIndianView, PlanetClickSignal, SignClickSignal
+from apps.widgets.chart_view import SouthIndianView
 from apps.widgets.south_indian_vector_view import (
     create_south_indian_view, sync_all_south_indian_hosts)
 from apps.widgets.wheel_view import WheelView
@@ -357,6 +370,10 @@ class ChartGUI(QMainWindow):
 
         from managers.transit_overlay_manager import TransitOverlayManager
         self.transit_overlay_manager = TransitOverlayManager(gui=self, parent=self)
+        # SPEC-TRN-006: resolves dropped payloads into overlay charts. Plain
+        # object (no timer/signal); must exist before any drop can be handled.
+        from managers.chart_overlay_manager import ChartOverlayManager
+        self.chart_overlay_manager = ChartOverlayManager(self)
         self.state.connect(self.transit_overlay_manager._on_active_chart_changed)
         self.aditya_mode_changed.connect(
             self.transit_overlay_manager._on_aditya_mode_changed
@@ -797,7 +814,11 @@ class ChartGUI(QMainWindow):
         _ecl_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         _ecl_label.setStyleSheet(f"color: #888; font-size: {scaled_px(14)}px;")
         _ecl.addWidget(_ecl_label)
-        self.tab_widget.addTab(self._edit_chart_placeholder, "New & Edit")
+        # "New && Edit": the doubled ampersand renders as a literal "&"; a
+        # single "&" is consumed as a Qt tab mnemonic and the following space is
+        # drawn underlined, so the tab reads "New_Edit". tabText() returns the
+        # "&&" form verbatim, so the _show_new/edit_chart matchers below strip it.
+        self.tab_widget.addTab(self._edit_chart_placeholder, "New && Edit")
         self.edit_chart_panel = None
 
         # === FIND CHART TAB (lazy loading, available in all editions) ===
@@ -1033,10 +1054,9 @@ class ChartGUI(QMainWindow):
                     if not self._preloading:
                         self.tab_widget.setCurrentIndex(index)
                     self._settings_placeholder = None
-                    if hasattr(self.settings_tab, 'ai_settings_tab') and hasattr(self, 'ai_reading_panel'):
-                        self.settings_tab.ai_settings_tab.settings_changed.connect(
-                            self.ai_reading_panel.refresh_provider_button
-                        )
+                    # (ai_reading_panel guard removed 2026-08-09: the panel is
+                    # deprecated and never instantiated, so the hasattr was
+                    # always False — see the _refresh_attr annotation below.)
                     if hasattr(self.settings_tab, 'folders_tab'):
                         self.settings_tab.folders_tab.folders_changed.connect(
                             self._on_chart_folders_changed
@@ -1061,7 +1081,7 @@ class ChartGUI(QMainWindow):
             if index >= 0:
                 self.edit_chart_panel = EditChartPanel(self)
                 self.tab_widget.removeTab(index)
-                self.tab_widget.insertTab(index, self.edit_chart_panel, "New & Edit")
+                self.tab_widget.insertTab(index, self.edit_chart_panel, "New && Edit")
                 if not self._preloading:
                     self.tab_widget.setCurrentIndex(index)
                 self._edit_chart_placeholder = None
@@ -2303,7 +2323,7 @@ class ChartGUI(QMainWindow):
         """Switch to Edit Chart tab and select New Chart sub-tab."""
         # Find the Edit Chart tab
         for i in range(self.tab_widget.count()):
-            tab_text = self.tab_widget.tabText(i)
+            tab_text = self.tab_widget.tabText(i).replace("&&", "&")
             if "New & Edit" in tab_text:
                 self.tab_widget.setCurrentIndex(i)
                 break
@@ -2316,7 +2336,7 @@ class ChartGUI(QMainWindow):
         """Switch to Edit Chart tab and select Edit Info sub-tab."""
         # Find the Edit Chart tab
         for i in range(self.tab_widget.count()):
-            tab_text = self.tab_widget.tabText(i)
+            tab_text = self.tab_widget.tabText(i).replace("&&", "&")
             if "New & Edit" in tab_text:
                 self.tab_widget.setCurrentIndex(i)
                 break
@@ -2752,12 +2772,23 @@ class ChartGUI(QMainWindow):
         # so listeners repopulate without recomputing (td-cm8o).
         self.sign_names_changed.emit(self.state.aditya_mode)
 
+    def _dialog_parent(self):
+        """Parent for chart-surface popups: the fullscreen container while
+        fullscreen, else the main window. A modal parented to the main window
+        while fullscreen drops the frameless container to the back (chart
+        vanishes, layout scrambles); see ViewFloatManager.dialog_parent."""
+        fm = getattr(self, "view_float_manager", None)
+        if fm is not None:
+            return fm.dialog_parent(self)
+        return self
+
     def _show_planet_dialog(self, planet_name, planet_info):
         """Show popup dialog with planet details when planet is double-clicked"""
         planet_pixmap = self.chart_view.load_planet_image(planet_name, size=64)
         current_variation = self.chart_view.get_planet_variation(planet_name)
         dialog = PlanetInfoDialog(planet_name, planet_info, planet_pixmap,
-                                  current_variation=current_variation, parent=self)
+                                  current_variation=current_variation,
+                                  parent=self._dialog_parent())
 
         # Capture variation BEFORE connecting signal (to avoid applying during deletion)
         pending_variation = None
@@ -2789,7 +2820,8 @@ class ChartGUI(QMainWindow):
         """Show popup dialog with hora/trimsamsa structure when sector is double-clicked"""
         avastha_summary = self._compute_sector_avastha(sign_name, ring, being_type)
         dialog = SectorInfoDialog(sign_name, focus_ring=ring, focus_type=being_type,
-                                  avastha_summary=avastha_summary, parent=self)
+                                  avastha_summary=avastha_summary,
+                                  parent=self._dialog_parent())
         dialog.exec()
 
         dialog.deleteLater()
@@ -2872,7 +2904,8 @@ class ChartGUI(QMainWindow):
 
     def _show_sign_variation_dialog(self, zodiac_index, current_variation):
         """Show popup dialog for selecting zodiac sign icon variation"""
-        dialog = SignVariationDialog(zodiac_index, current_variation, parent=self)
+        dialog = SignVariationDialog(zodiac_index, current_variation,
+                                     parent=self._dialog_parent())
 
         # Don't connect signal - we'll check for pending variation after dialog closes
         # This prevents race condition: dialog closing + chart redrawing simultaneously
@@ -3103,6 +3136,12 @@ class ChartGUI(QMainWindow):
 
         if self.time_adjust_widget and hasattr(self.time_adjust_widget, 'update_save_button_state'):
             self.time_adjust_widget.update_save_button_state()
+            # A transit/view toggle changes whether the readout applies and
+            # whether Revert should be live; recompute the whole readout state,
+            # not just Save (else a stale readout + wrongly-enabled Revert
+            # survive the transition).
+            if self.time_adjust_widget.isVisible():
+                self.time_adjust_widget.refresh_preview()
 
         # SPEC-VGC-001 §4.3 + SPEC-VGO-001 INV-8: the toggle greys out only
         # on the body graph now, and its tooltip names the surface of
@@ -3208,6 +3247,14 @@ class ChartGUI(QMainWindow):
 
         self._update_title()
         self._update_chart_display_preview()
+
+        # Live birth-time preview: refresh the time-adjust readout on every
+        # chart refresh while its popup is open. Covers both a +/- click (this
+        # runs via _adjust_time) and a chart switch under the open popup (the
+        # widget's entry-id guard recaptures the baseline for the new chart).
+        _taw = getattr(self, 'time_adjust_widget', None)
+        if _taw is not None and _taw.isVisible():
+            _taw.refresh_preview()
 
     def _update_all_chart_views(self, *, skip_loading=False):
         """Update all chart views from state.active_chart."""
@@ -3666,6 +3713,11 @@ class ChartGUI(QMainWindow):
         # active_chart but leaves birth_jd None, and must still rebuild.
         if self.state.active_chart is not None:
             self._recalculate_chart()
+        # SPEC-TRN-006 INV-3: the overlay follows the new house system automatically
+        # — _recalculate_chart re-dispatches SetActiveChart, and the frame-diff in
+        # TransitOverlayManager._on_active_chart_changed rebuilds the overlay. No
+        # explicit reoverlay here (it would double-build, and the direct/remote
+        # SetHouseSystem path that skips this method is covered by the same diff).
         label = house_system.replace("_", " ").title()
         self.statusBar().showMessage(f"House system: {label}")
 
@@ -3829,7 +3881,12 @@ class ChartGUI(QMainWindow):
         Visible on all chart views. Mutually exclusive with tropical rim.
         """
         mgr = self.transit_overlay_manager
-        if mgr.transit_enabled:
+        if mgr.transit_mode == "overlay_chart" and mgr.transit_enabled:
+            # SPEC-TRN-006 D-1: clicking TRANSIT while an overlay is active turns
+            # the rim off AND drops the overlay. The chip x is the path back to
+            # live sky without going through off.
+            self.chart_overlay_manager.clear()
+        elif mgr.transit_enabled:
             mgr.disable_transit()
         else:
             mgr.enable_transit()
@@ -3892,10 +3949,30 @@ class ChartGUI(QMainWindow):
     def _on_transit_state_changed(self):
         """Mediator: route TransitOverlayManager state to the active view."""
         mgr = self.transit_overlay_manager
+        # SPEC-TRN-006 B-4: transit and tropical rims are mutually exclusive.
+        # Centralise the arbitration here so a direct overlay activation (which
+        # bypasses _toggle_transit_rim) cannot leave both rims painted.
+        if mgr.transit_enabled and getattr(self, 'show_tropical_rim', False):
+            self.show_tropical_rim = False
+            if hasattr(self, 'dual_rim_btn'):
+                self.dual_rim_btn.setChecked(False)
+            if hasattr(self, 'wheel_view') and self.wheel_view:
+                self.wheel_view.set_show_tropical_rim(False)
+            from managers.settings_manager import get_settings
+            get_settings().set("chart.show_tropical_rim", False)
         if hasattr(self, 'transit_btn'):
             self.transit_btn.setChecked(mgr.transit_enabled)
         if hasattr(self, 'transit_action'):
             self.transit_action.setChecked(mgr.transit_enabled)
+        # SPEC-TRN-006: refresh the overlay chip + button text from manager state.
+        if hasattr(self, 'chart_title_widget'):
+            try:
+                from apps.widgets.chart_title_widget import update_overlay_chip
+                update_overlay_chip(self, mgr)
+            except Exception as _chip_exc:
+                # The chip is one of the two signals distinguishing overlay from
+                # live sky (D-2); a silent failure degrades the feature invisibly.
+                print(f"[TRANSIT-OVERLAY] update_overlay_chip failed: {_chip_exc}")
         idx = self.chart_stack.currentIndex() if hasattr(self, 'chart_stack') else -1
         if idx == 1 and hasattr(self, 'wheel_view') and self.wheel_view:
             self.wheel_view.update_transit_from_manager(mgr)
@@ -3905,6 +3982,12 @@ class ChartGUI(QMainWindow):
             self.north_indian_view.update_transit_overlay(mgr)
         if self.time_adjust_widget and hasattr(self.time_adjust_widget, 'update_save_button_state'):
             self.time_adjust_widget.update_save_button_state()
+            # A transit/view toggle changes whether the readout applies and
+            # whether Revert should be live; recompute the whole readout state,
+            # not just Save (else a stale readout + wrongly-enabled Revert
+            # survive the transition).
+            if self.time_adjust_widget.isVisible():
+                self.time_adjust_widget.refresh_preview()
 
     def _toggle_outer_planets(self):
         """
@@ -4233,12 +4316,24 @@ class ChartGUI(QMainWindow):
         # Position widget on the left side of the chart area (works on any view)
         target = self.chart_stack if hasattr(self, 'chart_stack') else self.chart_view
         if target:
+            self.time_adjust_widget.setParent(target)
+            # Seed the live preview FIRST so the 3-line readout chip has its real
+            # content BEFORE we measure: re-apply the theme-aware shell (rim
+            # tracks a light<->dark switch), set Save/Revert state, capture the
+            # last-saved baseline, and paint the readout. Sizing an empty label
+            # then filling it left the first open clipped.
+            self.time_adjust_widget._apply_shell_style()
+            self.time_adjust_widget.update_save_button_state()
+            self.time_adjust_widget.capture_baseline()
+            self.time_adjust_widget.refresh_preview()
+            # Now fit to the populated content and position (clamp y so a short
+            # chart area never pushes the taller popup off the top).
+            self.time_adjust_widget.adjustSize()
             view_rect = target.rect()
             widget_h = self.time_adjust_widget.height()
             margin = 10
             x = margin
-            y = (view_rect.height() - widget_h) // 2
-            self.time_adjust_widget.setParent(target)
+            y = max(margin, (view_rect.height() - widget_h) // 2)
             self.time_adjust_widget.move(x, y)
             self.time_adjust_widget.raise_()  # Bring to front
             self.time_adjust_widget.show()
@@ -5245,7 +5340,12 @@ class ChartGUI(QMainWindow):
         # Extract location info from Birth Finder fields
         city = result_data.get('city', '') or f"Lat {lat:.2f}"
         country = result_data.get('country', '') or f"Lon {lon:.2f}"
-        timezone_str = result_data.get('timezone', '+00:00:00') or '+00:00:00'
+        # The row's `timezone` offset string is deliberately NOT read here. It
+        # was read into a local and then never used: `load_chart_from_datetime`
+        # builds with `utcoffset=0.0` (`tools/chtk_loader.py:46`), so the result
+        # datetime is treated as the UTC instant it actually is. Reinstating the
+        # offset without first defining Birth Finder's local-time contract
+        # (SPEC-MAP-004 F-7) would shift every loaded chart by that offset.
         # Create a synthetic name for the chart
         if result_data.get('is_range'):
             name = f"Birth Finder Result (Range: {dt.strftime('%Y-%m-%d')})"
@@ -5264,14 +5364,33 @@ class ChartGUI(QMainWindow):
                 self.is_human_design = False
                 self.current_chart_path = None
 
-                # Detect IANA timezone from coordinates for title display
-                try:
-                    from timezonefinder import TimezoneFinder
-                    tf = TimezoneFinder()
-                    self.current_timezone = tf.timezone_at(lat=lat, lng=lon) or 'UTC'
-                except Exception as e:
-                    print(f"[WARNING] TimezoneFinder failed for ({lat}, {lon}): {e}")
-                    self.current_timezone = 'UTC'
+                # IANA timezone for title display and for the memory recipe.
+                #
+                # SPEC-MAP-004 W2 step 4. The row carries the zone the map
+                # resolved when the user picked the place, so prefer it: it is
+                # the same answer this code used to recompute, and recomputing
+                # it cost a fresh `TimezoneFinder()` -- ~800 ms of shapefile
+                # loading on the GUI thread, on every double-click of a result,
+                # for a value the panel already had. It was also a second
+                # source of truth for a field that ends up in a saved recipe.
+                #
+                # The fallback stays for rows with no name (a hand-typed
+                # location, or a point the finder could not resolve) and now
+                # goes through the process-wide singleton rather than building
+                # its own (SPEC-MAP-001 INV-7). "Warmed" would overstate it on
+                # this road: `start_warmup()` runs when a map surface is built,
+                # and a hand-typed location may never have opened one, in which
+                # case this still constructs synchronously on the GUI thread.
+                # Once per session instead of once per double-click, which is
+                # the improvement actually being claimed.
+                self.current_timezone = result_data.get('tz_name') or None
+                if not self.current_timezone:
+                    try:
+                        from core.tz_finder import timezone_at
+                        self.current_timezone = timezone_at(lat, lon) or 'UTC'
+                    except Exception as e:
+                        print(f"[WARNING] timezone lookup failed for ({lat}, {lon}): {e}")
+                        self.current_timezone = 'UTC'
 
                 from core.chart_factory import make_source_params, recipe_from_chart
                 from state.events import SetActiveChart
@@ -5776,6 +5895,9 @@ class ChartGUI(QMainWindow):
 
                 # Core panels/widgets with module-level refresh helpers
                 _refresh_attr('memory_panel')
+                # Birth Time +/- popup: re-skin dark HUD <-> light panel. Lazily
+                # created (may be None); _refresh_attr no-ops if absent.
+                _refresh_attr('time_adjust_widget')
                 if hasattr(self, 'chart_title_widget'):
                     from apps.widgets.chart_title_widget import refresh_chart_title_theme
                     _safe_theme('chart_title_widget', lambda: refresh_chart_title_theme(self))

@@ -504,6 +504,28 @@ def jd_from_recipe_civil(recipe):
     )
 
 
+def jd_from_birth_data(birth_data):
+    """Julian Day from a canonical birth_data dict (SPEC-IMPORT-001 §6.2).
+
+    Honors an authoritative TOML-origin ``julian_day`` when present (preserving
+    sub-second precision), else computes from the already-UTC civil fields. The
+    one place this rule lives: ChartManager.load_chart and build_chart_from_file
+    both call it, so the two paths cannot drift.
+    """
+    _bd_jd = birth_data.get('julian_day')
+    if _bd_jd is not None:
+        return float(_bd_jd)
+    # core.time_utils.julday (NOT swe.julday) — it auto-detects the Julian/
+    # Gregorian calendar flag, which matters for pre-1582 charts. This mirrors
+    # ChartManager.load_chart exactly.
+    from core.time_utils import julday
+    hour_decimal = (birth_data['utc_hour']
+                    + birth_data['utc_minute'] / 60.0
+                    + birth_data['utc_second'] / 3600.0)
+    return julday(birth_data['utc_year'], birth_data['utc_month'],
+                  birth_data['utc_day'], hour_decimal)
+
+
 def build_chart_from_recipe(recipe, mode, ayanamsa):
     """Build a Chart from a recipe dict. Single reconstruction path (SPEC-MEM-002 S3.1).
 

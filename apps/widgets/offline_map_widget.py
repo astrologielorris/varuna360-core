@@ -29,15 +29,23 @@ file must never call sqlite3, urllib, or geopy.
 
 import atexit as _atexit
 import math
-import os
 import threading as _threading
 from typing import List, Optional, Tuple
 
 from PySide6.QtWidgets import (
     QApplication,
-    QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QGraphicsItem,
-    QGraphicsEllipseItem, QGraphicsPolygonItem, QGraphicsPathItem,
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QComboBox,
+    QGraphicsView,
+    QGraphicsScene,
+    QGraphicsPixmapItem,
+    QGraphicsItem,
+    QGraphicsPolygonItem,
+    QGraphicsPathItem,
+    QWidget,
+    QVBoxLayout,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QComboBox,
 )
 from PySide6.QtCore import (
     Signal, Slot, Qt, QPointF, QRectF, QThread, QTimer, QElapsedTimer,
@@ -49,11 +57,19 @@ from PySide6.QtGui import (
 )
 
 from apps.widgets.map_tiles import (
-    TILE_SIZE, Z_REF, MIN_TILE_ZOOM, SOFT_MAX_ZOOM, HARD_MAX_ZOOM,
-    BASE_KEEP_ZOOM, DEFAULT_DB_PATH, TileWorker, ZoomDetent,
+    TILE_SIZE,
+    Z_REF,
+    MIN_TILE_ZOOM,
+    SOFT_MAX_ZOOM,
+    HARD_MAX_ZOOM,
+    BASE_KEEP_ZOOM,
+    DEFAULT_DB_PATH,
+    TileWorker,
+    ZoomDetent,
     wheel_zoom_delta,
-    lat_lon_to_tile, tile_to_lat_lon, lat_lon_to_pixel, pixel_to_lat_lon,
-    lat_lon_to_scene, scene_to_lat_lon, tile_scene_rect,
+    lat_lon_to_scene,
+    scene_to_lat_lon,
+    tile_scene_rect,
 )
 
 __all__ = [
@@ -505,6 +521,15 @@ class OfflineMapWidget(QGraphicsView):
 
     @Slot()
     def _request_visible(self):
+        if not self._alive:
+            # Shut down while a debounced request was still queued. Emitting now
+            # raises "Signal source has been deleted" out of the Qt event loop,
+            # which lands wherever the loop happens to be pumping — in the app a
+            # stack trace on closing a map page, in tests an error or failure
+            # attributed to an unrelated case running at that moment. Measured
+            # 3 bad runs in 20 before this guard; the failures moved between
+            # tests, which is exactly what made them read as inherited flakes.
+            return
         rect = self._visible_scene_rect(PREFETCH_MARGIN_TILES)
         keys = self._keys_for(self._tile_level, rect)
         self._wanted = set(keys)
@@ -631,6 +656,8 @@ class OfflineMapWidget(QGraphicsView):
 
     @Slot()
     def _repalette_stale(self):
+        if not self._alive:
+            return              # same post-teardown window as _request_visible
         keys = [k for k in self._stale_palette if k in self._tiles]
         self._stale_palette.clear()
         keys = [k for k in keys if k not in self._pending]
@@ -725,7 +752,14 @@ class OfflineMapWidget(QGraphicsView):
     def set_marker_label(self, text: str):
         """Name shown above the pin. Rebuilt, not edited: the halo offset is
         derived from the text metrics, so a changed string needs a new item."""
-        text = text or ""
+        # SPEC-MAP-003 INV-8. This is the choke point where a string becomes a
+        # QPixmap sized from its own length, and the string can come from a
+        # geocoder, i.e. from outside. Measured unclamped: a 1000-character name
+        # cost 10.86 s and a 16710 px pixmap, and longer input failed
+        # rasterisation outright. Clamping HERE rather than at each caller means
+        # a future caller cannot reintroduce it.
+        from core.place_naming import clamp_label
+        text = clamp_label(text or "")
         if text == self._marker_text and self.marker_label_item is not None:
             return
         self._marker_text = text
@@ -886,16 +920,26 @@ class OfflineMapWidget(QGraphicsView):
                 biggest[sign_index] = (score, i)
         label_at = {i for _score, i in biggest.values()}
 
+        # Round the row-grid facets out for display, the same helper the Eclipse
+        # overlay uses (SPEC-MAP-002 §4.3.1(f)). The stored `_band_data` stays
+        # the raw samples — centroids, labels and extents read those, not these.
+        # The closed fill and the two open edges are smoothed with matching
+        # parameters, so the stroked boundary keeps hugging the fill outline.
+        from core.ascendant_field import smooth_polygon
         for i, (sign_index, coords, left, right) in enumerate(self._band_data):
             if len(coords) < 3:
                 continue
+            sm_coords = smooth_polygon(coords)
+            sm_edges = [smooth_polygon(edge, closed=False) if len(edge) >= 2
+                        else edge for edge in (left, right)]
             for shift in (-360.0, 0.0, 360.0):
-                pts = [lat_lon_to_scene(lat, lon + shift) for lat, lon in coords]
+                pts = [lat_lon_to_scene(lat, lon + shift)
+                       for lat, lon in sm_coords]
                 item = build_band_item(pts, sign_index)
                 self.scene.addItem(item)
                 self.ascendant_items.append(item)
 
-                for edge in (left, right):
+                for edge in sm_edges:
                     if len(edge) < 2:
                         continue
                     epts = [lat_lon_to_scene(lat, lon + shift)
@@ -1209,7 +1253,12 @@ class OfflineMapWidget(QGraphicsView):
         # The pulse animation and the hover throttle both call back into the
         # scene. Left running they would fire during teardown, which is the
         # same class of crash the tile-thread registry exists to prevent.
-        for timer_attr in ("_hover_timer",):
+        # The debounced tile request and the palette refresh are timers that
+        # call back INTO the scene, exactly like the hover throttle below. Left
+        # running they fire after the widget is gone; `_request_visible` also
+        # guards on `_alive`, because a timeout already in the event queue is
+        # past stopping.
+        for timer_attr in ("_hover_timer", "_request_timer", "_repalette_timer"):
             timer = getattr(self, timer_attr, None)
             if timer is not None:
                 try:
@@ -1316,12 +1365,9 @@ class OfflineMapPanel(QWidget):
         layout.addWidget(self.map_widget, stretch=1)
 
     def _populate_capitals(self):
-        try:
-            from tools.capitals_data import WORLD_CAPITALS
-            for capital in sorted(WORLD_CAPITALS.keys()):
-                self.capital_combo.addItem(capital)
-        except ImportError:
-            pass
+        from core.place_naming import capital_table   # SPEC-MAP-003: one table
+        for capital in sorted(capital_table().keys()):
+            self.capital_combo.addItem(capital)
 
     def _connect_signals(self):
         self.map_widget.location_clicked.connect(self._on_location_clicked)
@@ -1342,17 +1388,26 @@ class OfflineMapPanel(QWidget):
 
     @staticmethod
     def _nearest_capital(lat: float, lon: float) -> Tuple[str, str]:
-        """Instant offline placeholder. No network: INV-1."""
+        """Instant offline placeholder. No network: INV-1.
+
+        Delegates to `core.place_naming`, which names a capital only when the
+        click is ON it and otherwise falls back to the country of the point's
+        timezone. The flat squared-degree scan this used to do had no cos(lat)
+        term, no meridian wrap and no distance ceiling, so every click got a
+        capital however far away — "Toronto, Canada" for a point in Indiana.
+
+        The timezone is looked up only if the shared finder is already warm;
+        naming must never make the GUI thread wait (INV-1).
+        """
+        from core.place_naming import instant_place_name
+        tz_name = None
         try:
-            from tools.capitals_data import WORLD_CAPITALS
-        except ImportError:
-            return "", ""
-        best, best_dist = None, float('inf')
-        for name, data in WORLD_CAPITALS.items():
-            d = (lat - data.get('lat', 0)) ** 2 + (lon - data.get('lon', 0)) ** 2
-            if d < best_dist:
-                best_dist, best = d, (name, data.get('country', ''))
-        return best if best else ("", "")
+            from core.tz_finder import is_ready, timezone_at_or_offset
+            if is_ready():
+                tz_name = timezone_at_or_offset(lat, lon)
+        except Exception:
+            tz_name = None
+        return instant_place_name(lat, lon, tz_name)
 
     def _update_zoom_label(self, *_):
         self.zoom_label.setText(f"Zoom: {self.map_widget.get_zoom()}")
@@ -1360,11 +1415,8 @@ class OfflineMapPanel(QWidget):
     def _on_capital_selected(self, capital_name: str):
         if capital_name == "Quick Select Capital..." or not capital_name:
             return
-        try:
-            from tools.capitals_data import WORLD_CAPITALS
-        except ImportError:
-            return
-        data = WORLD_CAPITALS.get(capital_name)
+        from core.place_naming import capital_table   # SPEC-MAP-003: one table
+        data = capital_table().get(capital_name)
         if not data:
             return
         lat, lon = data.get('lat', 0), data.get('lon', 0)

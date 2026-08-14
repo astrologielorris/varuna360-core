@@ -28,12 +28,13 @@ from PySide6.QtWidgets import (
 
 from ui.themed_style import ThemedStyleMixin
 from ui.qt_theme import (
-    get_theme_colors, pari_sem, dim_text, scaled_px, is_light_theme,
+    get_theme_colors,
+    pari_sem,
+    dim_text,
+    scaled_px,
     elevation_surface_style,
 )
-from AI_tools.AI_main_function.constants import (
-    PARIVARTANA_YOGA_FULL, PARIVARTANA_YOGA_SHORT,
-)
+from AI_tools.AI_main_function.constants import PARIVARTANA_YOGA_FULL
 from AI_tools.AI_main_function.parivartana_descriptions import describe_exchange
 
 # Vedic classification -> pari_sem key + human label (for the Exchanges section).

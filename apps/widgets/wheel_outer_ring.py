@@ -32,7 +32,6 @@ Z-order contract (4.1), from back to front:
   ring planet labels   z = base_z + 1.5 (via _draw_planet_label, which uses z=9;
                         icons intentionally sit above labels, as in the natal band)
 """
-import math
 
 from PySide6.QtWidgets import QGraphicsTextItem, QGraphicsPixmapItem
 from PySide6.QtGui import QColor

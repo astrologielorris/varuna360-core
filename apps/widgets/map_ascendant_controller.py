@@ -143,6 +143,21 @@ class MapAscendantController(QObject):
     def has_time_basis(self) -> bool:
         return self._local is not None
 
+    def time_basis_fields(self) -> Optional[dict]:
+        """The birth civil-time fields the host gave us, or None.
+
+        A copy of {year, month, day, hour, minute, second}. Public accessor so
+        display code (td-yddt: the picker's offset label) can compute the UTC
+        offset AT THE BIRTH INSTANT instead of datetime.now() without reaching
+        into _local. Check time_basis_is_utc() to know whether these fields
+        are a UTC instant or local civil time."""
+        return dict(self._local) if self._local else None
+
+    def time_basis_is_utc(self) -> bool:
+        """True when the host's form is in UTC mode, i.e. time_basis_fields()
+        holds a UTC instant rather than local wall-clock time."""
+        return self._utc_input
+
     def set_bands_enabled(self, enabled: bool):
         enabled = bool(enabled) and self.has_time_basis()
         if enabled == self._enabled:

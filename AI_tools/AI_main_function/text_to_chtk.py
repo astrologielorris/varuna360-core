@@ -34,7 +34,7 @@ import argparse
 import calendar
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, Dict, Any, Tuple
+from typing import Optional, Dict, Any, Tuple, List
 
 # Add project root for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -305,15 +305,33 @@ def _extract_time(text: str) -> Dict[str, Any]:
     Extract time from text.  Returns dict with hour, minute, second, has_time.
     Defaults to noon (12:00) if no time found.
     All extracted times are validated for range (0-23h, 0-59m, 0-59s).
+
+    WI-2 (2026-08-11): each successful branch also returns ``match_start`` /
+    ``match_end`` — the char span of the matched time token in the
+    whitespace-normalised ``clean`` string (None on the default-noon fallback,
+    and on the word-times "midi"/"minuit"/"noon"/"midnight").  These keys are
+    additive; existing callers read only hour/minute/second/has_time.
     """
     clean = " ".join(text.split())
+
+    def _ok(h: int, mi: int, s: int, m) -> Dict[str, Any]:
+        return {"hour": h, "minute": mi, "second": s, "has_time": True,
+                "match_start": m.start(), "match_end": m.end()}
 
     # --- "midi" / "minuit" / "noon" / "midnight" ---
     # (?<![-–]) prevents matching "midi" within "après-midi"
     if re.search(r'(?<![-\u2013])\bmidi\b|\bnoon\b', clean, re.IGNORECASE):
-        return {"hour": 12, "minute": 0, "second": 0, "has_time": True}
+        # Same guard as the predicate above (– = en-dash) so the offset
+        # search cannot latch onto the "midi" inside "après-midi".
+        _wm = re.search(r'(?<![-–])\bmidi\b|\bnoon\b', clean, re.IGNORECASE)
+        return {"hour": 12, "minute": 0, "second": 0, "has_time": True,
+                "match_start": _wm.start() if _wm else None,
+                "match_end": _wm.end() if _wm else None}
     if re.search(r'\bminuit\b|\bmidnight\b', clean, re.IGNORECASE):
-        return {"hour": 0, "minute": 0, "second": 0, "has_time": True}
+        _wm = re.search(r'\bminuit\b|\bmidnight\b', clean, re.IGNORECASE)
+        return {"hour": 0, "minute": 0, "second": 0, "has_time": True,
+                "match_start": _wm.start() if _wm else None,
+                "match_end": _wm.end() if _wm else None}
 
     # --- "HH:MM:SS AM/PM" or "HH:MM AM/PM" ---
     m = re.search(r'(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM|am|pm)', clean)
@@ -326,7 +344,7 @@ def _extract_time(text: str) -> Dict[str, Any]:
         elif ampm == "AM" and h == 12:
             h = 0
         if _validate_time(h, mi, s):
-            return {"hour": h, "minute": mi, "second": s, "has_time": True}
+            return _ok(h, mi, s, m)
 
     # --- "Hpm" / "Ham" e.g. "3pm", "12pm" ---
     m = re.search(r'(\d{1,2})\s*(am|pm|AM|PM)\b', clean)
@@ -338,7 +356,7 @@ def _extract_time(text: str) -> Dict[str, Any]:
         elif ampm == "AM" and h == 12:
             h = 0
         if _validate_time(h, 0):
-            return {"hour": h, "minute": 0, "second": 0, "has_time": True}
+            return _ok(h, 0, 0, m)
 
     # --- French spelled-out: "8 heure(s) du matin/soir/de l'après-midi" ---
     # (?<!\d) prevents matching digits at end of year (e.g. "1908 Heure:")
@@ -356,7 +374,7 @@ def _extract_time(text: str) -> Dict[str, Any]:
         if ('soir' in tail or 'apr' in tail) and h < 12:
             h += 12
         if _validate_time(h, mi):
-            return {"hour": h, "minute": mi, "second": 0, "has_time": True}
+            return _ok(h, mi, 0, m)
 
     # --- English "half past X [in the morning/afternoon/evening | at night]" ---
     # Must be checked BEFORE "X in the morning" to avoid partial match
@@ -372,7 +390,7 @@ def _extract_time(text: str) -> Dict[str, Any]:
         if qual in ('afternoon', 'evening', 'night') and h < 12:
             h += 12
         if _validate_time(h, 30):
-            return {"hour": h, "minute": 30, "second": 0, "has_time": True}
+            return _ok(h, 30, 0, m)
 
     # --- English "quarter past/to X [qualifier]" ---
     # Must be checked BEFORE "X in the morning" to avoid partial match
@@ -397,7 +415,7 @@ def _extract_time(text: str) -> Dict[str, Any]:
         if h < 0:
             h = 23  # "quarter to 0" edge case
         if _validate_time(h, mi):
-            return {"hour": h, "minute": mi, "second": 0, "has_time": True}
+            return _ok(h, mi, 0, m)
 
     # --- English "X o'clock [in the morning/afternoon/evening | at night]" ---
     m = re.search(
@@ -412,7 +430,7 @@ def _extract_time(text: str) -> Dict[str, Any]:
         if qual in ('afternoon', 'evening', 'night') and h < 12:
             h += 12
         if _validate_time(h, 0):
-            return {"hour": h, "minute": 0, "second": 0, "has_time": True}
+            return _ok(h, 0, 0, m)
 
     # --- English "X in the morning/afternoon/evening" / "X at night" ---
     m = re.search(
@@ -427,7 +445,7 @@ def _extract_time(text: str) -> Dict[str, Any]:
         if qual in ('afternoon', 'evening', 'night') and h < 12:
             h += 12
         if _validate_time(h, 0):
-            return {"hour": h, "minute": 0, "second": 0, "has_time": True}
+            return _ok(h, 0, 0, m)
 
     # --- French "HHhMM" e.g. "14h30", "0h45", "23h15" ---
     m = re.search(r'(\d{1,2})\s*[hH]\s*(\d{2})?\b', clean)
@@ -435,7 +453,7 @@ def _extract_time(text: str) -> Dict[str, Any]:
         h = int(m.group(1))
         mi = int(m.group(2)) if m.group(2) else 0
         if _validate_time(h, mi):
-            return {"hour": h, "minute": mi, "second": 0, "has_time": True}
+            return _ok(h, mi, 0, m)
 
     # --- "at HH:MM" (24h) — checked AFTER AM/PM and French formats ---
     # Negative lookahead (?!\s*[/.\-]\d) prevents matching dates like "12/30"
@@ -444,7 +462,7 @@ def _extract_time(text: str) -> Dict[str, Any]:
         h, mi = int(m.group(1)), int(m.group(2))
         s = int(m.group(3)) if m.group(3) else 0
         if _validate_time(h, mi, s):
-            return {"hour": h, "minute": mi, "second": s, "has_time": True}
+            return _ok(h, mi, s, m)
 
     # --- "Heure: HH:MM" / "Heure: HHhMM" (structured form) ---
     m = re.search(r'[Hh]eure\s*:\s*(\d{1,2})\s*[hH:]\s*(\d{2})?', clean)
@@ -452,10 +470,11 @@ def _extract_time(text: str) -> Dict[str, Any]:
         h = int(m.group(1))
         mi = int(m.group(2)) if m.group(2) else 0
         if _validate_time(h, mi):
-            return {"hour": h, "minute": mi, "second": 0, "has_time": True}
+            return _ok(h, mi, 0, m)
 
     # No time found — default noon
-    return {"hour": 12, "minute": 0, "second": 0, "has_time": False}
+    return {"hour": 12, "minute": 0, "second": 0, "has_time": False,
+            "match_start": None, "match_end": None}
 
 
 # =============================================================================
@@ -1085,34 +1104,344 @@ def resolve_location(city: str, country: str,
 
 
 # =============================================================================
+# WI-2 (2026-08-11): character-span mapping + partial-parse support
+# =============================================================================
+# The New & Edit token entry bar needs, for every parsed field, the char span
+# it occupies in the RAW text the user typed, so hovering a chip's × can blank
+# exactly those characters (and only those).  Every extractor above operates on
+# the whitespace-normalised ``clean`` string (== " ".join(text.split())), so
+# their match offsets live in normalised space.  These helpers reproduce that
+# normalisation while recording a normalised->raw index map, then convert
+# normalised spans back to raw spans.  They are additive: unless a caller opts
+# in with with_spans=True / partial=True, parse_birth_text behaves exactly as
+# before (see the round-trip identity assertion in run_span_tests()).
+
+def _normalize_with_map(raw: str) -> Tuple[str, List[int]]:
+    """Reproduce ``" ".join(raw.split())`` while recording, for each char of the
+    result, the raw index it came from.
+
+    Returns (clean, idx_map) where clean == " ".join(raw.split()) exactly and
+    idx_map[j] == raw index of clean[j].  idx_map has len(clean)+1 entries; the
+    trailing sentinel idx_map[len(clean)] == len(raw).  Join-spaces (inserted
+    between tokens) map to the raw index where their whitespace gap began.
+    """
+    clean_chars: List[str] = []
+    idx_map: List[int] = []
+    n = len(raw)
+    i = 0
+    first = True
+    gap_start = 0
+    while i < n:
+        if raw[i].isspace():
+            i += 1
+            continue
+        if not first:
+            clean_chars.append(" ")
+            idx_map.append(gap_start)
+        first = False
+        while i < n and not raw[i].isspace():
+            clean_chars.append(raw[i])
+            idx_map.append(i)
+            i += 1
+        gap_start = i
+    idx_map.append(n)  # sentinel: normalised end -> raw length
+    return "".join(clean_chars), idx_map
+
+
+def _norm_span_to_raw(idx_map: List[int], cs: Optional[int],
+                      ce: Optional[int]) -> Optional[Tuple[int, int]]:
+    """Convert a half-open [cs, ce) span in normalised coords to a half-open
+    [raw_start, raw_end) span in raw coords.  Returns None for empty/undefined
+    spans."""
+    if cs is None or ce is None or ce <= cs:
+        return None
+    last = len(idx_map) - 1  # index of the sentinel
+    cs = max(0, min(cs, last))
+    ce = max(cs, min(ce, last))
+    if ce <= cs:
+        return None
+    return (idx_map[cs], idx_map[ce - 1] + 1)
+
+
+def _align_removed(original: str, kept: str) -> List[int]:
+    """``kept`` is ``original`` with some characters deleted (never reordered or
+    inserted — this is exactly what _validate_input_text's control-char strip
+    does).  Return map[k] = index in ``original`` of kept[k], with a trailing
+    sentinel map[len(kept)] == len(original).  A greedy left-to-right walk is
+    exact for a delete-only transform.
+    """
+    m: List[int] = []
+    j = 0
+    for i, ch in enumerate(original):
+        if j < len(kept) and kept[j] == ch:
+            m.append(i)
+            j += 1
+            if j >= len(kept):
+                break
+    m.append(len(original))
+    return m
+
+
+def _find_norm_span(clean: str, value: str,
+                    prefer_from: int = 0) -> Optional[Tuple[int, int]]:
+    """Best-effort locate ``value`` inside ``clean`` (case-insensitive),
+    searching at/after ``prefer_from`` first, then anywhere, then by the first
+    word.  Returns a half-open [start, end) normalised span or None.
+
+    Used for name/place, whose extractors return a value but not a position; a
+    substring search is adequate because these tokens are echoed verbatim in the
+    normalised text in the overwhelming majority of entry-bar inputs.
+    """
+    if not value:
+        return None
+    v = value.strip()
+    if not v:
+        return None
+    hay = clean.lower()
+    needle = v.lower()
+    idx = hay.find(needle, max(0, prefer_from))
+    if idx < 0:
+        idx = hay.find(needle)
+    if idx >= 0:
+        return (idx, idx + len(needle))
+    # Multi-word name/place may have been re-joined differently (", " vs " ").
+    words = needle.replace(",", " ").split()
+    if words:
+        first_word = words[0]
+        j = hay.find(first_word, max(0, prefer_from))
+        if j < 0:
+            j = hay.find(first_word)
+        if j >= 0:
+            return (j, j + len(first_word))
+    return None
+
+
+def _partial_comma_fallback(clean: str, date_info: Optional[Dict[str, Any]],
+                            time_info: Dict[str, Any], name: str,
+                            location: Dict[str, Any]
+                            ) -> Tuple[str, Dict[str, Any]]:
+    """Resolve name/place for the short, comma-structured lines the entry bar
+    produces (e.g. "Wil", "Wil, Brunswick", "Wil, Aug 7 1987 15:04, Brunswick").
+
+    Only ever called in partial mode.  The rule (Opus 5 review D2/D3):
+
+      * WITH a date -> the date-anchored biography heuristics are reliable, so we
+        NEVER override them; we only BACKFILL name/place if they came back empty.
+        (Overriding them corrupted lines like "…, né le 11 février 1966 à
+        Fontenay-aux-Roses", writing the "né le … à" residue into the city and
+        producing a place span that overlapped the date span.)
+      * WITHOUT a date -> the heuristics have no anchor and misread comma input
+        ("Wil, Brunswick" -> city=Wil); the comma grammar is authoritative:
+        first alpha-bearing segment = name, the rest = place.
+    """
+    masked = list(clean)
+    for info in (date_info, time_info):
+        if info and info.get("match_start") is not None:
+            for i in range(info["match_start"],
+                           min(info["match_end"], len(masked))):
+                masked[i] = " "
+    segments = [s.strip() for s in "".join(masked).split(",")]
+    segments = [s for s in segments if s]
+
+    def _hasalpha(s: str) -> bool:
+        # Eligible as a name/place only if it carries a letter: a purely-numeric
+        # date remnant ("1987") never becomes one, while a name that carries
+        # digits ("50 Cent") is preserved.
+        return any(ch.isalpha() for ch in s)
+
+    location = dict(location)  # never mutate the caller's dict
+
+    def _assign_place(place_segs: List[str]) -> None:
+        # The parser CANNOT reliably tell a trailing state ("Austin, Texas") from
+        # a trailing country ("Brunswick, Germany") — same shape, and
+        # _KNOWN_COUNTRIES is polluted with US-state aliases (D3, Opus 5).  So do
+        # not guess: keep the full place text as the city (never dropping a
+        # middle) and leave state/country empty for the geocoder (the authority,
+        # plan item 8) to resolve on Ctrl+Enter.  The place span still covers the
+        # whole text, so the chip's × clears exactly it.
+        if not place_segs:
+            return
+        location["city"] = ", ".join(place_segs)
+        location["state"] = ""
+        location["country"] = ""
+        location.pop("guessed_from_name", None)
+
+    # Biography prose (the non-partial Add-Chart path's staple) is detected by
+    # the exact anchor keywords the heuristics key on.  Only THEN are the
+    # heuristics trusted over the comma grammar (D2): a clean entry-bar line
+    # like "Otto, 28 mai 1944 8 heures du soir, Vienna" carries none of these,
+    # so the comma grammar (which also masks the spelled-out time) still wins.
+    # Anchor to the exact prose forms the heuristics key on — NOT a bare
+    # \bborn\b, which matched the surname "Born" ("Jason Born, ..." -> "Jason",
+    # F5).  Use "(born", "born on/in", "né le", "was a/an", "naissance", and the
+    # Nom:/Name:/Lieu: field markers.
+    is_bio = bool(re.search(
+        r'\bn[ée]+e?\s+le\b|\(\s*born\b|\bborn\s+(?:on|in)\b|\bwas\s+an?\b'
+        r'|\bnaissance\b|(?:\bNom|\bName|\bLieu)\s*:', clean, re.IGNORECASE))
+
+    if date_info is None or not is_bio:
+        # No date anchor, or clean entry-bar tokens: the comma grammar is
+        # authoritative for name + place.
+        if len(segments) >= 2:
+            name_idx = 0 if _hasalpha(segments[0]) else None
+            if name_idx is not None:
+                name = _clean_name(segments[0])
+            place_segs = [s for i, s in enumerate(segments)
+                          if i != name_idx and _hasalpha(s)]
+            if place_segs:
+                _assign_place(place_segs)
+            else:
+                location["city"], location["state"], location["country"] = "Unknown", "", ""
+        else:
+            # Lone fragment "Wil": promote to a name only when nothing else
+            # anchors it, and clear a place that merely echoes it.
+            seg = segments[0] if segments else ""
+            city = location.get("city") or ""
+            if not name and _hasalpha(seg) and not (time_info and time_info.get("has_time")):
+                name = _clean_name(seg)
+                if city.strip().lower() == seg.strip().lower():
+                    location["city"], location["state"], location["country"] = "Unknown", "", ""
+    else:
+        # Biography prose with a date: the date-anchored heuristics are reliable
+        # -> BACKFILL empties only, never override a real hit.
+        city_l = (location.get("city") or "").strip().lower()
+        if not name:
+            for seg in segments:
+                if _hasalpha(seg) and seg.strip().lower() != city_l:
+                    name = _clean_name(seg)
+                    break
+        city = location.get("city") or ""
+        if not city or city in ("Unknown", ""):
+            name_l = (name or "").strip().lower()
+            place_segs = [s for s in segments
+                          if _hasalpha(s) and s.strip().lower() != name_l]
+            if place_segs:
+                _assign_place(place_segs)
+
+    return name, location
+
+
+def _compute_raw_spans(clean: str, idx_map: List[int],
+                       date_info: Optional[Dict[str, Any]],
+                       time_info: Dict[str, Any],
+                       result: Dict[str, Any]) -> Dict[str, Optional[Tuple[int, int]]]:
+    """Build the raw-coordinate char span for each of name/date/time/place."""
+    spans: Dict[str, Optional[Tuple[int, int]]] = {
+        "name": None, "date": None, "time": None, "place": None,
+    }
+    # Claim positions in `clean` as each token resolves, and blank them out
+    # before the next post-hoc search, so name/place can never latch onto a
+    # substring already owned by another token (e.g. "Min" inside "minuit", or
+    # the second "Wil" in "Wil, Wil").
+    claimed = [False] * len(clean)
+
+    def _mark(nspan: Optional[Tuple[int, int]]) -> None:
+        if nspan:
+            for i in range(max(0, nspan[0]), min(nspan[1], len(claimed))):
+                claimed[i] = True
+
+    def _masked() -> str:
+        return "".join(" " if claimed[i] else c for i, c in enumerate(clean))
+
+    if date_info and date_info.get("match_start") is not None:
+        dspan = (date_info["match_start"], date_info["match_end"])
+        spans["date"] = _norm_span_to_raw(idx_map, *dspan)
+        _mark(dspan)
+    if time_info and time_info.get("match_start") is not None:
+        tspan = (time_info["match_start"], time_info["match_end"])
+        spans["time"] = _norm_span_to_raw(idx_map, *tspan)
+        _mark(tspan)
+    if result.get("name"):
+        nspan = _find_norm_span(_masked(), result["name"], prefer_from=0)
+        if nspan:
+            spans["name"] = _norm_span_to_raw(idx_map, *nspan)
+            _mark(nspan)
+    city = result.get("city") or ""
+    if city and city not in ("Unknown", "") and not result.get("location_guessed"):
+        # Span the place by its FIRST and LAST word rather than the reconstructed
+        # city string: the reconstruction joins segments with ", " which does not
+        # match comma-without-space raw input ("Austin,Texas"), collapsing the
+        # span to just the first word (F6).  Individual words are echoed verbatim,
+        # so first-word.start .. last-word.end covers the whole place, commas and
+        # all, in either spacing.
+        place_words: List[str] = []
+        for part in (city, result.get("state") or "", result.get("country") or ""):
+            if part and part not in ("Unknown", ""):
+                place_words += [w for w in re.split(r"[,\s]+", part) if w]
+        first = _find_norm_span(_masked(), place_words[0], prefer_from=0) if place_words else None
+        if first:
+            start, end = first
+            _mark(first)
+            for w in place_words[1:]:
+                ws = _find_norm_span(_masked(), w, prefer_from=start)
+                if ws and ws[0] >= start:
+                    end = max(end, ws[1])
+                    _mark(ws)
+            spans["place"] = _norm_span_to_raw(idx_map, start, end)
+    return spans
+
+
+# =============================================================================
 # MAIN PARSER
 # =============================================================================
 
-def parse_birth_text(text: str) -> Dict[str, Any]:
+def parse_birth_text(text: str, *, partial: bool = False,
+                     with_spans: bool = False) -> Dict[str, Any]:
     """
     Parse free-form text and extract structured birth data.
 
     Args:
         text: Pasted biography, infobox, or casual note (French or English).
               Max length: 50,000 chars.
+        partial: When True, never raise on a missing date/field; missing fields
+              come back as None and a ``has_date`` key reports whether a date was
+              found.  Used by the New & Edit token entry bar, which parses on
+              every keystroke.  Default False preserves the historical contract
+              (ValueError when no date is found).
+        with_spans: When True, add a ``spans`` dict mapping each of
+              name/date/time/place to its half-open [start, end) char span in the
+              RAW input (or None), so a chip's × can blank exactly its own chars.
 
     Returns:
         Dict with keys: name, year, month, day, hour, minute, second,
                         has_time, city, country, state, gender,
                         date_ambiguous, date_warning, location_guessed
+                        (+ has_date when partial=True, + spans when
+                        with_spans=True)
 
     Raises:
-        ValueError: if no valid date found, input is empty, or input exceeds length limit
+        ValueError: if input is empty / exceeds the length limit, or (unless
+                    partial=True) if no valid date is found.
+
+    Backward compatibility: the zero-argument call parse_birth_text(text)
+    returns the exact same dict (same keys, same values) as before — the two new
+    keys appear only when their flags are set.
     """
-    text = _validate_input_text(text)
+    raw_original = text if isinstance(text, str) else ""
+    if partial and not (isinstance(text, str) and text.strip()):
+        # Entry-bar mode parses on every keystroke, including select-all+Delete.
+        # An empty / whitespace-only line must return an empty result, never
+        # raise (D1, Opus 5 review).  Non-partial keeps its empty-input contract.
+        text = ""
+    else:
+        text = _validate_input_text(text)
+    clean, idx_map = _normalize_with_map(text)
+    if len(text) != len(raw_original):
+        # _validate_input_text deleted null bytes / control chars; remap the
+        # normalised->text indices back onto the caller's ORIGINAL raw string so
+        # returned spans slice that string correctly (RAW-coordinate contract).
+        valid_to_orig = _align_removed(raw_original, text)
+        idx_map = [valid_to_orig[v] for v in idx_map]
 
     date_info = _extract_date(text)
-    if not date_info:
+    if not date_info and not partial:
         raise ValueError("Could not find a valid date in the provided text.")
 
     time_info = _extract_time(text)
-    name = _extract_name(text, date_info["match_start"])
-    location = _extract_location(text, date_info["match_end"])
+    date_start = date_info["match_start"] if date_info else 0
+    date_end = date_info["match_end"] if date_info else 0
+    name = _extract_name(text, date_start)
+    location = _extract_location(text, date_end)
     gender = _extract_gender(text)
 
     # If location is unknown/empty/equals name, try to guess from name + text context
@@ -1122,11 +1451,17 @@ def parse_birth_text(text: str) -> Dict[str, Any]:
         location["country"] = guessed["country"]
         location["guessed_from_name"] = True
 
-    return {
+    # Partial (entry-bar) fallback: backfill name/place from comma segments when
+    # the biography heuristics came back empty on a short fragment.
+    if partial:
+        name, location = _partial_comma_fallback(
+            clean, date_info, time_info, name, location)
+
+    result = {
         "name": name,
-        "year": date_info["year"],
-        "month": date_info["month"],
-        "day": date_info["day"],
+        "year": date_info["year"] if date_info else None,
+        "month": date_info["month"] if date_info else None,
+        "day": date_info["day"] if date_info else None,
         "hour": time_info["hour"],
         "minute": time_info["minute"],
         "second": time_info["second"],
@@ -1135,10 +1470,18 @@ def parse_birth_text(text: str) -> Dict[str, Any]:
         "country": location.get("country", ""),
         "state": location.get("state", ""),
         "gender": gender,
-        "date_ambiguous": date_info.get("date_ambiguous", False),
-        "date_warning": date_info.get("date_warning"),
+        "date_ambiguous": date_info.get("date_ambiguous", False) if date_info else False,
+        "date_warning": date_info.get("date_warning") if date_info else None,
         "location_guessed": location.get("guessed_from_name", False),
     }
+
+    if partial:
+        result["has_date"] = bool(date_info)
+    if with_spans:
+        result["spans"] = _compute_raw_spans(
+            clean, idx_map, date_info, time_info, result)
+
+    return result
 
 
 # =============================================================================
@@ -1750,6 +2093,354 @@ def run_tests(verbose: bool = True) -> bool:
 
 
 # =============================================================================
+# WI-2 SPAN + PARTIAL-PARSE TEST SUITE (2026-08-11)
+# =============================================================================
+# Each case runs parse_birth_text(line, partial=True, with_spans=True) and
+# checks any keys present in the expected dict:
+#   name / city                -> exact field equality
+#   date=(y,m,d) / time=(h,mi) -> tuple equality
+#   has_time / has_date        -> bool equality
+#   spans={field: substr|None} -> line[start:end] == substr  (RAW-coord check)
+# The RAW-slice assertions are the point: they prove the normalised->raw index
+# map is correct even under irregular whitespace, and they are tightly coupled
+# to the extractor regexes (see run_span_tests' sensitivity proof at the end:
+# corrupting a single date/time regex flips these cases to FAIL).
+
+_SPAN_CASES = [
+    # id, line, expected
+    # --- canonical entry-bar lines (name, <date time>, place) ---------------
+    (101, "Wil, Aug 7 1987 15:04, Brunswick",
+        {"name": "Wil", "date": (1987, 8, 7), "time": (15, 4), "has_time": True,
+         "city": "Brunswick", "has_date": True,
+         "spans": {"name": "Wil", "date": "Aug 7 1987", "time": "15:04",
+                   "place": "Brunswick"}}),
+    (102, "Sandra, 17 Nov 1968 0:45, Buenos Aires",
+        {"name": "Sandra", "date": (1968, 11, 17), "time": (0, 45),
+         "city": "Buenos Aires", "has_date": True,
+         "spans": {"name": "Sandra", "date": "17 Nov 1968", "time": "0:45",
+                   "place": "Buenos Aires"}}),
+    (103, "Marie, 2 fév 1992 midi, Lyon, France",
+        {"name": "Marie", "date": (1992, 2, 2), "time": (12, 0), "has_time": True,
+         "city": "Lyon, France", "has_date": True,
+         "spans": {"name": "Marie", "date": "2 fév 1992", "time": "midi",
+                   "place": "Lyon, France"}}),
+    (104, "Jean, 3 mar 1975 minuit, Nantes",
+        {"name": "Jean", "time": (0, 0), "has_time": True, "city": "Nantes",
+         "spans": {"time": "minuit", "place": "Nantes"}}),
+    (105, "Ada Lovelace, December 10, 1815, London",
+        {"name": "Ada Lovelace", "date": (1815, 12, 10), "city": "London",
+         "spans": {"name": "Ada Lovelace", "date": "December 10, 1815",
+                   "place": "London"}}),
+    # --- ISO / numeric / ordinal date forms ---------------------------------
+    (106, "Sandra 1985-03-15 3pm Paris",
+        {"name": "Sandra", "date": (1985, 3, 15), "time": (15, 0), "city": "Paris",
+         "spans": {"date": "1985-03-15", "time": "3pm", "place": "Paris"}}),
+    (107, "Bob, 14/02/1990, Rome",
+        {"name": "Bob", "date": (1990, 2, 14), "city": "Rome",
+         "spans": {"date": "14/02/1990", "place": "Rome"}}),
+    (108, "1er janvier 2000 0h45 Lyon",
+        {"date": (2000, 1, 1), "time": (0, 45),
+         "spans": {"date": "1er janvier 2000", "time": "0h45"}}),
+    (109, "August 29, 1958",
+        {"date": (1958, 8, 29), "has_date": True,
+         "spans": {"date": "August 29, 1958", "name": None, "time": None,
+                   "place": None}}),
+    (110, "17 Nov 1968",
+        {"date": (1968, 11, 17), "spans": {"date": "17 Nov 1968"}}),
+    # --- time-only variants (span coverage) ---------------------------------
+    (111, "Zoe, 5 Jun 1980 14h30, Nice",
+        {"name": "Zoe", "time": (14, 30), "spans": {"time": "14h30"}}),
+    (112, "Tom, 5 Jun 1980 half past 8 in the evening, Berlin",
+        {"name": "Tom", "time": (20, 30), "spans": {"time": "half past 8 in the evening"}}),
+    (113, "Kim, 5 Jun 1980 9 o'clock, Seattle",
+        {"name": "Kim", "time": (9, 0), "spans": {"time": "9 o'clock"}}),
+    (114, "Al, 5 Jun 1980 11:59:30 PM, Denver",
+        {"name": "Al", "time": (23, 59), "spans": {"time": "11:59:30 PM"}}),
+    # --- partial fragments (no date) ----------------------------------------
+    (115, "Wil", {"name": "Wil", "has_date": False, "has_time": False,
+                  "city": "Unknown",
+                  "spans": {"name": "Wil", "date": None, "time": None,
+                            "place": None}}),
+    (116, "Wil, Brunswick",
+        {"name": "Wil", "has_date": False, "city": "Brunswick",
+         "spans": {"name": "Wil", "place": "Brunswick", "date": None,
+                   "time": None}}),
+    (117, "Buenos Aires",
+        {"name": "Buenos Aires", "has_date": False,
+         "spans": {"name": "Buenos Aires"}}),
+    (118, "Wil, Brunswick, Germany",
+        {"name": "Wil", "city": "Brunswick, Germany",
+         "spans": {"name": "Wil", "place": "Brunswick, Germany"}}),
+    # --- irregular whitespace: raw spans must survive normalisation ----------
+    (119, "Wil,   Aug 7 1987   15:04,   Brunswick",
+        {"name": "Wil", "date": (1987, 8, 7), "time": (15, 4), "city": "Brunswick",
+         "spans": {"name": "Wil", "date": "Aug 7 1987", "time": "15:04",
+                   "place": "Brunswick"}}),
+    (120, "   Marie ,  2 fév 1992 , Lyon  ",
+        {"name": "Marie", "date": (1992, 2, 2), "city": "Lyon",
+         "spans": {"name": "Marie", "date": "2 fév 1992", "place": "Lyon"}}),
+    (121, "Léa,\t3 Apr 2001\t08:15,\tBordeaux",
+        {"name": "Léa", "date": (2001, 4, 3), "time": (8, 15), "city": "Bordeaux",
+         "spans": {"name": "Léa", "date": "3 Apr 2001", "time": "08:15",
+                   "place": "Bordeaux"}}),
+    # --- accented / multiword names -----------------------------------------
+    (122, "José María, 5 May 1976 10:00, Madrid",
+        {"name": "José María", "city": "Madrid",
+         "spans": {"name": "José María", "place": "Madrid"}}),
+    (123, "New York was where, 4 Jul 1900 noon, New York",
+        {"time": (12, 0), "spans": {"time": "noon"}}),
+    # --- English MonthName Day Year, ordinal suffix -------------------------
+    (124, "Grace, March 3rd, 1990, Boston",
+        {"name": "Grace", "date": (1990, 3, 3), "city": "Boston",
+         "spans": {"date": "March 3rd, 1990", "place": "Boston"}}),
+    (125, "Otto, 28 mai 1944 8 heures du soir, Vienna",
+        {"name": "Otto", "date": (1944, 5, 28), "time": (20, 0), "city": "Vienna",
+         "spans": {"date": "28 mai 1944"}}),
+    # --- date at start, name after (span order) -----------------------------
+    (126, "1985-03-15 Jean Dupont Paris",
+        {"date": (1985, 3, 15), "spans": {"date": "1985-03-15"}}),
+    (127, "12 December 1901 Rome",
+        {"date": (1901, 12, 12), "spans": {"date": "12 December 1901"}}),
+    # --- quarter past/to --------------------------------------------------
+    (128, "Nan, 5 Jun 1980 quarter past 6, Miami",
+        {"time": (6, 15), "spans": {"time": "quarter past 6"}}),
+    (129, "Ned, 5 Jun 1980 quarter to 4 in the afternoon, Dallas",
+        {"time": (15, 45), "spans": {"time": "quarter to 4 in the afternoon"}}),
+    # --- place with country only (no name) ----------------------------------
+    (130, "1 Jan 1990 09:00 Tokyo, Japan",
+        {"date": (1990, 1, 1), "time": (9, 0),
+         "spans": {"date": "1 Jan 1990", "time": "09:00"}}),
+    # --- name-only with trailing punctuation --------------------------------
+    (131, "Wil,", {"name": "Wil", "spans": {"name": "Wil"}}),
+    (132, "Élodie", {"name": "Élodie", "spans": {"name": "Élodie"}}),
+    # --- numeric MM/DD (US context) -----------------------------------------
+    (133, "born 08/29/1958 an American singer",
+        {"date": (1958, 8, 29), "spans": {"date": "08/29/1958"}}),
+    # --- FR "X heures" minutes ----------------------------------------------
+    (134, "Rob, 5 Jun 1980 8 heures 30, Lille",
+        {"time": (8, 30), "spans": {}}),
+    # --- multiple commas in place -------------------------------------------
+    (135, "Wil, Aug 7 1987, Brunswick, Lower Saxony, Germany",
+        {"name": "Wil", "date": (1987, 8, 7),
+         "city": "Brunswick, Lower Saxony, Germany",
+         "spans": {"name": "Wil", "place": "Brunswick, Lower Saxony, Germany"}}),
+    # --- date + time adjacent, no place -------------------------------------
+    (136, "Ivy, 9 Sep 1999 21:21",
+        {"name": "Ivy", "date": (1999, 9, 9), "time": (21, 21),
+         "spans": {"name": "Ivy", "date": "9 Sep 1999", "time": "21:21",
+                   "place": None}}),
+    # --- lowercase month, no comma before place -----------------------------
+    (137, "12 aug 1975 03:00 Oslo",
+        {"date": (1975, 8, 12), "time": (3, 0),
+         "spans": {"date": "12 aug 1975", "time": "03:00"}}),
+    # --- 'midnight' English --------------------------------------------------
+    (138, "Sue, 5 Jun 1980 midnight, Chicago",
+        {"time": (0, 0), "spans": {"time": "midnight"}}),
+    # --- ambiguous numeric date (both <=12) ---------------------------------
+    (139, "05/06/1990 Lyon",
+        {"date": (1990, 6, 5), "spans": {"date": "05/06/1990"}}),
+    # --- FR 'né(e) le' biography still parses partial ------------------------
+    (140, "Madonna, née le 16 août 1958 à Bay City",
+        {"date": (1958, 8, 16), "has_date": True,
+         "spans": {"date": "16 août 1958"}}),
+    # --- place-only after masked date & time --------------------------------
+    (141, "3 Apr 2001 08:15 São Paulo",
+        {"date": (2001, 4, 3), "time": (8, 15),
+         "spans": {"date": "3 Apr 2001", "time": "08:15"}}),
+    (142, "Ana, 3 Apr 2001, Lisbon",
+        {"name": "Ana", "date": (2001, 4, 3), "city": "Lisbon",
+         "spans": {"name": "Ana", "place": "Lisbon", "time": None}}),
+]
+
+
+def run_span_tests(verbose: bool = True) -> bool:
+    """WI-2: verify char spans (raw-coord) + partial-parse behaviour, plus the
+    backward-compatibility identity and a sensitivity proof."""
+    passed = failed = 0
+    errors = []
+
+    for tid, line, exp in _SPAN_CASES:
+        try:
+            r = parse_birth_text(line, partial=True, with_spans=True)
+        except Exception as e:  # partial mode must never raise on real input
+            failed += 1
+            errors.append(f"  #{tid} EXCEPTION: {type(e).__name__}: {e}")
+            continue
+        issues = []
+        if "name" in exp and r["name"] != exp["name"]:
+            issues.append(f"name got {r['name']!r} exp {exp['name']!r}")
+        if "city" in exp and r["city"] != exp["city"]:
+            issues.append(f"city got {r['city']!r} exp {exp['city']!r}")
+        if "country" in exp and r["country"] != exp["country"]:
+            issues.append(f"country got {r['country']!r} exp {exp['country']!r}")
+        if "date" in exp and (r["year"], r["month"], r["day"]) != exp["date"]:
+            issues.append(f"date got {(r['year'], r['month'], r['day'])} exp {exp['date']}")
+        if "time" in exp and (r["hour"], r["minute"]) != exp["time"]:
+            issues.append(f"time got {(r['hour'], r['minute'])} exp {exp['time']}")
+        if "has_time" in exp and r["has_time"] != exp["has_time"]:
+            issues.append(f"has_time got {r['has_time']} exp {exp['has_time']}")
+        if "has_date" in exp and r["has_date"] != exp["has_date"]:
+            issues.append(f"has_date got {r['has_date']} exp {exp['has_date']}")
+        for field, want in exp.get("spans", {}).items():
+            span = r["spans"].get(field)
+            got = line[span[0]:span[1]] if span else None
+            if got != want:
+                issues.append(f"span[{field}] got {got!r} exp {want!r}")
+        if issues:
+            failed += 1
+            errors.append(f"  #{tid} [{line!r}] FAIL: " + "; ".join(issues))
+        else:
+            passed += 1
+            if verbose:
+                print(f"  #{tid:3d} PASS")
+
+    # --- review-round-1 regressions (GPT sol / Opus 5, FIX-FIRST) -----------
+    # These need index-level assertions the substring table cannot express.
+    def _rspans(line):
+        return parse_birth_text(line, partial=True, with_spans=True)["spans"]
+
+    def _reg(cond, label):
+        nonlocal passed, failed
+        if cond:
+            passed += 1
+        else:
+            failed += 1
+            errors.append(f"  REGRESSION FAIL: {label}")
+
+    # F1: spans index the caller's ORIGINAL string despite control-char strip.
+    _l = "\fWil, Aug 7 1987 15:04, Brunswick"
+    _s = _rspans(_l)
+    _reg(_s["name"] == (1, 4) and _l[_s["name"][0]:_s["name"][1]] == "Wil"
+         and _l[_s["place"][0]:_s["place"][1]] == "Brunswick", "F1 control-char span shift")
+    # F2: standalone 'midi', not the one inside 'après-midi'.
+    _l = "après-midi, 2 fév 1992 midi, Lyon"
+    _s = _rspans(_l)
+    _reg(_s["time"] is not None and _l[_s["time"][0]:_s["time"][1]] == "midi"
+         and _s["time"][0] > _l.index("après-midi") + 5, "F2 midi lookbehind on offset search")
+    # F3a: place latches on the final 'Min', not 'min' inside 'minuit'.
+    _l = "Wil, 1 Jan 2000 minuit, Min"
+    _s = _rspans(_l)
+    _reg(_s["place"] is not None and _l[_s["place"][0]:_s["place"][1]] == "Min"
+         and _s["place"][0] >= 24, "F3a place wrong-occurrence (minuit)")
+    # F3b: duplicate token -> name and place spans are disjoint.
+    _s = _rspans("Wil, Wil")
+    _reg(_s["name"] is not None and (_s["place"] is None
+         or _s["place"][0] >= _s["name"][1]), "F3b duplicate-token overlap")
+    # F4: a digit-bearing first segment stays the name; a numeric-only segment
+    #     is not mistaken for the place.
+    _r = parse_birth_text("50 Cent, Aug 7 1987, Queens", partial=True)
+    _reg(_r["name"] == "50 Cent" and _r["city"] == "Queens", "F4 digit-bearing name")
+    _r = parse_birth_text("123, Aug 7 1987, Brunswick", partial=True)
+    _reg(_r["city"] == "Brunswick", "F4 numeric-only segment as place")
+
+    # --- review-round-2 regressions (Opus 5, FIX-FIRST) ---------------------
+    # D1: empty / whitespace / None must NOT raise in partial mode.
+    for _l in ("", "   ", "\t", None):
+        try:
+            _r = parse_birth_text(_l, partial=True, with_spans=True)
+            _reg(_r["has_date"] is False and _r["spans"]["name"] is None,
+                 f"D1 empty input {_l!r}")
+        except Exception as _e:
+            _reg(False, f"D1 raised on {_l!r}: {_e}")
+    # D2: biography place must stay correct and its span must NOT overlap the
+    #     date span (the "× clears only its own chars" invariant).
+    _l = "Dieudonné MBala MBala, né le 11 février 1966 à Fontenay-aux-Roses"
+    _r = parse_birth_text(_l, partial=True, with_spans=True)
+    _ps, _ds = _r["spans"]["place"], _r["spans"]["date"]
+    _overlap = bool(_ps and _ds and not (_ps[1] <= _ds[0] or _ds[1] <= _ps[0]))
+    _reg(_r["city"] == "Fontenay-aux-Roses" and not _overlap,
+         "D2 biography city/place-span corruption")
+    # D3: two-segment place must not write the state into country; a known
+    #     country IS split off; middles are never dropped.
+    _r = parse_birth_text("Wil, Aug 7 1987, Brunswick, Germany", partial=True)
+    _reg("Brunswick" in _r["city"] and "Germany" in _r["city"]
+         and _r["state"] == "" and _r["country"] == "",
+         "D3 place kept whole, not split")
+    _r = parse_birth_text("Wil, Aug 7 1987, Austin, Texas", partial=True)
+    _reg(_r["country"] != "Texas" and "Austin" in _r["city"]
+         and "Texas" in _r["city"], "D3 state-not-into-country, no drop")
+
+    # --- review-round-3 regressions (GPT sol final, FIX-FIRST) --------------
+    # F5: a surname "Born" must NOT be read as the biography 'born' anchor.
+    _r = parse_birth_text("Jason Born, August 7 1987, Berlin", partial=True)
+    _reg(_r["name"] == "Jason Born", "F5 surname 'Born' false bio-detect")
+    # F6: place span covers the whole place even for comma-without-space input.
+    _l = "Wil, Aug 7 1987, Austin,Texas"
+    _s = _rspans(_l)
+    _reg(_s["place"] is not None
+         and _l[_s["place"][0]:_s["place"][1]] == "Austin,Texas",
+         "F6 place span collapses on comma-without-space")
+
+    # --- backward-compatibility identity: zero-arg call unchanged -----------
+    for line in ("Michael Jackson was an American singer. Born: August 29, 1958",
+                 "Dieudonné, né le 11 février 1966 à Fontenay-aux-Roses",
+                 "1er janvier 2000 0h45 Lyon"):
+        base = parse_birth_text(line)
+        if "spans" in base or "has_date" in base:
+            failed += 1
+            errors.append(f"  BACKCOMPAT FAIL: extra keys leaked for {line!r}")
+        else:
+            passed += 1
+        # non-partial with_spans still returns identical base keys + spans only
+        withspan = parse_birth_text(line, with_spans=True)
+        if {k: withspan[k] for k in base} != base or "spans" not in withspan:
+            failed += 1
+            errors.append(f"  BACKCOMPAT FAIL: with_spans altered base fields for {line!r}")
+        else:
+            passed += 1
+
+    # --- non-partial still raises on no date; partial does not --------------
+    try:
+        parse_birth_text("just a plain name with no date")
+        failed += 1
+        errors.append("  CONTRACT FAIL: expected ValueError on no-date non-partial")
+    except ValueError:
+        passed += 1
+    try:
+        r = parse_birth_text("just a plain name with no date", partial=True)
+        passed += 1 if r["has_date"] is False else 0
+    except Exception as e:
+        failed += 1
+        errors.append(f"  CONTRACT FAIL: partial raised {e}")
+
+    # --- sensitivity proof: corrupt the date extractor -> span cases fail ----
+    # Patch through parse_birth_text's own __globals__ so it works whether this
+    # module is imported (AI_tools.AI_main_function.text_to_chtk) or run as
+    # __main__ (the package __init__ re-exports a `text_to_chtk` function that
+    # shadows the submodule name, so a plain import would grab the function).
+    sens_ok = False
+    _g = parse_birth_text.__globals__
+    try:
+        good = parse_birth_text("Wil, Aug 7 1987 15:04, Brunswick",
+                                partial=True, with_spans=True)
+        good_date_span = good["spans"]["date"]
+        _orig = _g["_extract_date"]
+        _g["_extract_date"] = lambda t: None
+        try:
+            broken = parse_birth_text("Wil, Aug 7 1987 15:04, Brunswick",
+                                      partial=True, with_spans=True)
+            sens_ok = (good_date_span is not None
+                       and broken["spans"]["date"] is None)
+        finally:
+            _g["_extract_date"] = _orig
+    except Exception as e:
+        errors.append(f"  SENSITIVITY probe error: {e}")
+    if sens_ok:
+        passed += 1
+    else:
+        failed += 1
+        errors.append("  SENSITIVITY FAIL: corrupting _extract_date did not "
+                      "drop the date span (tests not actually exercising it)")
+
+    print(f"\nSpan/partial results: {passed}/{passed + failed} passed")
+    if errors:
+        print("Failures:")
+        for e in errors:
+            print(e)
+    return failed == 0
+
+
+# =============================================================================
 # CLI ENTRY POINT
 # =============================================================================
 
@@ -1783,6 +2474,11 @@ Examples:
                         help="Less output")
     parser.add_argument("--test", "-t", action="store_true",
                         help="Run built-in test suite")
+    parser.add_argument("--spans", action="store_true",
+                        help="Include per-field RAW char spans in --parse-only JSON")
+    parser.add_argument("--partial", action="store_true",
+                        help="Partial parse: never error on a missing date/field "
+                             "(entry-bar mode; adds has_date to the JSON)")
 
     args = parser.parse_args()
 
@@ -1790,7 +2486,9 @@ Examples:
     if args.test:
         print("Running text_to_chtk test suite...")
         success = run_tests(verbose=not args.quiet)
-        return 0 if success else 1
+        print("\nRunning span/partial-parse suite (WI-2)...")
+        success_spans = run_span_tests(verbose=not args.quiet)
+        return 0 if (success and success_spans) else 1
 
     # --- Get input text ---
     text = args.text
@@ -1802,7 +2500,8 @@ Examples:
     # --- Parse only ---
     if args.parse_only:
         try:
-            result = parse_birth_text(text)
+            result = parse_birth_text(text, partial=args.partial,
+                                      with_spans=args.spans)
             print(json.dumps(result, indent=2, ensure_ascii=False))
             return 0
         except ValueError as e:

@@ -32,6 +32,11 @@ Pillow>=10.0.0
 
 # Geocoding
 geopy>=2.4.0
+# core/geocode_service.py points geopy at certifi's CA bundle so online place
+# search works on machines whose system TLS store is missing or stale. pip
+# normally installs certifi with requests anyway; declaring it makes the
+# guarantee explicit instead of transitive.
+certifi>=2024.2.2
 
 # License validation
 PyJWT[crypto]>=2.8.0

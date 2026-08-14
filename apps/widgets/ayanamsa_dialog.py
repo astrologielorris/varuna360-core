@@ -12,12 +12,19 @@ organized by category.
 """
 
 from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QGridLayout, QGroupBox,
-    QRadioButton, QButtonGroup, QPushButton, QLabel, QScrollArea,
-    QWidget, QFrame, QSizePolicy
+    QDialog,
+    QVBoxLayout,
+    QHBoxLayout,
+    QGridLayout,
+    QGroupBox,
+    QRadioButton,
+    QButtonGroup,
+    QPushButton,
+    QScrollArea,
+    QWidget,
+    QFrame,
 )
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont
 
 from ui.qt_theme import (
     get_theme_colors, is_light_theme, scaled_px, scaled_area_px,
@@ -25,10 +32,7 @@ from ui.qt_theme import (
     get_primary_button_style, get_secondary_button_style,
 )
 
-from core.ayanamsa_data import (
-    AYANAMSA_OPTIONS, CATEGORY_ORDER,
-    get_ayanamsa_name, get_ayanamsa_tooltip,
-)
+from core.ayanamsa_data import AYANAMSA_OPTIONS, CATEGORY_ORDER, get_ayanamsa_name
 
 
 # ============================================================================

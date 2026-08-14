@@ -11,16 +11,28 @@ Displays 2 rows × 20 columns of chart buttons with pagination.
 import uuid
 from pathlib import Path
 from PySide6.QtWidgets import (
-    QWidget, QHBoxLayout, QVBoxLayout, QLabel, QPushButton, QGridLayout, QMenu,
-    QDialog, QMessageBox, QFileDialog, QApplication, QToolButton
+    QWidget,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QGridLayout,
+    QMenu,
+    QMessageBox,
+    QFileDialog,
+    QApplication,
+    QToolButton,
 )
 from PySide6.QtCore import Qt, QSize
 from PySide6.QtGui import QFont, QIcon
 
 # Import centralized theme - uses get_theme_colors() for theme-adaptive styling
 from ui.qt_theme import (
-    BG, SURFACE, HOVER, BORDER, TEXT_PRIMARY, TEXT_SECONDARY,
-    STATUS, get_theme_colors, scaled_px, scaled_area_px, scaled_area_size, desat_hex
+    STATUS,
+    get_theme_colors,
+    scaled_px,
+    scaled_area_px,
+    scaled_area_size,
+    desat_hex,
 )
 
 # Import calculation logic
@@ -542,7 +554,7 @@ class ChartMemoryPanel:
         if hasattr(self.gui, 'edit_chart_panel') and self.gui.edit_chart_panel:
             self.gui.edit_chart_panel.load_chart_from_memory(entry)
 
-    def _unstar_if_in_favorites_profile(self, entries):
+    def _unstar_if_in_favorites_profile(self, entries, checked=False):
         """Unstar charts removed from the Favorites panel (SPEC-PROF-002 §5.1.0).
 
         Scoped to the Favorites profile ON PURPOSE. A star is global, so
@@ -551,12 +563,29 @@ class ChartMemoryPanel:
         this, a starred chart deleted here comes back on the next sync, or
         (once SPEC-SES-002 lands) is dropped by its own tombstone forever while
         the star still points at it.
+
+        Returns a status string: `'n/a'` (not in the Favorites profile),
+        `'removed'`, `'absent'`, `'failed'`, or `'locked'`.
+
+        `checked` (single-entry MOVE path, SPEC-PROF-003 finding 5) routes
+        through `unstar_checked`, a LOCKED read-modify-write that reports
+        whether the write persisted, so the move can abort truthfully when the
+        star could not be cleared. Best-effort otherwise (deletion, clear-all):
+        `unstar` swallows write failures, which is fine for a deletion the user
+        already committed to but not for a move that must stay atomic.
         """
         try:
             pm = getattr(self.gui, 'profile_manager', None)
             if not pm or pm.get_current_profile() != 'favorites':
-                return
+                return 'n/a'
             from managers import favorites_manager
+            if checked:
+                entry = entries[0] if entries else None
+                if not isinstance(entry, dict):
+                    return 'n/a'
+                profiles_dir = getattr(pm, 'profiles_dir', None)
+                return favorites_manager.unstar_checked(
+                    profiles_dir, entry.get('recipe'), entry.get('id'))
             for entry in entries:
                 if not isinstance(entry, dict):
                     continue
@@ -565,8 +594,12 @@ class ChartMemoryPanel:
                 # overmatches within its 7.2 s tolerance, unstarring a
                 # rectification variant's original. See unstar().
                 favorites_manager.unstar(entry.get('recipe'), entry.get('id'))
+            return 'n/a'
         except Exception as e:
             print(f"[MEMORY] Unstar-on-delete skipped: {e}")
+            # In the checked path a swallowed error must NOT read as success —
+            # the move relies on this to decide whether to abort.
+            return 'failed' if checked else 'n/a'
 
     def _record_removal(self, entries):
         """Remember that these charts were deleted (SPEC-SES-002 §4.4).
@@ -577,39 +610,236 @@ class ChartMemoryPanel:
         to delete anything while two windows are open.
 
         Best-effort — a bookkeeping failure must never block the deletion the
-        user asked for.
+        user asked for. Returns True when every tombstone was recorded.
         """
         try:
             from managers.session_merge import make_tombstone
             for entry in entries:
                 if isinstance(entry, dict):
                     self.tombstones.append(make_tombstone(entry))
+            return True
         except Exception as e:                          # noqa: BLE001
             print(f"[MEMORY] Could not record the removal: {e}")
+            return False
+
+    def remove_chart_reported(self, index, require_unstar=False):
+        """Remove a chart and REPORT whether every step persisted.
+
+        The move (SPEC-PROF-003 finding 4) cannot use `remove_chart`: it
+        returns nothing and drops `save_session()`'s boolean, so a refused
+        source save would still read as a completed move. This returns
+        `{'ok', 'unstar', 'tombstone', 'saved', 'reason'}`.
+
+        `require_unstar=True` (set by the move when the source is Favorites)
+        uses the checked/locked unstar and ABORTS before mutating anything if
+        it reports `'failed'`: the source entry stays, the already-committed
+        destination copy stands, and the caller reports a partial move rather
+        than a silent copy.
+        """
+        result = {'ok': False, 'unstar': 'n/a', 'tombstone': False,
+                  'saved': False, 'reason': None}
+        if not (0 <= index < len(self.charts)):
+            result['reason'] = 'index out of range'
+            return result
+        entry = self.charts[index]
+
+        # Unstar FIRST so an abort leaves the panel untouched. 'locked' (another
+        # instance holds the favorites lock) counts as a failure to clear the
+        # star: proceeding would leave a still-starred chart that the Favorites
+        # sync re-appends — the silent-copy loop this must prevent (SPEC-PROF-003
+        # §6). Only a confirmed 'removed'/'absent'/'n/a' may proceed.
+        result['unstar'] = self._unstar_if_in_favorites_profile(
+            [entry], checked=require_unstar)
+        if require_unstar and result['unstar'] in ('failed', 'locked'):
+            result['reason'] = 'favorites write failed'
+            return result
+
+        removed_id = entry.get('id')
+        if removed_id in self._insertion_order:
+            self._insertion_order.remove(removed_id)
+        result['tombstone'] = self._record_removal([entry])
+        self.charts.pop(index)
+
+        # Adjust current index
+        if self.current_index >= len(self.charts):
+            self.current_index = len(self.charts) - 1
+        elif self.current_index > index:
+            self.current_index -= 1
+
+        # Adjust page if needed
+        self._ensure_page_valid()
+        self.refresh()
+
+        # Persist the removal to session file
+        if hasattr(self.gui, 'session_manager') and self.gui.session_manager:
+            result['saved'] = bool(self.gui.session_manager.save_session())
+        result['ok'] = result['saved']
+        return result
 
     def remove_chart(self, index):
-        """Remove a chart from memory."""
-        if 0 <= index < len(self.charts):
-            removed_id = self.charts[index].get('id')
-            if removed_id in self._insertion_order:
-                self._insertion_order.remove(removed_id)
-            self._unstar_if_in_favorites_profile([self.charts[index]])
-            self._record_removal([self.charts[index]])
-            self.charts.pop(index)
+        """Remove a chart from memory (best-effort; existing callers).
 
-            # Adjust current index
-            if self.current_index >= len(self.charts):
-                self.current_index = len(self.charts) - 1
-            elif self.current_index > index:
-                self.current_index -= 1
+        Thin wrapper over `remove_chart_reported` — deletion and clear-all
+        never inspected a result, so their behaviour is unchanged.
+        """
+        self.remove_chart_reported(index)
 
-            # Adjust page if needed
-            self._ensure_page_valid()
-            self.refresh()
+    def _move_chart_to_profile(self, chart_id, dest_id):
+        """Move the chart with uuid `chart_id` into profile `dest_id`.
 
-            # Persist the removal to session file
-            if hasattr(self.gui, 'session_manager') and self.gui.session_manager:
-                self.gui.session_manager.save_session()
+        Entry-only (SPEC-PROF-003): commit into the destination FIRST, then
+        remove from the source, so at every failure the chart is in ≥1 session
+        file. uuid-capture (finding 1), destination guards (finding 6), INV-M
+        no-self-resurrection, and the INV-T truthful reporting matrix.
+        """
+        from managers import chart_profile_mover as mover
+        pm = getattr(self.gui, 'profile_manager', None)
+        if pm is None:
+            return self._move_report(False, "Move failed: no profile manager.")
+        profiles_dir = getattr(pm, 'profiles_dir', None)
+        source_id = pm.get_current_profile()
+
+        # A blank/None id cannot be resolved to exactly one chart (GPT Sol
+        # finding 6) — refuse before matching.
+        if not (isinstance(chart_id, str) and chart_id):
+            return self._move_report(False, "This chart has no id and cannot be moved.")
+
+        # Never move while autosave is paused (a profile switch is mid-flight):
+        # save_session() returns True WITHOUT writing then (session_manager.py
+        # :1057), so a removal would be reported "Moved" while the source file
+        # is untouched (GPT Sol finding 5).
+        sm = getattr(self.gui, 'session_manager', None)
+        if sm is not None and getattr(sm, '_auto_save_pause_depth', 0) > 0:
+            return self._move_report(
+                False, "Move unavailable while switching profiles — try again.")
+
+        # 1. Resolve uuid -> index NOW: the menu ran a nested event loop and a
+        #    cross-instance push may have reordered or removed entries.
+        index = next((i for i, c in enumerate(self.charts)
+                      if isinstance(c, dict) and c.get('id') == chart_id), None)
+        if index is None:
+            return self._move_report(False, "That chart is no longer in this profile.")
+        entry = self.charts[index]
+        if entry.get('is_transit') or not isinstance(entry.get('recipe'), dict):
+            return self._move_report(False, "This chart cannot be moved.")
+        if dest_id == source_id:
+            return self._move_report(False, "That is already the current profile.")
+
+        dest_name = self._profile_display_name(pm, dest_id)
+        source_name = self._profile_display_name(pm, source_id)
+        name = (entry.get('person_name')
+                or entry.get('recipe', {}).get('name') or "chart")
+
+        # 2. commit-in (locked merged write; stamps updated_at).
+        try:
+            entry_dict = mover.serialize_entry(entry)
+        except Exception as e:
+            return self._move_report(False, f"Move failed: {e}. Nothing changed.")
+        ok, reason = mover.commit_to_profile(profiles_dir, dest_id, entry_dict)
+        if not ok:
+            return self._move_report(False, f"Move failed: {reason}. Nothing changed.")
+
+        # 3. destination-deletion race guard (finding 6).
+        if not mover.dest_session_present(profiles_dir, dest_id):
+            return self._move_report(
+                False,
+                f"Destination profile disappeared — '{name}' kept in {source_name}.")
+
+        # 4. INV-M reselect-if-selected + structured removal. The destination
+        #    copy is already committed; a failure in the widget/selection work
+        #    from here must be contained and reported as a partial move (chart
+        #    in both), never allowed to escape the Qt slot with the source
+        #    silently changed.
+        try:
+            if (0 <= self.current_index < len(self.charts)
+                    and self.charts[self.current_index].get('id') == chart_id):
+                self._reselect_neighbor(index)
+            # require unstar when moving OUT of Favorites.
+            result = self.remove_chart_reported(
+                index, require_unstar=(source_id == 'favorites'))
+        except Exception as e:
+            return self._move_report(
+                False,
+                f"Partial move: '{name}' copied to {dest_name} but removing it "
+                f"from {source_name} failed ({e}) — appears in both.")
+
+        # INV-M postcondition: the moved uuid must be gone from this panel.
+        still_present = any(isinstance(c, dict) and c.get('id') == chart_id
+                            for c in self.charts)
+
+        # INV-T reporting matrix — "Moved" only when BOTH writes confirmed and
+        # the removal actually persisted (with a tombstone, or another instance
+        # holding the entry re-adds it on its next merge).
+        if result['unstar'] in ('failed', 'locked'):
+            return self._move_report(
+                False,
+                f"Partial move: '{name}' copied to {dest_name} but still starred "
+                f"and in {source_name} (favorites busy or write failed).")
+        if not result['saved'] or still_present or not result['tombstone']:
+            return self._move_report(
+                False,
+                f"Partial move: '{name}' added to {dest_name}; removal from "
+                f"{source_name} not fully saved yet — appears in both.")
+        suffix = " and unstarred" if result['unstar'] == 'removed' else ""
+        return self._move_report(True, f"Moved '{name}' to {dest_name}{suffix}")
+
+    def _reselect_neighbor(self, index):
+        """Select a neighbouring chart before removing the one at `index`.
+
+        INV-M: after this, `current_index` names a different chart, so the
+        removal cannot leave the moved uuid as the selected/fenced row. With a
+        single chart there is no neighbour — the removal empties the panel and
+        `current_index` becomes -1, which also excludes the moved uuid.
+        """
+        if len(self.charts) <= 1:
+            return
+        neighbor = index + 1 if index + 1 < len(self.charts) else index - 1
+        if 0 <= neighbor < len(self.charts):
+            self.select_chart(neighbor)
+
+    def _profile_display_name(self, pm, profile_id):
+        """Human-readable profile name for a profile id; the id as fallback."""
+        try:
+            for prof in pm.list_profiles():
+                if prof.get('id') == profile_id:
+                    return prof.get('name') or profile_id
+        except Exception:
+            pass
+        return profile_id
+
+    def _move_report(self, ok, msg):
+        """Status feedback for a move, and the structured result.
+
+        Success is transient; failure uses the sticky red channel
+        (`ui/sticky_status.py`) so a follow-on status message cannot
+        immediately erase it (SES-001 INV-1, no modal dialogs). Returns
+        `{'ok', 'message', 'moved'}` for the remote-control command and tests;
+        the context-menu action ignores it.
+        """
+        if ok:
+            try:
+                self.gui.statusBar().showMessage(msg, 6000)
+            except Exception:
+                print(f"[MEMORY] {msg}")
+        else:
+            shown = False
+            try:
+                from ui.sticky_status import sticky_status_for
+                # Resolve from self.gui: ChartMemoryPanel is a plain object, not
+                # a QWidget, so sticky_status_for(self) could never walk up to a
+                # window. self.gui is the QMainWindow that owns the status bar.
+                sticky = sticky_status_for(self.gui)
+                if sticky is not None:
+                    sticky.show_error(msg)
+                    shown = True
+            except Exception:
+                pass
+            if not shown:
+                try:
+                    self.gui.statusBar().showMessage(msg, 12000)
+                except Exception:
+                    print(f"[MEMORY] {msg}")
+        return {'ok': ok, 'message': msg, 'moved': ok}
 
     def clear_all(self):
         """Remove all charts from memory."""
@@ -955,7 +1185,13 @@ class ChartMemoryPanel:
             else:
                 display_name = self._truncate_name(chart['person_name'].title(), 20)
 
-            btn = QPushButton(display_name)
+            # SPEC-TRN-006: ChartMemoryButton is a drop-in QPushButton that can
+            # also be dragged onto the TRANSIT button to overlay this chart. Drag
+            # is suppressed in select-mode (draggable=False) where it would
+            # conflict with checkbox toggling.
+            from apps.widgets.chart_memory_button import ChartMemoryButton
+            btn = ChartMemoryButton(display_name, chart.get('id'),
+                                    draggable=not self._select_mode)
             btn.setFixedSize(btn_width, CHART_BUTTON_HEIGHT)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             btn.setToolTip(chart['person_name'].title())
@@ -1226,7 +1462,9 @@ class ChartMemoryPanel:
             else:
                 fav_action = menu.addAction("☆ Add to Favorites")
             fav_action.triggered.connect(
-                lambda checked=False, c=chart: favorites_manager.toggle_favorite(c)
+                lambda checked=False, c=chart: favorites_manager.toggle_favorite(
+                    c, profiles_dir=getattr(
+                        getattr(self.gui, 'profile_manager', None), 'profiles_dir', None))
             )
             menu.addSeparator()
 
@@ -1239,7 +1477,49 @@ class ChartMemoryPanel:
                     lambda: self._search_astrotheme(person_name)
                 )
 
-        menu.addSeparator()
+        # SPEC-TRN-006: third entry point for chart overlay (same as dragging this
+        # button onto the TRANSIT button). Enabled only when a base chart is loaded.
+        # Overlaying a chart onto itself is allowed (a legitimate way to read the
+        # medallion), so no identity guard.
+        if chart is not None and chart.get('id'):
+            menu.addSeparator()
+            overlay_action = menu.addAction("⟐ Overlay on current chart")
+            has_base = getattr(self.gui.state, 'active_chart', None) is not None
+            overlay_action.setEnabled(has_base)
+            overlay_action.triggered.connect(
+                lambda checked=False, cid=chart.get('id'):
+                    self.gui.chart_overlay_manager.overlay_from_memory_id(cid)
+            )
+
+        # Move to another profile (SPEC-PROF-003, entry-only). A submenu of
+        # every profile EXCEPT the active one; clicking moves this chart's
+        # membership out of the current profile into that one. Hidden for
+        # transit entries (a moment in time is not a person) and when there is
+        # no other profile. uuid-capture in every action (finding 1): the menu
+        # runs a nested event loop, so a captured index could name the wrong
+        # chart after a cross-instance push.
+        if (chart is not None and not chart.get('is_transit')
+                and isinstance(chart.get('recipe'), dict)
+                # Require a non-empty string id: an id-less entry cannot be
+                # matched, deduped, or safely removed, and two None-id entries
+                # would resolve to the wrong chart (GPT Sol finding 6).
+                and isinstance(chart.get('id'), str) and chart.get('id')):
+            pm = getattr(self.gui, 'profile_manager', None)
+            if pm is not None:
+                try:
+                    current_pid = pm.get_current_profile()
+                    others = [p for p in pm.list_profiles() if p.get('id') != current_pid]
+                except Exception:
+                    others = []
+                if others:
+                    move_menu = menu.addMenu("Move to profile")
+                    for prof in others:
+                        act = move_menu.addAction(prof.get('name') or prof.get('id'))
+                        act.triggered.connect(
+                            lambda checked=False, cid=chart.get('id'), pid=prof.get('id'):
+                                self._move_chart_to_profile(cid, pid)
+                        )
+                    menu.addSeparator()
 
         remove_action = menu.addAction("Remove from memory")
         remove_action.triggered.connect(lambda: self._remove_and_reselect(index))

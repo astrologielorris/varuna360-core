@@ -21,15 +21,16 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal
 
 # Chart view widgets
-from apps.widgets.chart_view import SouthIndianView
 from apps.widgets.south_indian_vector_view import create_south_indian_view
 from apps.widgets.wheel_view import WheelView
 from apps.widgets.north_indian_view import NorthIndianView
 
 # Theme imports
 from ui.qt_theme import (
-    BG, TEXT_PRIMARY, TEXT_SECONDARY, BORDER,
-    get_theme_colors, get_frame_style, scaled_area_px, themed_chart_background
+    get_theme_colors,
+    get_frame_style,
+    scaled_area_px,
+    themed_chart_background,
 )
 from ui.themed_style import ThemedStyleMixin
 

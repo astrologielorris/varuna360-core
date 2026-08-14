@@ -19,10 +19,13 @@ import math
 from pathlib import Path
 
 from PySide6.QtWidgets import (
-    QGraphicsView, QGraphicsScene, QGraphicsTextItem,
-    QGraphicsEllipseItem, QGraphicsLineItem, QGraphicsPathItem
+    QGraphicsView,
+    QGraphicsScene,
+    QGraphicsTextItem,
+    QGraphicsLineItem,
+    QGraphicsPathItem,
 )
-from PySide6.QtCore import Qt, QPointF
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QPen, QBrush, QColor, QPainter, QFont, QPainterPath
 
 # Project root
@@ -50,20 +53,17 @@ from .zodiac_renderer import (
 )
 
 # Import theme
-from ui.qt_theme import BG, SURFACE, TEXT_PRIMARY, get_theme_colors, scaled_area_font, desat_image, sat_key, desat_hex
+from ui.qt_theme import get_theme_colors, scaled_area_font, desat_image, sat_key, desat_hex
 
 # Import geometry helpers (reuse from existing wheel)
 from visualizations.wheel_geometry import (
-    calculate_rotation_offset, polar_to_cartesian,
-    get_sector_center_angle, get_sector_start_angle,
-    get_planet_angle, degrees_to_sign_position
+    calculate_rotation_offset,
+    polar_to_cartesian,
+    get_planet_angle,
 )
 
 # Import constants (reuse from existing wheel)
-from visualizations.wheel_constants import (
-    WHEEL_RADII, ADITYA_NAMES, ZODIAC_SYMBOLS, ZODIAC_NAMES,
-    DISPLAY_PLANETS, get_element_color, get_aditya_name, get_zodiac_symbol
-)
+from visualizations.wheel_constants import WHEEL_RADII, ADITYA_NAMES, DISPLAY_PLANETS
 from core.aditya_mode import get_planet_display_name, displayed_sign_name
 
 # SPEC-COT-001 §4.10 — the in-chart card index. The setting, the memoised
