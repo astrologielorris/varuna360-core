@@ -21,7 +21,6 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 from core.time_utils import (
     julday,
-    _parse_offset,
     invert_chtk_timezone,
     resolve_total_offset,
 )
@@ -224,9 +223,9 @@ def parse_chtk_tz_offset(timezone_str, time_change_flag=0, year=None, month=None
             raise ValueError(f"IANA timezone {tz} requires a birth date for resolution")
         std_hours, _ = resolve_total_offset(tz, year, month, day)
         return std_hours + (time_change_flag if time_change_flag in (1, 2) else 0)
-    # Input convention: RAW CHTK (inverted sign)
-    h, m = _parse_offset(invert_chtk_timezone(tz))
-    offset = h + m / 60.0
+    # Input convention: RAW CHTK (inverted sign) — seconds-preserving (td-5mg6)
+    from core.time_utils import parse_offset_seconds
+    offset = parse_offset_seconds(invert_chtk_timezone(tz)) / 3600.0
     if time_change_flag in (1, 2):
         offset += time_change_flag
     return offset

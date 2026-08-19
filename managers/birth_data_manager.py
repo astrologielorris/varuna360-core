@@ -21,10 +21,9 @@ from typing import Optional, Dict, List, Tuple, Any
 
 
 def _fmt_dec(hours_float: float) -> str:
-    """Format decimal hours as +HH:MM via format_offset (sign-safe, SPEC-TZ-001 5e)."""
-    from core.time_utils import format_offset
-    total_min = int(round(hours_float * 60))
-    return format_offset(total_min // 60, total_min % 60)
+    """Format decimal hours as +HH:MM:SS (sign-safe, SPEC-TZ-001 5e, td-5mg6)."""
+    from core.time_utils import format_offset_from_hours
+    return format_offset_from_hours(hours_float)
 
 
 class BirthDataManager:
@@ -227,11 +226,10 @@ class BirthDataManager:
                     utc_offset_hours = _std
                 except Exception:
                     # Bad IANA name degrades to the old date-less path (which
-                    # returns 0, 0 on failure), keeping the existing warning.
-                    from core.time_utils import _parse_offset
-                    _h, _m = _parse_offset(
-                        _tz_clean, ref_year=local_year if local_year >= 1 else 1)
-                    utc_offset_hours = _h + _m / 60.0
+                    # returns 0 on failure), keeping the existing warning.
+                    from core.time_utils import parse_offset_seconds
+                    utc_offset_hours = parse_offset_seconds(
+                        _tz_clean, ref_year=local_year if local_year >= 1 else 1) / 3600.0
                 tz_warnings.append(
                     f"Timezone: CHTK timezone field contains IANA name "
                     f"'{_tz_clean}' (malformed per CHTK spec); resolved "
@@ -531,14 +529,18 @@ class BirthDataManager:
             dst = float(dst)  # defensive against Decimal/str (tomllib: float)
         base = utc_offset_hours - dst
         chtk = -base
-        # BUG-5 (SPEC-IMPORT-002): round (not truncate) the sub-hour component so
-        # half/quarter-hour historical offsets (e.g. +05:30, +05:45) survive FP
-        # error (int(29.9999)->:29). Compute total minutes then divmod so a rounded
-        # :60 rolls into the hour instead of emitting an invalid ":60".
-        total_min = int(round(abs(chtk) * 60))
-        h, m = divmod(total_min, 60)
+        # BUG-5 (SPEC-IMPORT-002) + td-5mg6: round (not truncate) the sub-hour
+        # component so half/quarter-hour historical offsets (e.g. +05:30,
+        # +05:45) survive FP error — and round to total SECONDS, not minutes,
+        # so LMT-era offsets like +00:09:21 survive too (minute rounding cost
+        # the ADB batch 93 charts 6-21 arcminutes of ascendant). Compute total
+        # seconds then divmod so a rounded :60 rolls into the minute/hour
+        # instead of emitting an invalid ":60".
+        total_sec = int(round(abs(chtk) * 3600))
+        h, rem = divmod(total_sec, 3600)
+        m, s = divmod(rem, 60)
         sign = '+' if chtk >= 0 else '-'
-        return f"{sign}{h:02d}:{m:02d}:00"
+        return f"{sign}{h:02d}:{m:02d}:{s:02d}"
 
     @staticmethod
     def create_from_form_data(
@@ -562,7 +564,7 @@ class BirthDataManager:
             Canonical birth_data dict
         """
         from core.time_utils import (
-            local_to_utc_total, utc_to_local_total, _parse_offset)
+            local_to_utc_total, utc_to_local_total, parse_offset_seconds)
 
         local_year = form_data.get('year', 1970)
         local_month = form_data.get('month', 1)
@@ -587,8 +589,8 @@ class BirthDataManager:
         # ref_year: IANA names must resolve with the birth year's historical
         # rules (spec Section 1); unused for +HH:MM offset strings.
         try:
-            _h, _m = _parse_offset(tz_offset, ref_year=local_year if local_year >= 1 else 1)
-            utc_offset_hours = _h + _m / 60.0
+            utc_offset_hours = parse_offset_seconds(
+                tz_offset, ref_year=local_year if local_year >= 1 else 1) / 3600.0
         except (ValueError, TypeError):
             utc_offset_hours = 0.0
             tz_warnings.append(

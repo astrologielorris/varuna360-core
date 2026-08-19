@@ -735,14 +735,15 @@ class NewEditBinding(QObject):
         offset_format = None
         dst_flag = None
         try:
-            from core.time_utils import resolve_total_offset, format_offset
+            from core.time_utils import (
+                resolve_total_offset, format_offset_from_hours)
             y = int(form.get("year") or 2000)
             mo = int(form.get("month") or 1)
             d = int(form.get("day") or 1)
             hh = int(form.get("hour") or 0)
             mi = int(form.get("minute") or 0)
             std_hours, dst_flag = resolve_total_offset(iana, y, mo, d, hh, mi)
-            offset_format = format_offset(0, int(round(std_hours * 60)))
+            offset_format = format_offset_from_hours(std_hours)
         except Exception:  # noqa: BLE001 - fall back to name-only, offset blank
             offset_format = None
         if offset_format is None:
@@ -813,7 +814,8 @@ class NewEditBinding(QObject):
             return
 
         try:
-            from core.time_utils import resolve_total_offset, format_offset
+            from core.time_utils import (
+                resolve_total_offset, format_offset_from_hours)
             y = int(form.get("year") or 2000)
             mo = int(form.get("month") or 1)
             d = int(form.get("day") or 1)
@@ -828,7 +830,7 @@ class NewEditBinding(QObject):
             lon = form.get("longitude")
             std_hours, dst_flag = resolve_total_offset(
                 iana, y, mo, d, hh, mi, longitude=lon)
-            offset_format = format_offset(0, int(round(std_hours * 60)))
+            offset_format = format_offset_from_hours(std_hours)
         except Exception:  # noqa: BLE001 - Finding 3: invalid/partial IANA
             # Reload degrades an unresolvable zone's -1 to 0; match it rather
             # than keep a stale (maybe 1) flag. Leave the offset the user typed.
@@ -1222,9 +1224,8 @@ class NewEditBinding(QObject):
                     pass
             if _std_offset is None:
                 try:
-                    from core.time_utils import _parse_offset
-                    _std_h, _std_m = _parse_offset(_tz_display)
-                    _std_offset = _std_h + _std_m / 60.0
+                    from core.time_utils import parse_offset_seconds
+                    _std_offset = parse_offset_seconds(_tz_display) / 3600.0
                 except Exception:
                     _raw_uo = recipe.get("utcoffset")
                     _tcf_delta = _tcf if _tcf in (1, 2) else 0
@@ -1232,7 +1233,8 @@ class NewEditBinding(QObject):
 
             _tz_for_utc = _tz_display
             if "/" in _tz_display:
-                _tz_for_utc = format_offset(0, int(round(_std_offset * 60)))
+                from core.time_utils import format_offset_from_hours
+                _tz_for_utc = format_offset_from_hours(_std_offset)
             try:
                 _utc = local_to_utc(recipe["year"], recipe["month"], recipe["day"],
                                     h, m, s, _tz_for_utc, _tcf)
@@ -1402,7 +1404,7 @@ class NewEditBinding(QObject):
         create_from_form_data adds: the float ``dst_offset_hours`` when present
         (non-1h DST like Lord Howe 0.5h), else the integer flag gated on (1, 2).
         """
-        from core.time_utils import format_offset
+        from core.time_utils import format_offset_from_hours
         uo = birth_data.get("utc_offset_hours", 0.0) or 0.0
         flag = birth_data.get("time_change_flag", 0)
         dst_float = birth_data.get("dst_offset_hours")
@@ -1413,7 +1415,7 @@ class NewEditBinding(QObject):
         else:
             dst_delta = 0.0
         std_offset = float(uo) - dst_delta
-        off_str = format_offset(0, int(round(std_offset * 60)))
+        off_str = format_offset_from_hours(std_offset)
         return {
             "name": birth_data.get("name", ""),
             "gender": birth_data.get("gender", ""),
@@ -1932,15 +1934,15 @@ class NewEditBinding(QObject):
             if not tz:
                 errors.append("Timezone is required")
             elif not tz.startswith(("+", "-")) and "/" not in tz:
-                errors.append("Timezone must be in +HH:MM format or an IANA name")
+                errors.append("Timezone must be in +HH:MM[:SS] format or an IANA name")
             elif tz.startswith(("+", "-")):
                 # Bound the numeric offset: real UTC offsets run -12:00..+14:00.
                 # startswith('+') alone let "+25:00" through and built a chart a
                 # day-plus off with no refusal (smoke-test finding 2026-08-14).
                 try:
-                    from core.time_utils import _parse_offset
-                    _h, _m = _parse_offset(tz)
-                    if not (-12.0 <= _h + _m / 60.0 <= 14.0):
+                    from core.time_utils import parse_offset_seconds
+                    _total_h = parse_offset_seconds(tz) / 3600.0
+                    if not (-12.0 <= _total_h <= 14.0):
                         errors.append(
                             "Timezone offset must be between -12:00 and +14:00")
                 except (ValueError, TypeError):

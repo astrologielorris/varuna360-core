@@ -293,7 +293,7 @@ class AvasthaFullscreenPage(QWidget):
         self._fill_corner(recv, cast, decimals)
 
         self._view_label.setText(
-            {"pure": "Pure", "duc": "Refined by Duc", "dig": "Refined by Dig",
+            {"pure": "Avastha", "duc": "Refined by Duc", "dig": "Refined by Dig",
              "uccha": "Refined by Uccha", "cheshta": "Refined by Chesta"}
             .get(view, view))
         self._delegate.update_categories(self._categories)

@@ -212,6 +212,73 @@ def format_offset(hours: int, minutes: int) -> str:
     return f"{sign}{abs_m // 60:02d}:{abs_m % 60:02d}"
 
 
+def parse_offset_seconds(timezone_offset: str, ref_year: int = 2000) -> int:
+    """Parse an offset string into SIGNED TOTAL SECONDS (td-5mg6).
+
+    Seconds-preserving sibling of _parse_offset: accepts the legacy '+HH:MM'
+    form (seconds = 0) and '+HH:MM:SS'. IANA names resolve to the STANDARD
+    offset (no DST) at Jan 15 of ref_year, matching _parse_offset's contract.
+    Kept as a separate function so _parse_offset's (hours, minutes) callers
+    stay untouched; prefer this one anywhere the value feeds time arithmetic
+    or persistence — a minute-rounded LMT offset shifts the ascendant up to
+    ~20 arcminutes on pre-standardization charts.
+
+    The sign applies to the TOTAL, so sub-minute negative offsets keep it:
+    '-00:00:30' -> -30 (component triples cannot express this).
+    """
+    if not timezone_offset:
+        return 0
+    tz = timezone_offset.strip()
+    if '/' in tz:
+        try:
+            # Same recursion-guard reasoning as _parse_offset: ref_year is
+            # clamped so a year < 1 caller cannot loop back through here.
+            std_hours, _flag = resolve_total_offset(tz, max(ref_year, 1), 1, 15)
+            return int(round(std_hours * 3600))
+        except Exception:
+            # Same fail-soft contract as _parse_offset (do not raise), but a
+            # typo like "Europe/Pris" must not pass silently.
+            logging.warning(
+                "parse_offset_seconds: failed to resolve %r, falling back to UTC+0",
+                timezone_offset)
+            return 0
+    if tz and tz[0] not in ('+', '-'):
+        tz = '+' + tz
+    if tz.startswith('+') or tz.startswith('-'):
+        sign = 1 if tz.startswith('+') else -1
+        parts = tz[1:].split(':')
+        h = int(parts[0])
+        m = int(parts[1]) if len(parts) > 1 else 0
+        s = int(parts[2]) if len(parts) > 2 else 0
+        return sign * (h * 3600 + m * 60 + s)
+    return 0
+
+
+def format_offset_seconds(total_seconds: int) -> str:
+    """Format signed total seconds as '+HH:MM:SS' (td-5mg6).
+
+    Inverse of parse_offset_seconds. Works on the signed TOTAL so sub-minute
+    negative offsets format correctly: -30 -> '-00:00:30'.
+    """
+    total = int(round(total_seconds))
+    sign = '+' if total >= 0 else '-'
+    a = abs(total)
+    h, rem = divmod(a, 3600)
+    m, s = divmod(rem, 60)
+    return f"{sign}{h:02d}:{m:02d}:{s:02d}"
+
+
+def format_offset_from_hours(hours: float) -> str:
+    """Resolved float offset hours -> '+HH:MM:SS', rounding exactly once.
+
+    The single sanctioned rounding point for a resolved offset on its way to
+    a string: callers must neither pre-round to minutes (the ADB batch lost
+    93 charts to that, 6-21 arcminutes of ascendant each) nor round again
+    after this call.
+    """
+    return format_offset_seconds(int(round(float(hours) * 3600)))
+
+
 def resolve_total_offset(iana_name: str, year: int, month: int, day: int,
                          hour: int = 12, minute: int = 0,
                          longitude: float = None) -> Tuple[float, int]:
@@ -364,19 +431,19 @@ def local_to_utc(
 
     # ref_year=year: IANA standard offsets change through history
     # (Paris +00:00 in 1920, +01:00 today), td-cj4j
-    offset_hours, offset_minutes = _parse_offset(timezone_offset, ref_year=year)
+    offset_seconds_total = parse_offset_seconds(timezone_offset, ref_year=year)
 
     if dst_flag in (1, 2):
-        offset_hours += dst_flag
+        offset_seconds_total += dst_flag * 3600
 
     if year >= 1:
         local_dt = datetime(year, month, day, hour, minute, second)
-        utc_dt = local_dt - timedelta(hours=offset_hours, minutes=offset_minutes)
+        utc_dt = local_dt - timedelta(seconds=offset_seconds_total)
         return (utc_dt.year, utc_dt.month, utc_dt.day,
                 utc_dt.hour, utc_dt.minute, utc_dt.second)
 
     return _manual_offset(year, month, day, hour, minute, second,
-                          -offset_hours, -offset_minutes)
+                          -offset_seconds_total / 3600.0, 0)
 
 
 def local_to_utc_total(year, month, day, hour, minute, second,
@@ -476,16 +543,16 @@ def utc_to_local(
         dst_flag = int(dst_flag)
 
     # ref_year=year: same historical-offset rule as local_to_utc (td-cj4j)
-    offset_hours, offset_minutes = _parse_offset(timezone_offset, ref_year=year)
+    offset_seconds_total = parse_offset_seconds(timezone_offset, ref_year=year)
 
     if dst_flag in (1, 2):
-        offset_hours += dst_flag
+        offset_seconds_total += dst_flag * 3600
 
     if year >= 1:
         utc_dt = datetime(year, month, day, hour, minute, second)
-        local_dt = utc_dt + timedelta(hours=offset_hours, minutes=offset_minutes)
+        local_dt = utc_dt + timedelta(seconds=offset_seconds_total)
         return (local_dt.year, local_dt.month, local_dt.day,
                 local_dt.hour, local_dt.minute, local_dt.second)
 
     return _manual_offset(year, month, day, hour, minute, second,
-                          offset_hours, offset_minutes)
+                          offset_seconds_total / 3600.0, 0)

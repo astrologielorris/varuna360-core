@@ -820,7 +820,7 @@ class CHTKWriter:
         # seconds-bearing offsets and the unsigned USA form); edited charts
         # get a fresh string from create_from_form_data. Recomputing from the
         # DST-inclusive utc_offset_hours is only a fallback for callers that
-        # do not supply the key, and it hardcodes ':00' seconds.
+        # do not supply the key; it now preserves seconds (td-5mg6).
         chtk_tz_verbatim = birth_data.get('chtk_timezone')
         if chtk_tz_verbatim:
             tz_str = str(chtk_tz_verbatim)
@@ -832,11 +832,8 @@ class CHTKWriter:
                 dst = float(dst)  # defensive: tomllib gives floats, but guard
                 #                    Decimal/str if a raw dict slips through.
             base_offset = utc_offset - dst
-            chtk_offset = -base_offset
-            chtk_h = int(chtk_offset)
-            chtk_m = int(abs(chtk_offset - chtk_h) * 60)
-            chtk_sign = '+' if chtk_offset >= 0 else '-'
-            tz_str = f"{chtk_sign}{abs(chtk_h):02d}:{chtk_m:02d}:00"
+            from core.time_utils import format_offset_from_hours
+            tz_str = format_offset_from_hours(-base_offset)
 
         from core.chtk_writer import gender_to_chtk_code
         gender_code = gender_to_chtk_code(birth_data.get('gender', 'Unknown'))

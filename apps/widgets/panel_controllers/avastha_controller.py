@@ -80,6 +80,48 @@ class AvasthaController(PanelControllerBase):
         panel is already visible (set_visible is a no-op on True->True)."""
         self._refresh()
 
+    def sign_popup_summary(self, sign_name, ring=None, being_type=None):
+        """Sign-avastha summary for a SectorInfoDialog, in the ACTIVE view.
+
+        SPEC-AVA-003 §4.2: the single entry the wheel popup, the panel cell
+        click and the Planetary Condition link all call. Works while the
+        controller is still lazy/hidden (no avastha_table needed) and BEFORE the
+        panel was ever opened — current_view() is 'pure' then. Never refreshes
+        the panel, never caches balas (D-7). On any error the popup still opens
+        with the structure alone (returns None)."""
+        chart = getattr(self._state, "active_chart", None) if self._state else None
+        if not chart:
+            return None
+        try:
+            from AI_tools.AI_main_function.avastha_sign import sign_summary_for_chart
+            return sign_summary_for_chart(
+                chart, self._state.aditya_mode, self._view,
+                sign_name, ring, being_type)
+        except Exception:
+            import traceback
+            traceback.print_exc()
+            return None
+
+    def sign_popup_summaries(self, sign_name, ring=None, being_type=None):
+        """All five view summaries for a SectorInfoDialog (SPEC-AVA-003 §11.2).
+
+        The popup's in-popup view switch needs every view ready at open so a
+        switch never calls the engine (D-20). One matrix build + one bala pass +
+        five summarize_sign, via Half B. Works while the controller is still
+        lazy/hidden and never refreshes the panel; returns None on any error so
+        the popup still opens with the structure alone."""
+        chart = getattr(self._state, "active_chart", None) if self._state else None
+        if not chart:
+            return None
+        try:
+            from AI_tools.AI_main_function.avastha_sign import sign_summaries_all_views
+            return sign_summaries_all_views(
+                chart, self._state.aditya_mode, sign_name, ring, being_type)
+        except Exception:
+            import traceback
+            traceback.print_exc()
+            return None
+
     def _on_chart_changed(self):
         self._refresh()
 
@@ -431,17 +473,25 @@ class AvasthaController(PanelControllerBase):
 
         focus_ring = None
         focus_type = None
+        layer = "sign"
         if row == self.ROW_HORA:
-            focus_ring, focus_type = "hora", info.get("hora_type")
+            focus_ring, focus_type, layer = "hora", info.get("hora_type"), "hora"
         elif row == self.ROW_TRIMSAMSA:
-            focus_ring, focus_type = "trimsamsa", info.get("trim_type")
+            focus_ring, focus_type, layer = "trimsamsa", info.get("trim_type"), "trimsamsa"
+
+        # SPEC-AVA-003 §11.2: pass all five view summaries so the cell click opens
+        # the popup at the cell's depth and the panel's current view, with the
+        # in-popup view switch ready and that being highlighted.
+        summaries = self.sign_popup_summaries(info["aditya_sign"], focus_ring, focus_type)
 
         try:
             from apps.widgets.sector_dialog import SectorInfoDialog
             dlg = SectorInfoDialog(
                 info["aditya_sign"], focus_ring=focus_ring,
-                focus_type=focus_type, parent=self._gui)
+                focus_type=focus_type, avastha_summaries=summaries, layer=layer,
+                view=self.current_view(), parent=self._gui)
             dlg.exec()
+            dlg.deleteLater()      # else hidden child dialogs pile up (Codex review)
         except Exception as e:
             import traceback
             print(f"Error opening retinue dialog: {e}")

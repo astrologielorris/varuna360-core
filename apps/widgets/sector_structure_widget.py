@@ -7,7 +7,7 @@ from PySide6.QtCore import Qt
 from ui.qt_theme import (
     get_theme_colors, is_light_theme, scaled_area_font, scaled_area_px,
 )
-from core.aditya_data import get_being_description
+from core.aditya_data import get_being_description, get_sign_expressions
 
 
 HORA_SECTIONS = [
@@ -157,9 +157,11 @@ class _CollapsibleSection(QFrame):
 class SectorStructureWidget(QWidget):
 
     def __init__(self, sign_name, active_hora_key=None, active_trimsamsa_key=None,
-                 planet_name=None, degree_text=None, parent=None):
+                 planet_name=None, degree_text=None, parent=None, *,
+                 active_sign=False):
         super().__init__(parent)
         self._sign_name = sign_name
+        self._active_sign = active_sign
 
         p = _theme_palette()
 
@@ -178,6 +180,26 @@ class SectorStructureWidget(QWidget):
             intro.setFont(scaled_area_font('info_text'))
             intro.setStyleSheet(f"color: {p['text_secondary']}; padding: 4px;")
             layout.addWidget(intro)
+
+        # Sign section (SPEC-AVA-003 v1.3, D-30): the sign's healthy / afflicted
+        # interpretation, above Hora. Expanded + gold-marked when the sign icon
+        # was clicked (active_sign), collapsed when a hora / trimsamsa was.
+        # Content = the two expressions only (D-27); the same _CollapsibleSection
+        # the being cards use, so all three card kinds read the same. Missing
+        # data resolves to the "Description not available" placeholder.
+        sign_header = QLabel("Sign")
+        sign_header.setFont(scaled_area_font('tables'))
+        sign_header.setStyleSheet(
+            f"color: {p['text']}; font-weight: bold; "
+            f"border-bottom: 1px solid {p['border']}; padding: 4px 0 2px 0;"
+        )
+        layout.addWidget(sign_header)
+
+        sign_section = _CollapsibleSection(
+            sign_name, get_sign_expressions(sign_name), palette=p,
+            is_active=active_sign, parent=self,
+        )
+        layout.addWidget(sign_section)
 
         hora_header = QLabel("Hora")
         hora_header.setFont(scaled_area_font('tables'))

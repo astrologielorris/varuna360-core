@@ -8,7 +8,7 @@ the browser-code cleanup (Phase 2). No selenium dependency.
 from datetime import datetime
 from typing import Dict, Optional, Any
 
-from core.time_utils import format_offset, resolve_total_offset
+from core.time_utils import resolve_total_offset
 
 
 # Known city coordinates for common birthplaces (fallback when API fails)
@@ -145,10 +145,10 @@ def get_timezone_for_coordinates(lat: float, lon: float, birth_date: datetime = 
                 tz_name, birth_date.year, birth_date.month, birth_date.day,
                 birth_date.hour, birth_date.minute, longitude=lon)
 
-            total_minutes = int(round(std_hours * 60))
-            sign = 1 if total_minutes >= 0 else -1
-            am = abs(total_minutes)
-            offset_str = format_offset(sign * (am // 60), sign * (am % 60))
+            # Seconds-preserving (td-5mg6): LMT-era offsets like +00:09:21
+            # must survive; format_offset_from_hours rounds exactly once.
+            from core.time_utils import format_offset_from_hours
+            offset_str = format_offset_from_hours(std_hours)
 
             return {'offset': offset_str, 'dst_active': bool(dst_flag)}
 

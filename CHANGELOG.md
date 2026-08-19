@@ -24,6 +24,19 @@ Format rules, because a script parses this file:
 
 ---
 
+## 4.4.3 (2026-08-19)
+
+This release fixes packaging gaps in the Linux and macOS editions of 4.4.2.
+
+### Fixed
+
+- Aditya and avastha descriptions now display in the Linux and macOS
+  editions. On a fresh install of the previous version they could appear
+  blank.
+- The Linux and Windows editions now ship the correct Core application icon.
+
+Questions and bug reports: astrologielorris@gmail.com
+
 ## 4.4.2 (2026-08-14)
 
 A note on Cards of Truth: the view works and is ready to explore, but it is

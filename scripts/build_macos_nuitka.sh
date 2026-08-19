@@ -151,7 +151,13 @@ cd "$ROOT_DIR"
 export NUITKA_CACHE_DIR
 
 DATA_ARGS=()
-for data_dir in img icon data docs ephe libaditya/ephe; do
+# core/data holds the shipped descriptions read at runtime by core/aditya_data.py
+# (Aditya markdown, hora/trimsamsa JSON, sign healthy/afflicted JSON). Without it
+# every description card renders "Description not available" in the frozen app.
+# Root ephe/ is NOT bundled: libaditya reads its own libaditya/ephe (a superset),
+# so the root copy was ~36 MB of dead weight (WI-9, td-njyh). Kept in lock-step
+# with build_lite.py / build_windows.py.
+for data_dir in img icon data docs libaditya/ephe core/data; do
   if [[ -d "$ROOT_DIR/$data_dir" ]]; then
     DATA_ARGS+=("--include-data-dir=$ROOT_DIR/$data_dir=$data_dir")
   else
@@ -162,6 +168,30 @@ done
 for optional_file in VERSION app_settings.json settings.json map_tiles_cache.db; do
   if [[ -f "$ROOT_DIR/$optional_file" ]]; then
     DATA_ARGS+=("--include-data-files=$ROOT_DIR/$optional_file=$optional_file")
+  fi
+done
+
+# avastha_descriptions.json is a data file inside AI_tools/AI_main_function. The
+# --include-package=AI_tools below copies package CODE, not data, so this JSON
+# must be added explicitly or the frozen app falls back to English avastha state
+# names (WI-3, td-lnpp). Read at runtime by info_panel_dialog via a __file__-
+# relative path that lands at Contents/MacOS/AI_tools/AI_main_function/.
+AVASTHA_DESC="$ROOT_DIR/AI_tools/AI_main_function/avastha_descriptions.json"
+if [[ -f "$AVASTHA_DESC" ]]; then
+  DATA_ARGS+=("--include-data-files=$AVASTHA_DESC=AI_tools/AI_main_function/avastha_descriptions.json")
+else
+  echo "WARNING: missing $AVASTHA_DESC; avastha state names will fall back to English"
+fi
+
+# The four Inter static faces, registered at boot by ui/font_bootstrap.py (WI-7)
+# so QFont("Inter") resolves (static faces register as family "Inter"; the
+# variable TTFs register as "Inter Variable" and are NOT shipped). Only these
+# files: never the 13 MB Inter.ttc, never fonts/San-Francisco-Pro-Fonts (Apple).
+for inter_file in Inter-Regular.ttf Inter-Bold.ttf Inter-Italic.ttf Inter-BoldItalic.ttf LICENSE.txt; do
+  if [[ -f "$ROOT_DIR/fonts/Inter/$inter_file" ]]; then
+    DATA_ARGS+=("--include-data-files=$ROOT_DIR/fonts/Inter/$inter_file=fonts/Inter/$inter_file")
+  else
+    echo "WARNING: missing fonts/Inter/$inter_file; QFont(\"Inter\") will substitute"
   fi
 done
 

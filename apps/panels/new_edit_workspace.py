@@ -247,7 +247,7 @@ SIDE_GUTTER_RATIO = 0.024
 #: Alpha of the accent fill behind a tag's own text — the tag's contrast is
 #: measured against this composite, not against the bare panel.
 TAG_TINT = 0.16
-OFFSET_SAMPLE = "+13:45"
+OFFSET_SAMPLE = "+13:45:12"
 
 
 def _rgba(hex_color, alpha):
@@ -1204,7 +1204,7 @@ class NewEditWorkspace(ThemedStyleMixin, QWidget):
                                        stretch=True))
 
         self.timezone_input = QLineEdit()
-        self.timezone_input.setPlaceholderText("±HH:MM")
+        self.timezone_input.setPlaceholderText("±HH:MM[:SS]")
         self._style_input(self.timezone_input, mono=True)
         self._measure_field(self.timezone_input, OFFSET_SAMPLE, chrome=30)
         self.timezone_iana_input = QLineEdit()
@@ -1662,7 +1662,7 @@ class NewEditWorkspace(ThemedStyleMixin, QWidget):
 
         Fixed, not a growable minimum. Letting these fields expand was tried and
         reverted: the layout hands spare width to whatever will take it, so the
-        two-digit date and time boxes doubled (34 -> 73 px) and the ±HH:MM
+        two-digit date and time boxes doubled (34 -> 73 px) and the ±HH:MM:SS
         offset went to 164 px. These hold fixed-format values whose longest
         form is known exactly, so growth buys nothing and costs the layout.
 
@@ -2548,7 +2548,7 @@ class NewEditWorkspace(ThemedStyleMixin, QWidget):
 
     def set_timezone_resolved(self, iana_name: str, offset: str, dst_flag=None):
         """Show a controller-RESOLVED timezone: BOTH the IANA name and its
-        +HH:MM offset, plus (optionally) the DST radio it resolved to.
+        +HH:MM:SS offset, plus (optionally) the DST radio it resolved to.
 
         The view still does no arithmetic — it only displays the offset and flag
         the controller computed from the birth instant (SPEC-UTC-001 keeps the

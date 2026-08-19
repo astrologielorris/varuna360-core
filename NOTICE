@@ -88,6 +88,18 @@ PySide6/Qt6 libraries are dynamically linked and distributed as
 separate .so files within the AppImage. Users may replace these
 libraries with modified versions per LGPL-3.0 requirements.
 
+### Inter (bundled font)
+
+The user interface bundles and uses the Inter typeface (the four static
+faces under fonts/Inter/: Inter-Regular, Inter-Bold, Inter-Italic, and
+Inter-BoldItalic).
+
+- Copyright (c) 2016 The Inter Project Authors (https://github.com/rsms/inter)
+- License: SIL Open Font License 1.1 (see fonts/Inter/LICENSE.txt)
+
+The OFL permits bundling and redistribution with the software provided the
+licence text ships alongside the fonts, which it does.
+
 ### Additional Dependencies
 
 See requirements.txt for a complete list of third-party packages.

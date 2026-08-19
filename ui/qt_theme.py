@@ -1720,8 +1720,8 @@ def apply_elevation_shadow(widget, level):
         reference is dropped here or a later GC can segfault.
       * INV-8 — REFUSED over a QGraphicsView host. A drop shadow over a
         QGraphicsView child is a reproduced crash in this codebase
-        (apps/widgets/sign_variation_dialog.py:163 has six shadow blocks
-        commented out for exactly this). Every chart view is therefore off
+        (pro/parked/sign_variation_dialog/sign_variation_dialog.py:163 has six
+        shadow blocks commented out for exactly this). Every chart view is off
         limits, permanently.
       * INV-9 — the blur is clipped unless the caller reserves the returned
         margin in its parent layout.

@@ -52,11 +52,11 @@ Contract points (each is a recorded review finding — do not regress):
   (post-transition). Both are recorded review findings — do not swap the
   resolver back. Gap instants additionally surface WARN_GAP_TIME
   (additive; `ok` stays True).
-* Precision note: the canonical seam is minute-precision on the offset
-  (offset strings "+HH:MM", CHTK line 13 stores ":00" seconds), so LMT-era
-  longitude/15 offsets are rounded to the nearest minute — this matches the
-  Edit Chart / New Chart / CHTK-load family, which the Add Chart path now
-  joins.
+* Precision note: offsets keep their SECONDS end-to-end (td-5mg6). The
+  resolved float offset is rounded exactly once, at the string serialization
+  boundary (format_offset_from_hours), so LMT-era longitude/15 offsets like
+  +00:09:21 reach BirthDataManager and CHTK line 13 intact; legacy '+HH:MM'
+  strings and ':00'-seconds files parse unchanged.
 """
 
 from dataclasses import dataclass, field
@@ -307,7 +307,7 @@ def persist_birth_data(birth_data: Dict[str, Any], *,
             # Rule 6 sign inversion lives in the canonical CHTK writer:
             # LOCAL time components + standard-base offset string + DST flag.
             from core.chtk_writer import create_chtk
-            from core.time_utils import format_offset
+            from core.time_utils import format_offset_from_hours
             flag = payload.get("time_change_flag") or 0
             dst = payload.get("dst_offset_hours")
             if dst is None:
@@ -323,7 +323,7 @@ def persist_birth_data(birth_data: Dict[str, Any], *,
                 lon=float(payload.get("longitude") or 0.0),
                 city=payload.get("city") or "",
                 country=payload.get("country") or "Unknown",
-                timezone_offset=format_offset(0, int(round(std_hours * 60))),
+                timezone_offset=format_offset_from_hours(std_hours),
                 dst_active=bool(flag),
                 gender=payload.get("gender") or "Unknown",
                 output_path=str(tmp_path),
@@ -401,7 +401,7 @@ def _resolve_offset_zoneinfo(tz_name: str, year: int, month: int, day: int,
                              longitude: float):
     """ZoneInfo-backed offset resolution — the Add Chart dialog's historical
     semantics (core.time_utils.lmt_corrected_offset), decomposed for the
-    minute-precision BirthDataManager seam.
+    seconds-precision BirthDataManager seam.
 
     Returns (std_hours, dst_flag, is_gap):
 
@@ -548,9 +548,17 @@ def ensure_default_chart_folder(create: bool = True) -> Optional[str]:
         from managers.settings_manager import get_settings
         s = get_settings()
         s.set("paths.default_folder", str(target))
-        folders = list(s.get_chart_folders() or [])
+        # get_chart_folders() is a FIXED 3-slot list (padded, truncated on
+        # read), so appending lands the path in an unreachable 4th slot:
+        # Settings shows no folder, and saving Settings then wipes
+        # paths.default_folder. Place it in the first empty slot instead.
+        folders = s.get_chart_folders()
         if str(target) not in folders:
-            s.set("paths.chart_folders", folders + [str(target)])
+            for i, slot in enumerate(folders):
+                if not slot:
+                    folders[i] = str(target)
+                    s.set("paths.chart_folders", folders)
+                    break
         # set() persists on its own (save=True); SettingsManager has no
         # save(), so an explicit call here would only raise into the except.
         _log(f"[PERSIST] No chart folder was configured; defaulted to {target}")
@@ -796,7 +804,7 @@ def create_chart_from_text(
     _progress("calculating")
     second = parsed.get("second", 0)
     try:
-        from core.time_utils import format_offset
+        from core.time_utils import format_offset_from_hours
         std_hours, dst_flag, is_gap = _resolve_offset_zoneinfo(
             tz_name, parsed["year"], parsed["month"], parsed["day"],
             parsed["hour"], parsed["minute"], second, lon,
@@ -823,9 +831,11 @@ def create_chart_from_text(
             "post-transition offset. Check the birth time.",
         )
 
-    # Canonical minute-precision standard-base offset string (never bakes
+    # Canonical seconds-precision standard-base offset string (never bakes
     # DST into the string — SPEC-TZ-001 Section 1; DST rides the flag).
-    std_offset_str = format_offset(0, int(round(std_hours * 60)))
+    # Rounding happens exactly once, here (td-5mg6): minute-rounded LMT
+    # offsets shifted the ADB batch's LMT-era ascendants 6-21 arcminutes.
+    std_offset_str = format_offset_from_hours(std_hours)
     result.dst_flag = dst_flag
     result.std_offset_str = std_offset_str
 

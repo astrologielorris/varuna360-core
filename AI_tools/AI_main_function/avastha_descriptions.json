@@ -1,0 +1,38 @@
+{
+  "lajjitaadi": {
+    "shamed": {
+      "sanskrit": "Lajjita",
+      "english": "Ashamed"
+    },
+    "proud": {
+      "sanskrit": "Garvita",
+      "english": "Proud",
+      "also_known_as": "Nirvishamka (Fearless/Confident)"
+    },
+    "starved": {
+      "sanskrit": "Kshudhita",
+      "english": "Starved"
+    },
+    "thirsty": {
+      "sanskrit": "Trishita",
+      "english": "Thirsty"
+    },
+    "delighted": {
+      "sanskrit": "Mudita",
+      "english": "Delighted"
+    },
+    "agitated": {
+      "sanskrit": "Kshobhita",
+      "english": "Agitated"
+    },
+    "healthy": {
+      "sanskrit": "Svastha",
+      "english": "Healthy"
+    }
+  },
+  "meta": {
+    "source": "Lajjitadi avasthas: Brihat Parashara Hora Shastra (Avastha chapter)",
+    "framework": "Tropical Vedic (360 Hearts in the Sky)",
+    "note": "The Healthy (Svastha) avastha is a custom addition not in the traditional six. Libaditya computes all seven states from chart data via lajjitaadi_avasthas()."
+  }
+}

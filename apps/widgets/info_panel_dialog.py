@@ -1626,41 +1626,31 @@ class InfoPanelDialog(ThemedStyleMixin, QDialog):
         if len(parts) < 4:
             return
         _, sign_name, ring, type_key = parts[0], parts[1], parts[2], parts[3]
-        planet_name = parts[4] if len(parts) > 4 else None
 
-        avastha_summary = None
-        if planet_name:
-            avastha_summary = self._compute_expression_totals(planet_name)
+        # SPEC-AVA-003 §4.4: the popup follows the ACTIVE Avastha view from the
+        # Planetary Condition page too — go through the ONE spine via the
+        # (possibly lazy) controller, at the depth of the clicked link. The
+        # page's own rows are unchanged; line 1 disambiguates the two numbers.
+        summaries = None
+        view = None
+        if hasattr(self.gui, '_ensure_controller'):
+            ctrl = self.gui._ensure_controller('avastha')
+            if ctrl:
+                summaries = ctrl.sign_popup_summaries(sign_name, ring, type_key)
+                view = ctrl.current_view()
+        layer = ring if ring in ("hora", "trimsamsa") else None
 
         try:
             from apps.widgets.sector_dialog import SectorInfoDialog
             dlg = SectorInfoDialog(sign_name, focus_ring=ring,
                                    focus_type=type_key,
-                                   avastha_summary=avastha_summary,
+                                   avastha_summaries=summaries,
+                                   layer=layer, view=view,
                                    parent=self)
             dlg.exec()
             dlg.deleteLater()
         except Exception as e:
             print(f"[PlanetaryCondition] sector dialog failed: {e}")
-
-    def _compute_expression_totals(self, planet_name):
-        """Compute uplifted/afflicted expression totals using cached build data."""
-        matrix = getattr(self, '_pp_avastha_matrix', None)
-        if matrix is None:
-            return None
-
-        target = planet_name
-        if target not in self._AVASTHA_PLANETS:
-            target = getattr(self, '_pp_lord_map', {}).get(planet_name)
-        if not target:
-            return None
-
-        up, aff = split_expression(
-            target, self._AVASTHA_PLANETS, matrix,
-            getattr(self, '_pp_dignity_data', {}),
-            getattr(self, '_pp_shame_pairs', set()))
-        return {"planet": planet_name, "target": target,
-                "uplifted": up, "afflicted": aff, "total": up + aff}
 
     def _load_retinue_data(self, chart, aditya_mode):
         """Load retinue + house connection data. Returns (by_name, by_planet) or (None, None)."""
