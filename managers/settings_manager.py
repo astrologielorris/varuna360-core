@@ -373,7 +373,7 @@ DEFAULT_TRANSIT_RIM_STYLE = "full_wheel"
 
 # Valid values for display.south_indian_style (SPEC-SIC-002 D-5).
 SOUTH_INDIAN_STYLES = ("classic", "vector")
-DEFAULT_SOUTH_INDIAN_STYLE = "classic"
+DEFAULT_SOUTH_INDIAN_STYLE = "vector"
 
 class EnvUnreadableError(OSError):
     """The .env file EXISTS on disk but could not be read/parsed (round-5 F2).

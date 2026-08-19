@@ -116,7 +116,7 @@ from apps.widgets.body_aspect_dual_widget import BodyAspectDualWidget
 from apps.widgets.cards_of_truth_view import CardsOfTruthView
 from apps.widgets.planet_dialog import PlanetInfoDialog
 from apps.widgets.sector_dialog import SectorInfoDialog
-from apps.widgets.sign_variation_dialog import SignVariationDialog
+from core.aditya_data import ADITYA_NAMES
 from apps.widgets.debug_console import DebugConsoleWidget
 from apps.widgets.planet_placements_dialog import PlanetPlacementsDialog
 
@@ -522,8 +522,8 @@ class ChartGUI(QMainWindow):
         self.chart_view = create_south_indian_view()
         # Connect planet click signal to show dialog
         self.chart_view.planet_click_signal.clicked.connect(self._show_planet_dialog)
-        # Connect sign click signal to show variation dialog
-        self.chart_view.sign_click_signal.clicked.connect(self._show_sign_variation_dialog)
+        # Sign click opens the sector popup at the Sign layer (SPEC-AVA-003 v1.3)
+        self.chart_view.sign_click_signal.clicked.connect(self._show_sign_popup)
         # Theme-locked chart background at boot (td-iqjb.8 Wave H: via the shared
         # helper so boot and switch pick the SAME stone -- was an inline literal).
         from ui.qt_theme import themed_chart_background
@@ -535,14 +535,14 @@ class ChartGUI(QMainWindow):
         self.wheel_view.connect_gui(self)
         self.wheel_view.planet_click_signal.clicked.connect(self._show_planet_dialog)
         self.wheel_view._retinue_click_signal.clicked.connect(self._show_sector_dialog)
-        self.wheel_view.sign_click_signal.clicked.connect(self._show_sign_variation_dialog)
+        self.wheel_view.sign_click_signal.clicked.connect(self._show_sign_popup)
         self.chart_stack.addWidget(self.wheel_view)
 
         # North Indian View (index 2)
         self.north_indian_view = NorthIndianView()
         # Connect planet click signal (uses same dialog)
         self.north_indian_view.planet_click_signal.clicked.connect(self._show_planet_dialog)
-        self.north_indian_view.sign_click_signal.clicked.connect(self._show_sign_variation_dialog)
+        self.north_indian_view.sign_click_signal.clicked.connect(self._show_sign_popup)
         self.chart_stack.addWidget(self.north_indian_view)
 
         # Body Graph View (index 3) — SPEC-BODY-001 body graph wrapped by
@@ -2818,11 +2818,18 @@ class ChartGUI(QMainWindow):
             self._apply_planet_variation(pname, var_num)
 
     def _show_sector_dialog(self, sign_name, ring, being_type):
-        """Show popup dialog with hora/trimsamsa structure when sector is double-clicked"""
-        avastha_summary = self._compute_sector_avastha(sign_name, ring, being_type)
+        """Show popup dialog with hora/trimsamsa structure when sector is double-clicked.
+
+        SPEC-AVA-003 §4.2: the avastha numbers come from the ONE spine via the
+        (possibly lazy) Avastha controller, and the popup opens at the layer of
+        the clicked ring. _ensure_controller may CREATE the deferred controller
+        but does NOT refresh the panel (core_gui_qt.py: sets _pending_chart_refresh)."""
+        ctrl = self._ensure_controller('avastha')
+        summaries = (ctrl.sign_popup_summaries(sign_name, ring, being_type)
+                     if ctrl else None)
         dialog = SectorInfoDialog(sign_name, focus_ring=ring, focus_type=being_type,
-                                  avastha_summary=avastha_summary,
-                                  parent=self._dialog_parent())
+                                  avastha_summaries=summaries, layer=ring,
+                                  view=(ctrl.current_view() if ctrl else None), parent=self._dialog_parent())
         dialog.exec()
 
         dialog.deleteLater()
@@ -2833,112 +2840,17 @@ class ChartGUI(QMainWindow):
 
         self._reset_all_views_drag_state()
 
-    def _compute_sector_avastha(self, sign_name, ring, being_type):
-        """Compute uplifted/afflicted totals for planets in a specific sector.
-        Only planets whose retinue data matches both the sign AND the clicked
-        sector (hora side or trimsamsa being type) are included."""
-        chart = getattr(self.state, 'active_chart', None)
-        if not chart:
-            return None
-        try:
-            from AI_tools.AI_main_function.retinue import get_chart_retinue
-            from AI_tools.AI_main_function.avastha import get_drishti_yuti_data
-            from apps.widgets.info_panel_dialog import split_expression, _AVASTHA_7
-
-            aditya_mode = self.state.aditya_mode
-            ayanamsa_offset = 0.0
-            if aditya_mode == 'sidereal':
-                ayanamsa_offset = getattr(self, 'chart_ayanamsa_offset', 0.0)
-            retinue = get_chart_retinue(
-                chart, ayanamsa_offset=ayanamsa_offset,
-                tropical_mode=(aditya_mode == 'tropical_classic'))
-
-            targets = []
-            for p in retinue["planets"]:
-                if p["aditya_sign"] != sign_name:
-                    continue
-                pname = p["planet"]
-                if pname not in _AVASTHA_7:
-                    continue
-                if ring == "hora":
-                    side = p.get("hora", {}).get("side", "")
-                    if side == "Aditya":
-                        key = "aditya"
-                    elif side == "Naga":
-                        key = "naga"
-                    else:
-                        continue
-                    if key != being_type.lower():
-                        continue
-                elif ring == "trimsamsa":
-                    ttype = p.get("trimsamsa", {}).get("being_type", "")
-                    if ttype.lower() != being_type.lower():
-                        continue
-                targets.append(pname)
-
-            if not targets:
-                return None
-
-            data = get_drishti_yuti_data(chart)
-            up_total = 0.0
-            aff_total = 0.0
-            for t in targets:
-                u, a = split_expression(
-                    t, _AVASTHA_7, data["matrix"],
-                    data["dignity_data"], data.get("shame_pairs", set()))
-                up_total += u
-                aff_total += a
-
-            label = ", ".join(targets)
-            return {"planet": label, "target": label,
-                    "uplifted": up_total, "afflicted": aff_total,
-                    "total": up_total + aff_total}
-        except Exception:
-            import traceback
-            traceback.print_exc()
-            return None
-
     def _apply_planet_variation(self, planet_name, variation_num):
         """Apply the selected planet icon variation to the chart"""
         self.chart_view.set_planet_variation(planet_name, variation_num)
         self.statusBar().showMessage(f"{planet_name} icon changed to variation {variation_num}")
 
-    def _show_sign_variation_dialog(self, zodiac_index, current_variation):
-        """Show popup dialog for selecting zodiac sign icon variation"""
-        dialog = SignVariationDialog(zodiac_index, current_variation,
-                                     parent=self._dialog_parent())
-
-        # Don't connect signal - we'll check for pending variation after dialog closes
-        # This prevents race condition: dialog closing + chart redrawing simultaneously
-
-        result = dialog.exec()
-
-        # Check if user applied a variation (stored instead of emitted)
-        pending_variation = None
-        if hasattr(dialog, '_pending_variation') and dialog._pending_variation:
-            pending_variation = dialog._pending_variation
-
-        # CRITICAL: Delete dialog BEFORE chart redraw to ensure complete cleanup
-        dialog.deleteLater()
-        dialog = None
-
-        # Process deletion event (use global singleton, not local import)
-        QApplication.instance().processEvents()
-
-        # Reset drag state on ALL views after dialog closes to prevent "stuck pan mode"
-        self._reset_all_views_drag_state()
-
-        # NOW apply variation (dialog is fully destroyed)
-        if pending_variation:
-            zodiac_idx, var_num = pending_variation
-            self._apply_sign_variation(zodiac_idx, var_num)
-
-    def _apply_sign_variation(self, zodiac_index, variation_num):
-        """Apply the selected variation to the chart"""
-        self.chart_view.set_selected_variation(zodiac_index, variation_num)
-        western_name = self.chart_view.WESTERN_NAMES[zodiac_index]
-        self.statusBar().showMessage(f"{western_name} icon changed to variation {variation_num}")
-        QApplication.instance().processEvents()
+    def _show_sign_popup(self, zodiac_index, _variation=None):
+        """A sign icon click opens the sector popup at the Sign layer (SPEC-AVA-003
+        v1.3, D-26). zodiac_index is the Aditya number 0..11 (Aries = Dhata = #1
+        in every mode, SPEC-ZOD-001), never mode-shifted; the icon-variation arg
+        is ignored (the icon browser is parked, D-28)."""
+        self._show_sector_dialog(ADITYA_NAMES[zodiac_index], None, None)
 
     def _reset_all_views_drag_state(self):
         """Reset drag state on all chart views to prevent 'stuck pan mode' after dialogs."""
@@ -6904,6 +6816,32 @@ def main():
     app = QApplication(sys.argv)
     app.setDesktopFileName("varuna360-core")
 
+    # Register the bundled Inter family so QFont("Inter") resolves in dev and in
+    # frozen builds instead of silently substituting (SPEC-FONT, WI-7). Silent
+    # and safe when the font is not bundled.
+    try:
+        from ui.font_bootstrap import register_bundled_fonts
+        register_bundled_fonts(PROJECT_ROOT)
+    except Exception:
+        pass
+
+    # Headless boot smoke for the build gate (WI-8). When VARUNA360_BOOT_CHECK_MS
+    # is set, the app skips every interactive gate that would block a scripted
+    # launch (sign-in, first-run, welcome) and quits itself after that many ms,
+    # once the main window has been fully constructed and shown. Exit 0 with no
+    # startup_crash.txt then proves the whole import + widget-construction path.
+    _boot_check_ms = 0
+    try:
+        _boot_check_ms = int(os.environ.get("VARUNA360_BOOT_CHECK_MS", "0"))
+    except ValueError:
+        _boot_check_ms = 0
+    # Clamp to a sane ceiling. The arming and the gate-bypass this value drives
+    # are BOTH restricted to non-bundled builds (see _allow_boot_bypass below),
+    # so in a bundled build this user-settable env var has no effect at all and
+    # cannot be used to skip sign-in. The clamp is a second belt: even in a
+    # non-bundled test build the app quits itself within 30 s.
+    _boot_check_ms = min(max(_boot_check_ms, 0), 30_000)
+
     # Enable Ctrl+C to quit immediately (no waiting)
     # Qt applications normally ignore SIGINT, so we need to handle it explicitly
     def handle_sigint(signum, frame):
@@ -6996,6 +6934,18 @@ def main():
     # this branch.
     IS_BUNDLED = os.environ.get("VARUNA360_BUNDLED", "").strip() == "1"
 
+    # The headless-boot-check bypass is honoured ONLY in a non-bundled build.
+    # In a bundled build the installer/launcher sets VARUNA360_BUNDLED=1, sign-in
+    # is mandatory, and VARUNA360_BOOT_CHECK_MS (a documented string in the
+    # shipped binary) must NOT be able to skip ANY gate — otherwise it is an auth
+    # bypass yielding the full app for 30 s per launch, renewable. The build-time
+    # boot check always runs non-bundled (VARUNA360_BUNDLED unset), so it still
+    # skips onboarding and reaches the main window. The 30 s auto-quit is armed
+    # here too, so the env var has zero effect in a bundled build.
+    _allow_boot_bypass = _boot_check_ms > 0 and not IS_BUNDLED
+    if _allow_boot_bypass:
+        QTimer.singleShot(_boot_check_ms, app.quit)
+
     if IS_BUNDLED:
         from managers.license_manager import attempt_cached_login
         license_state = attempt_cached_login()
@@ -7025,7 +6975,7 @@ def main():
     # On a fresh install there is no bootstrap config yet, so we ask the
     # user where to store profiles, settings, and session files.
     from state.user_data import needs_first_run_setup
-    if needs_first_run_setup():
+    if needs_first_run_setup() and not _allow_boot_bypass:
         from apps.widgets.first_run_dialog import FirstRunDialog
         first_run = FirstRunDialog()
         if first_run.exec() != FirstRunDialog.DialogCode.Accepted:
@@ -7037,7 +6987,7 @@ def main():
     # popup never shows again. Intrusive by design: the user wanted
     # the welcome message to register before the main UI distracts them.
     from apps.widgets.welcome_dialog import WelcomeDialog, should_show_welcome
-    if should_show_welcome():
+    if should_show_welcome() and not _allow_boot_bypass:
         welcome = WelcomeDialog()
         welcome.exec()
 

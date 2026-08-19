@@ -1,0 +1,65 @@
+{
+  "lajjitaadi": {
+    "shamed": {
+      "sanskrit": "Lajjita",
+      "english": "Ashamed",
+      "trigger": "Planet conjunct Sun, Mars, or Saturn while also conjunct Rahu/Ketu or in the 5th house",
+      "effect": "The planet feels deep shame and inadequacy. Its significations produce lasting trauma proportional to the shaming planet's strength. The shame revolves around the sign the planet occupies and any house cusps in that sign.",
+      "remedy": "Only Garvita (Proud) state can offset shame. Venus in good condition amplifies the recovery.",
+      "keywords": ["trauma", "inadequacy", "stigma", "loss of children", "frivolous actions"]
+    },
+    "proud": {
+      "sanskrit": "Garvita",
+      "english": "Proud",
+      "also_known_as": "Nirvishamka (Fearless/Confident)",
+      "trigger": "Planet in exaltation or Moolatrikona",
+      "effect": "The planet feels healthy pride and confidence. It can withstand shame, starvation, thirst, and agitation up to its own strength value. This is the protective avastha that shields against all negative states.",
+      "remedy": "Venus in good avasthas amplifies the Proud state. Venus delighting Saturn further strengthens it.",
+      "keywords": ["confidence", "resilience", "new homes", "royalty", "wisdom", "financial gains"]
+    },
+    "starved": {
+      "sanskrit": "Kshudhita",
+      "english": "Starved",
+      "trigger": "Planet in enemy's sign, conjunct an enemy, aspected by an enemy, or conjunct Saturn",
+      "effect": "The planet loses strength equal to the enemy's strength. When reduced below minimum required strength, significant disappointment follows. When reduced to zero, devastating disappointment.",
+      "note": "Moon has no enemies so can only be starved by Saturn's conjunction. Starved + Agitated together destroy the sign the planet occupies.",
+      "keywords": ["grief", "physical decline", "financial distress", "loss of strength", "eclipsed mind"]
+    },
+    "thirsty": {
+      "sanskrit": "Trishita",
+      "english": "Thirsty",
+      "trigger": "Planet in a water sign and aspected by an enemy (conjunction alone only causes Starved, not Thirsty)",
+      "effect": "The planet lacks emotional fulfillment. Unlike starvation, the thirsty planet can be satisfied with gentle treatment. A benefic aspecting offsets the thirst. When Thirsty is present, Starved is always also present.",
+      "note": "Moon has no enemies so is never Thirsty. Worse when Moon is starved or agitated, or when Moon starves Saturn.",
+      "keywords": ["emotional lack", "disease", "loss of honor", "weakness", "evil associations"]
+    },
+    "delighted": {
+      "sanskrit": "Mudita",
+      "english": "Delighted",
+      "trigger": "Planet in friend's sign, conjunct a friend, aspected by a friend, or conjunct Jupiter",
+      "effect": "The planet gains strength from the friend. This is the most common positive state. It indicates a very happy period in life that can heal wounds from negative avasthas. Does NOT prevent starvation or thirst, but provides a counterbalance.",
+      "note": "Saturn conjunction never counts as a friend for Mudita. Sun conjunction causes Agitated instead (but a friend conjunct the Sun does give the Sun Mudita). Jupiter's avastha quality amplifies all Mudita.",
+      "keywords": ["happiness", "good residence", "ornaments", "wisdom", "enemy destruction"]
+    },
+    "agitated": {
+      "sanskrit": "Kshobhita",
+      "english": "Agitated",
+      "trigger": "Planet conjunct the Sun, or aspected by all three malefics with at least one enemy among them",
+      "effect": "The planet loses strength equal to the Sun's strength. When agitated by Sun conjunction, the individual over-identifies with the planet's significations and becomes personally frustrated. The planet becomes blocked and unproductive.",
+      "note": "When caused by an enemy's aspect, both Starved and Agitated operate simultaneously. Starved + Agitated together completely destroy the sign. Mars being starved, or Mars starving Saturn, makes Agitated worse.",
+      "keywords": ["penury", "evil disposition", "financial problems", "foot trouble", "royal wrath"]
+    },
+    "healthy": {
+      "sanskrit": "Svastha",
+      "english": "Healthy",
+      "trigger": "Planet in its own sign (own house)",
+      "effect": "The planet is comfortable and productive in its home territory. A stable, reliable foundation for the planet's significations.",
+      "keywords": ["stability", "comfort", "self-sufficiency", "natural authority"]
+    }
+  },
+  "meta": {
+    "source": "Ernst Wilhelm, Lajjitaadi Avasthas (Graha Sutras)",
+    "framework": "Tropical Vedic (360 Hearts in the Sky)",
+    "note": "The Healthy (Svastha) avastha is a custom addition not in the traditional six. Libaditya computes all seven states from chart data via lajjitaadi_avasthas()."
+  }
+}

@@ -459,3 +459,49 @@ def get_being_description(sign_name: str, ring: str, being_type: str):
         return data[ring + "s"][sign_name][being_type]
     except (KeyError, TypeError, AttributeError):
         return None
+
+
+_SIGN_EXPRESSIONS_CACHE = None
+
+
+def load_sign_expressions() -> dict:
+    """Load the Aditya healthy/afflicted interpretations (SPEC-AVA-003 v1.3).
+
+    Data ported from the mobile app by tools/port_aditya_expressions.py into
+    core/data/aditya_expressions.json; see docs/ECOSYSTEM.md §3. Cached; a
+    missing or malformed file resolves to {} so a sign click never raises.
+    """
+    path = Path(__file__).parent / "data" / "aditya_expressions.json"
+    global _SIGN_EXPRESSIONS_CACHE
+    if _SIGN_EXPRESSIONS_CACHE is not None:
+        return _SIGN_EXPRESSIONS_CACHE
+    if not path.exists():
+        _SIGN_EXPRESSIONS_CACHE = {}
+        return _SIGN_EXPRESSIONS_CACHE
+    try:
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+        # A valid-but-wrong-shape root (e.g. a JSON list) must not make the
+        # accessor raise later; only a dict is usable.
+        _SIGN_EXPRESSIONS_CACHE = loaded if isinstance(loaded, dict) else {}
+    except (json.JSONDecodeError, OSError):
+        _SIGN_EXPRESSIONS_CACHE = {}
+    return _SIGN_EXPRESSIONS_CACHE
+
+
+def get_sign_expressions(sign_name: str):
+    """Return {"healthy": str, "afflicted": str} for an Aditya, or None.
+
+    None for an unknown sign, a malformed entry, or a missing/empty field (the
+    caller falls back to the "Description not available" placeholder). Never
+    raises at click time, whatever shape the JSON has.
+    """
+    data = load_sign_expressions()
+    entry = data.get(sign_name) if isinstance(data, dict) else None
+    if not isinstance(entry, dict):
+        return None
+    healthy = entry.get("healthy")
+    afflicted = entry.get("afflicted")
+    if not (isinstance(healthy, str) and healthy
+            and isinstance(afflicted, str) and afflicted):
+        return None
+    return {"healthy": healthy, "afflicted": afflicted}

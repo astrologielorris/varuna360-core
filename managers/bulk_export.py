@@ -226,16 +226,16 @@ def export_entries(entries, chart_folder=None, chart_format=None,
 
 
 def _offset_string(recipe) -> str:
-    """The STANDARD base offset as '+HH:MM' — the form-data convention.
+    """The STANDARD base offset as '+HH:MM:SS' — the form-data convention.
 
     The recipe carries the TOTAL offset, so the DST amount has to come off
     before it is handed to a field that means "base"; leaving it in stores
-    the chart an hour out.
+    the chart an hour out. Seconds-preserving (td-5mg6).
     """
-    from core.time_utils import format_offset
+    from core.time_utils import format_offset_from_hours
     total = float(recipe.get("utcoffset") or 0.0)
     dst = recipe.get("dst_offset_hours")
     if dst is None:
         flag = recipe.get("time_change_flag", 0) or 0
         dst = float(flag) if flag in (1, 2) else 0.0
-    return format_offset(0, int(round((total - float(dst)) * 60)))
+    return format_offset_from_hours(total - float(dst))

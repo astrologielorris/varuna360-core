@@ -55,8 +55,9 @@ def standard_to_chtk_timezone(timezone_offset: str) -> str:
     CHTK uses opposite sign: standard +05:00 (UTC+5) -> CHTK -05:00:00.
     Always outputs an explicit sign prefix.
     """
-    # Input convention: STANDARD offset string (e.g. '+05:30'), never CHTK-inverted.
-    from core.time_utils import _parse_offset, format_offset
+    # Input convention: STANDARD offset string (e.g. '+05:30' or '+05:30:21'),
+    # never CHTK-inverted.
+    from core.time_utils import parse_offset_seconds, format_offset_seconds
 
     tz = timezone_offset.strip()
     if not tz:
@@ -66,8 +67,7 @@ def standard_to_chtk_timezone(timezone_offset: str) -> str:
         tz = '-' + tz
     if '/' in tz:
         raise ValueError(f"IANA name not accepted here; resolve to an offset first: {timezone_offset}")
-    h, m = _parse_offset(tz)
-    return format_offset(-h, -m) + ":00"
+    return format_offset_seconds(-parse_offset_seconds(tz))
 
 
 # CHTK gender codes. THREE of them, not two (td-n0z9): Kala itself writes 0

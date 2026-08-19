@@ -185,38 +185,16 @@ To report a security vulnerability, see [`SECURITY.md`](SECURITY.md).
 <!-- Generated at sync time from VERSION + CHANGELOG.md. Edits here are
      overwritten on the next sync; edit CHANGELOG.md instead. -->
 
-## Current release: 4.4.2 (2026-08-14)
+## Current release: 4.4.3 (2026-08-19)
 
-A note on Cards of Truth: the view works and is ready to explore, but it is
-still early in its testing cycle, and the timing periods may contain slight
-errors. This version ships now because of the other improvements it carries;
-refinements to the Cards of Truth timing will follow in a coming release.
-
-### Added
-
-- **Cards of Truth inside the wheel.** Every sign can show the card of its
-  ruling planet directly in the wheel and in the South and North Indian
-  charts, so the card index reads without leaving the chart. Probably the
-  most important update of this release.
-- **Full-size chart overlay.** The second chart is no longer a miniature:
-  it overlays the current chart at full size. You can overlay a varga chart
-  on top of the D1, and overlay a Vimshottari transit date on top of the
-  current chart in one click.
-- **Avastha reworked.** The panel is recalculated and rebuilt, and double
-  clicking opens a much better view: descriptions, help, cleaner visuals,
-  and many more details.
-- **A new Yogas screen** covering exchange yogas and the Nabhasa yogas,
-  each with its diagram and description.
-- **Tajika yogas**: a calculation bug fixed and a better presentation.
-- **Colour saturation control**, a feature requested by a member: tone the
-  whole interface down or up in one move without leaving your theme.
+This release fixes packaging gaps in the Linux and macOS editions of 4.4.2.
 
 ### Fixed
 
-- On macOS, "Move a chart to another profile" did nothing when clicked.
-- The right-click menu on Nisarga dasha rows was permanently greyed out.
-- The chart folder chosen during first-run setup was not applied.
-- The South Indian chart now defaults to the conventional style.
+- Aditya and avastha descriptions now display in the Linux and macOS
+  editions. On a fresh install of the previous version they could appear
+  blank.
+- The Linux and Windows editions now ship the correct Core application icon.
 
 Questions and bug reports: astrologielorris@gmail.com
 
