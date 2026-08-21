@@ -107,16 +107,15 @@ PRO_FEATURES: Final[tuple[str, ...]] = (
 
 PRO_PRICE_DISPLAY: Final[str] = "€29.99 / month"
 
-# ─── Account tiers (website parity) ─────────────────────────────────────────
-# Varuna360 offers three account tiers that gate content on the website.
-# The desktop software runs with every Core feature regardless of account
-# state — account tiers unlock articles and web-app features at
-# 360heartsinthesky.com, not desktop features.
+# ─── Subscription plans (website parity) ────────────────────────────────────
+# This desktop app is unlocked by a license key from the Explorateur plan
+# (EUR9.99) or Pro. There is no in-app account; the user pastes a key copied
+# from their 360heartsinthesky.com account (like the mobile app).
 #
-# These tier names MUST match the website exactly. The Account menu, the
-# first-launch welcome popup, the View Tiers dialog, and the public README
-# all render these constants verbatim. If the website renames a tier,
-# update this file and every surface updates automatically.
+# These plan names MUST match the website exactly. The View Plans dialog and
+# the first-launch welcome popup render these constants verbatim. If the
+# website renames a plan, update this file and every surface updates
+# automatically.
 #
 # Language rule: PRODUCT framing only. Charity-style vocabulary and
 # solicitation metaphors are rejected mechanically by the release gate
@@ -128,46 +127,61 @@ PRO_PRICE_DISPLAY: Final[str] = "€29.99 / month"
 # in check_static.py for the exact enforced forms before adding new
 # tier-related copy here.
 
-TIER_ANONYMOUS_NAME: Final[str] = "No account"
-TIER_REGISTERED_NAME: Final[str] = "Registered free"
-TIER_EXPLORER_NAME: Final[str] = "Explorer"
+# Display plans shown in the License > View Plans dialog. FOUR plans, in the
+# website's display order (matched to the live site, kept in sync with the
+# website session):
+#   TIER_FREE        Free (EUR0)
+#   TIER_MOBILE      Varuna360 Mobile (EUR3) — mobile + web only, NOT this desktop
+#   TIER_EXPLORATEUR Explorateur (EUR9.99) — the plan whose key unlocks THIS desktop
+#   TIER_PRO         Pro (EUR29.99) — COMING SOON, not purchasable yet
+#
+# Only an Explorateur license key (or an admin comp) activates the desktop.
+# Free and Mobile keys do NOT unlock it. Pro is a coming-soon teaser: it is
+# marked as such and never offered for purchase from this dialog.
+TIER_FREE_NAME: Final[str] = "Free"
+TIER_MOBILE_NAME: Final[str] = "Varuna360 Mobile"
+TIER_EXPLORATEUR_NAME: Final[str] = "Explorateur"
+TIER_PRO_NAME: Final[str] = "Pro"
 
-TIER_ANONYMOUS_PRICE: Final[str] = "€0"
-TIER_REGISTERED_PRICE: Final[str] = "€0"
-TIER_EXPLORER_PRICE: Final[str] = "€9.99 / month"
+TIER_FREE_PRICE: Final[str] = "€0"
+TIER_MOBILE_PRICE: Final[str] = "€3 / month"
+TIER_EXPLORATEUR_PRICE: Final[str] = "€9.99 / month"
+TIER_PRO_PRICE: Final[str] = "€29.99 / month"
 
-TIER_ANONYMOUS_FEATURES: Final[tuple[str, ...]] = (
-    "Natal chart calculation",
-    "Manual entry",
+# Pro is not yet available. The dialog reads this flag to grey the column and
+# show a "coming soon" tag instead of any purchase affordance.
+TIER_PRO_COMING_SOON: Final[bool] = True
+
+# The plan whose key unlocks this desktop app. The dialog reads this to draw
+# the gold "unlocks this app" highlight on the right column.
+TIER_DESKTOP_UNLOCK_NAME: Final[str] = "Explorateur"
+
+TIER_FREE_FEATURES: Final[tuple[str, ...]] = (
+    "Natal chart calculation, manual entry",
     "Element pie charts plus positions table",
     "Dominant Aditya description",
-    "Ascendant plus House Strength",
+    "Ascendant plus house strength",
 )
 
-TIER_REGISTERED_FEATURES: Final[tuple[str, ...]] = (
-    "All No account features",
-    "Celebrity database",
-    "Transit ring (current planets)",
-    "2 save slots",
+TIER_MOBILE_FEATURES: Final[tuple[str, ...]] = (
+    "Android mobile app (installable APK) plus web app",
+    "A single license key for both",
+    "Without the Varuna360 Lite desktop software",
+    "Without the website Explorer tools",
 )
 
-TIER_EXPLORER_FEATURES: Final[tuple[str, ...]] = (
-    "All Registered free features",
-    "CHTK file import",
-    "Full transit calculation plus Now button",
-    "Dignified Planets panel",
-    "Divine Cow (Kamadhenu) panel",
-    "Planet Strength (Shadbala) panel",
-    "20 save slots",
+TIER_EXPLORATEUR_FEATURES: Final[tuple[str, ...]] = (
+    "Mobile app (Android plus web) included",
+    "Varuna360 Lite desktop (Windows, Linux, Mac) plus desktop license key",
+    "All website Explorer tools (advanced calculator, Avastha, Shadbala, Divine Cow, transits)",
+    "CHTK import, 20 save slots, premium articles",
 )
 
-# Subscription slider — every paid option is recurring monthly.
-# The website offers a sliding-scale monthly subscription from €3 to
-# €14.99, with €14.99 as the suggested amount. Paying €9.99/month or
-# more also grants the Explorer website tier.
-SUBSCRIPTION_MIN_DISPLAY: Final[str] = "€3 / month"
-SUBSCRIPTION_SUGGESTED_DISPLAY: Final[str] = "€14.99 / month"
-SUBSCRIPTION_EXPLORER_THRESHOLD_DISPLAY: Final[str] = "€9.99 / month"
+TIER_PRO_FEATURES: Final[tuple[str, ...]] = (
+    "Everything in Explorateur",
+    "Pro only desktop plus mobile features (AI transit analysis, and more)",
+    "Coming soon, not yet available",
+)
 
 # Welcome popup body — shown once per install before the main window
 # appears, and ONLY when running from source (should_show_welcome() in
@@ -178,15 +192,15 @@ SUBSCRIPTION_EXPLORER_THRESHOLD_DISPLAY: Final[str] = "€9.99 / month"
 # Subscription-only language, product framing throughout.
 WELCOME_TITLE: Final[str] = "Welcome to Varuna360"
 WELCOME_BODY: Final[str] = (
-    "Varuna360 is a product. You are running the Core edition from source — "
+    "Varuna360 is a product. You are running the Core edition from source, "
     "free to use for as long as you want, every feature, no time limit, "
     "no nagging.\n\n"
     "When you decide it is worth paying for, you can subscribe at "
-    "360heartsinthesky.com from €3 / month (suggested: €14.99 / month). "
-    "Subscribing at €9.99 / month or more unlocks the full web app and "
-    "the mobile app.\n\n"
-    "You can sign in anytime from the Account menu. No account is required "
-    "to use the software."
+    "360heartsinthesky.com. The Explorateur plan (€9.99 / month) unlocks the "
+    "Varuna360 Lite desktop app, the mobile app, and all the website Explorer "
+    "tools.\n\n"
+    "Once you have a plan, copy your license key from your account page and "
+    "paste it into the app from the License menu. No sign in is required."
 )
 
 # ─── Screenshot paths ───────────────────────────────────────────────────────

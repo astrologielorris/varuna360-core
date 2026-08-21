@@ -19,6 +19,32 @@ _ORIGINAL_ARGV = sys.argv.copy()
 _DEBUG_MODE = '-d' in sys.argv or '--debug' in sys.argv
 _LITE_MODE = True  # Hardcoded for Lite distribution
 
+# Licensing is license-KEY only (mobile parity, td-zoc7): the account/sign-in
+# model is retired. The desktop holds no account; the user pastes a license key
+# copied from their 360heartsinthesky.com account and it is exchanged for a
+# signed token (managers/license_key.py, apps/widgets/key_dialog.py). There is
+# no email/password or Google sign-in anywhere in the app.
+
+
+def _is_bundled() -> bool:
+    """Whether the license-KEY gate must enforce at launch and mid-run.
+
+    Keyed on state.user_data.is_frozen(), the canonical packaging detector: it
+    is True for EVERY packager this app ships with, not just the ones that set
+    sys.frozen. PyInstaller and the AppImage set sys.frozen; the macOS build is
+    Nuitka --mode=app, which sets NEITHER sys.frozen NOR _MEIPASS and is detected
+    via its module-level __compiled__ global instead. Using sys.frozen alone left
+    the macOS build ungated. A packaged build ALWAYS enforces and no environment
+    change can switch the gate off. VARUNA360_BUNDLED=1 is a source-run opt-in
+    that lets a developer test the gate without freezing a binary (opting IN to
+    enforcement is harmless). Both main()'s boot gate and the mid-run re-gate
+    call this, so the security predicate lives in exactly one place.
+    """
+    import os
+    from state.user_data import is_frozen
+    return is_frozen() or \
+        os.environ.get("VARUNA360_BUNDLED", "").strip() == "1"
+
 # Remove flags from sys.argv BEFORE importing other modules
 if _DEBUG_MODE:
     sys.argv = [arg for arg in sys.argv if arg not in ('-d', '--debug')]
@@ -1485,34 +1511,37 @@ class ChartGUI(QMainWindow):
 
         self._language_actions.get(self.sign_language, self._language_actions["en"]).setChecked(True)
 
-        # Account Menu — top-level, sibling of File/View/Help (NOT under Help).
-        # The desktop app runs anonymously by default; this menu is where users
-        # who want to attach a website account tier (free or paid) sign in or
-        # create an account. All three entries lazy-load their dialogs so an
-        # anonymous user never pays the import cost.
-        account_menu = menubar.addMenu("&Account")
+        # License Menu — top-level, sibling of File/View/Help. The desktop has
+        # no account: you paste a license key copied from your website account
+        # to activate it (like the mobile app). Two entries only: enter the key,
+        # and see the plans. Both lazy-load their dialogs.
+        license_menu = menubar.addMenu("&License")
 
-        sign_in_action = QAction("&Sign In…", self)
-        sign_in_action.setStatusTip(
-            "Sign in to a Varuna360 account (optional — the desktop works "
-            "fully without an account)"
+        enter_key_action = QAction("Enter &License Key…", self)
+        enter_key_action.setStatusTip(
+            "Paste the license key from your 360heartsinthesky.com account to "
+            "activate the app"
         )
-        sign_in_action.triggered.connect(self._show_sign_in_dialog)
-        account_menu.addAction(sign_in_action)
+        enter_key_action.triggered.connect(self._show_key_dialog)
+        license_menu.addAction(enter_key_action)
+        self._enter_key_action = enter_key_action
 
-        create_account_action = QAction("&Create Account…", self)
-        create_account_action.setStatusTip(
-            "Open the subscription page to create an account or start a subscription"
-        )
-        create_account_action.triggered.connect(self._open_subscribe_page)
-        account_menu.addAction(create_account_action)
+        # Keep the menu a live status surface (the mobile app's trial tile
+        # parity, no new chrome row): each time the menu opens, refresh the
+        # separator label to show the trial countdown. aboutToShow fires before
+        # the menu paints, so the count is never stale.
+        self._trial_status_action = QAction("", self)
+        self._trial_status_action.setEnabled(False)
+        self._trial_status_action.setVisible(False)
+        license_menu.addAction(self._trial_status_action)
+        license_menu.aboutToShow.connect(self._refresh_license_menu_status)
 
-        account_menu.addSeparator()
+        license_menu.addSeparator()
 
-        view_tiers_action = QAction("&View Tiers…", self)
-        view_tiers_action.setStatusTip("Compare the three Varuna360 account tiers")
-        view_tiers_action.triggered.connect(self._show_tier_dialog)
-        account_menu.addAction(view_tiers_action)
+        view_plans_action = QAction("View &Plans…", self)
+        view_plans_action.setStatusTip("See the Varuna360 subscription plans")
+        view_plans_action.triggered.connect(self._show_tier_dialog)
+        license_menu.addAction(view_plans_action)
 
         # Help Menu
         help_menu = menubar.addMenu("&Help")
@@ -1892,12 +1921,26 @@ class ChartGUI(QMainWindow):
         """Silently refresh the license token in a background thread."""
         if not hasattr(self, '_license_state') or self._license_state is None:
             return
+
+        # Free-trial session: there is no key to re-validate. Re-evaluate the
+        # trial window locally (no network, no worker). While it is still open
+        # keep granting; once it ends, re-gate exactly like a lapsed license.
+        # start_if_absent=False so a consumed trial can never be revived here.
+        if getattr(self._license_state, "is_trial", False):
+            from managers.license_key import trial_state
+            from managers.license_manager import LicenseState
+            still = trial_state(start_if_absent=False)
+            self._on_license_refresh_done(still if still is not None else LicenseState())
+            return
+
         # Don't start a new refresh if the previous one is still running
         if hasattr(self, '_license_refresh_worker') and self._license_refresh_worker and self._license_refresh_worker.isRunning():
             return
 
-        from managers.license_workers import LicenseRefreshWorker
-        self._license_refresh_worker = LicenseRefreshWorker(self._license_state)
+        # Re-validate the stored license KEY (KeyRefreshWorker enforces the
+        # grace bound). There is no account/Firebase refresh path any more.
+        from managers.license_workers import KeyRefreshWorker
+        self._license_refresh_worker = KeyRefreshWorker(self._license_state)
         self._license_refresh_worker.finished.connect(self._on_license_refresh_done)
         self._license_refresh_worker.error.connect(
             lambda msg: print(f"Error: license refresh failed: {msg}")
@@ -1908,15 +1951,34 @@ class ChartGUI(QMainWindow):
         """Handle license refresh result (called on main thread via signal)."""
         self._license_state = updated_state
         if updated_state.is_licensed:
-            pass
-        else:
-            from PySide6.QtWidgets import QMessageBox
-            QMessageBox.warning(
-                self, "Subscription Expired",
-                "Your Varuna360 subscription has expired.\n\n"
-                "Please renew at 360heartsinthesky.com to continue.",
-                QMessageBox.StandardButton.Ok,
+            return
+
+        # A bundled session that loses its license mid-run (subscription lapsed,
+        # key revoked, grace elapsed) must actually re-gate, not merely warn:
+        # re-prompt for a key and exit if declined, mirroring the boot gate.
+        # Inert for the anonymous source build. Same predicate as the boot gate
+        # (_is_bundled): a frozen build always re-gates and the env alone can
+        # neither enable nor disable it.
+        _bundled = _is_bundled()
+        if _bundled:
+            from apps.widgets.key_dialog import KeyDialog
+            dialog = KeyDialog(
+                parent=self,
+                message="Your access has ended. Enter your license key to continue.",
+                show_continue_without_account=False,
             )
+            if dialog.exec() == KeyDialog.DialogCode.Accepted:
+                self._license_state = dialog.get_license_state()
+                return
+            sys.exit(0)
+
+        from PySide6.QtWidgets import QMessageBox
+        QMessageBox.warning(
+            self, "Subscription Expired",
+            "Your Varuna360 subscription has expired.\n\n"
+            "Please renew at 360heartsinthesky.com to continue.",
+            QMessageBox.StandardButton.Ok,
+        )
 
     # -------------------------------------------------------------------------
     # Sliding drawer toggles (compact mode only)
@@ -2587,17 +2649,18 @@ class ChartGUI(QMainWindow):
 
     def _show_about(self):
         """Show about dialog."""
+        from core.bug_report import app_version
         QMessageBox.about(
             self,
             "About Varuna360",
             "<h2>Varuna360</h2>"
             "<p><b>Tropical Vedic Astrology</b></p>"
-            "<p>Version: 1.0</p>"
+            f"<p>Version: {app_version()}</p>"
             "<p>A professional astrology chart calculator combining the "
-            "Aditya Circle system with Tropical Western astrology, "
-            "powered by Swiss Ephemeris calculations.</p>"
+            "Aditya Circle system with Tropical Western and Sidereal "
+            "astrology, powered by Swiss Ephemeris calculations.</p>"
             "<p>Default settings follow Ernst Wilhelm's Tropical Vedic approach. "
-            "Classic Western options are also available.</p>"
+            "Classic Western and Sidereal options are also available.</p>"
             "<p><i>&copy; 2024-2026 Lorris Turpin / 360 Hearts in the Sky</i></p>"
             "<p>License: AGPL-3.0</p>"
         )
@@ -2641,35 +2704,75 @@ class ChartGUI(QMainWindow):
         )
 
     # ──────────────────────────────────────────────────────────────────
-    # Account menu handlers (top-level Account menu — sibling of Help)
+    # License menu handlers (top-level License menu — sibling of Help)
     # ──────────────────────────────────────────────────────────────────
 
-    def _show_sign_in_dialog(self):
-        """Open the login dialog on user request from the Account menu.
+    def _show_key_dialog(self):
+        """Open the paste-key dialog from the License menu.
 
-        Varuna360 Core runs anonymously by default — main() skips the
-        login flow unless VARUNA360_BUNDLED=1 is set. This handler lets
-        anonymous users explicitly sign in at any time from the menu
-        (to attach a website tier that matches their subscription).
-
-        If sign-in succeeds, the resulting LicenseState is stashed on
-        the window so the periodic refresh worker picks it up. If the
-        user closes the dialog (reject / continue without account),
-        nothing changes and the anonymous state persists.
+        The desktop has no account: the user pastes a license key copied from
+        their 360heartsinthesky.com account. On success the LicenseState is
+        stashed on the window so the periodic key-refresh worker picks it up;
+        if the dialog is closed, nothing changes.
         """
-        from apps.widgets.login_dialog import LoginDialog
-        dialog = LoginDialog(parent=self)
-        if dialog.exec() == LoginDialog.DialogCode.Accepted:
-            self._license_state = dialog.get_license_state()
+        from apps.widgets.key_dialog import KeyDialog
+        dialog = KeyDialog(
+            parent=self,
+            trial_days_left=self._trial_days_left(),
+            license_state=getattr(self, "_license_state", None),
+        )
+        if dialog.exec() == KeyDialog.DialogCode.Accepted:
+            state = dialog.get_license_state()
+            # Accepted with no state means the user dismissed an already-licensed
+            # dialog without entering a new key; keep the session's state.
+            if state is not None:
+                self._license_state = state
 
-    def _open_subscribe_page(self):
-        """Open the subscription page in the default browser."""
-        import webbrowser
-        from core.pro_marketing import PRO_UPGRADE_URL
-        webbrowser.open(PRO_UPGRADE_URL)
+    def _trial_days_left(self) -> int:
+        """Whole days remaining in the no-key free trial, or 0 when not on trial.
+
+        Reads the LicenseState already resolved at boot / by the periodic
+        refresh; makes no engine or server call. Returns 0 for a licensed build
+        and for the anonymous source path (where _license_state is None).
+        """
+        state = getattr(self, "_license_state", None)
+        if state is not None and getattr(state, "is_trial", False):
+            try:
+                return max(0, int(getattr(state, "trial_days_left", 0) or 0))
+            except (TypeError, ValueError, OverflowError):
+                return 0
+        return 0
+
+    def _refresh_license_menu_status(self):
+        """Show the current license status in the License menu.
+
+        A disabled status item reports either the trial countdown ("Free trial:
+        N days left") or, for a key-licensed session, a green-check confirmation
+        ("License active: Explorateur"). This gives an always-reachable proof of
+        purchase that mirrors the mobile app, without adding a toolbar row.
+        Hidden when there is no license and no trial.
+        """
+        action = getattr(self, "_trial_status_action", None)
+        if action is None:
+            return
+        days = self._trial_days_left()
+        if days > 0:
+            unit = "day" if days == 1 else "days"
+            action.setText(f"Free trial: {days} {unit} left")
+            action.setVisible(True)
+            return
+        state = getattr(self, "_license_state", None)
+        if state is not None and getattr(state, "is_licensed", False):
+            from apps.widgets.key_dialog import _tier_display_name
+            action.setText(
+                f"✓ License active: {_tier_display_name(getattr(state, 'tier', ''))}"
+            )
+            action.setVisible(True)
+            return
+        action.setVisible(False)
 
     def _show_tier_dialog(self):
-        """Open the three-tier comparison dialog (singleton, non-modal)."""
+        """Open the plans comparison dialog (singleton, non-modal)."""
         if hasattr(self, '_tier_dialog') and self._tier_dialog is not None:
             self._tier_dialog.raise_()
             self._tier_dialog.activateWindow()
@@ -6835,11 +6938,10 @@ def main():
         _boot_check_ms = int(os.environ.get("VARUNA360_BOOT_CHECK_MS", "0"))
     except ValueError:
         _boot_check_ms = 0
-    # Clamp to a sane ceiling. The arming and the gate-bypass this value drives
-    # are BOTH restricted to non-bundled builds (see _allow_boot_bypass below),
-    # so in a bundled build this user-settable env var has no effect at all and
-    # cannot be used to skip sign-in. The clamp is a second belt: even in a
-    # non-bundled test build the app quits itself within 30 s.
+    # Clamp to a sane ceiling. This value only ever arms the auto-quit timer and
+    # skips the NON-auth onboarding gates (see _boot_check_active below); it can
+    # NEVER skip the license gate, which runs unconditionally when IS_BUNDLED.
+    # The clamp is a second belt: even a source test build quits within 30 s.
     _boot_check_ms = min(max(_boot_check_ms, 0), 30_000)
 
     # Enable Ctrl+C to quit immediately (no waiting)
@@ -6905,69 +7007,93 @@ def main():
     from managers.context_menu_manager import install_search_context_menu
     install_search_context_menu(app)
 
-    # ── License Validation ──────────────────────────────────────
+    # ── License gate ────────────────────────────────────────────
     # Varuna360 Core is AGPL-3.0 and runs anonymously from source. The
-    # forced-login flow only activates when VARUNA360_BUNDLED=1 is set
-    # in the environment — that env var is injected by the PyInstaller
-    # wrapper used for the future paid installer distribution. Source
-    # builds (git clone), the AppImage self-host, and anyone running
-    # python apps/core_gui_qt.py directly get the anonymous path and
-    # never see a login dialog at launch.
+    # license-KEY gate (paste an Explorateur key, verify it offline) is
+    # mandatory in any PACKAGED build and optional from source.
     #
-    # .strip() defends against trailing whitespace on the env var value.
-    # Without it, a .env file entry like "VARUNA360_BUNDLED=1\n" would
-    # silently disable enforcement in the future bundled installer, which
-    # is exactly the kind of hidden regression that's worth one extra
-    # character to prevent.
+    # Enforcement is keyed on sys.frozen, NOT on an environment variable.
+    # Every shipped edition is a frozen (PyInstaller/Nuitka) binary, so a
+    # frozen build always enforces: clearing the process environment or
+    # running an inner ELF cannot switch the gate off. VARUNA360_BUNDLED=1
+    # survives only as a source-run opt-in that lets a developer TEST the
+    # gate without freezing a binary. Opting IN to more enforcement is
+    # harmless; there is no env value that opts OUT of a frozen build.
+    # (History: this was env-only, and nothing in the shipped path ever set
+    # the var, so the gate was dead in every packaged build. Keying on
+    # sys.frozen fixes that and, because a shipped build is always frozen,
+    # also removes the VARUNA360_BOOT_CHECK_MS auth-bypass in one move.)
     #
     # The IS_BUNDLED split keeps commercial enforcement and software
     # features decoupled: _LITE_MODE forces ChartGUI (skips Pro import),
     # while IS_BUNDLED is "which commercial model applies".
     #
-    # STRUCTURAL FREEDOM 0 PROTECTION: the anonymous source path does
-    # not import managers.license_manager at all. license_state stays
-    # None on anonymous boot, and the 12h refresh flow (_refresh_license
-    # around line 1272) handles None as "no license to refresh". Even
-    # if a future license_manager edit accidentally introduced a module-
-    # level network call or thread start, the anonymous path would be
-    # unaffected because Python never executes license_manager.py on
-    # this branch.
-    IS_BUNDLED = os.environ.get("VARUNA360_BUNDLED", "").strip() == "1"
+    # STRUCTURAL FREEDOM 0 PROTECTION: the anonymous (non-frozen, no-env)
+    # path does not import managers.license_manager or managers.license_key
+    # at all. license_state stays None on anonymous boot, and the refresh
+    # flow handles None as "no license to refresh".
+    IS_BUNDLED = _is_bundled()
 
-    # The headless-boot-check bypass is honoured ONLY in a non-bundled build.
-    # In a bundled build the installer/launcher sets VARUNA360_BUNDLED=1, sign-in
-    # is mandatory, and VARUNA360_BOOT_CHECK_MS (a documented string in the
-    # shipped binary) must NOT be able to skip ANY gate — otherwise it is an auth
-    # bypass yielding the full app for 30 s per launch, renewable. The build-time
-    # boot check always runs non-bundled (VARUNA360_BUNDLED unset), so it still
-    # skips onboarding and reaches the main window. The 30 s auto-quit is armed
-    # here too, so the env var has zero effect in a bundled build.
-    _allow_boot_bypass = _boot_check_ms > 0 and not IS_BUNDLED
-    if _allow_boot_bypass:
-        QTimer.singleShot(_boot_check_ms, app.quit)
+    # The build-time headless boot check (VARUNA360_BOOT_CHECK_MS) skips only the
+    # NON-auth onboarding gates (first-run, welcome) and arms an auto-quit timer
+    # so a scripted launch cannot hang. It must NEVER skip the license gate:
+    # letting a user-settable env var reach the full app would be an auth bypass.
+    # So the auth gate below always runs. A frozen build boots past it either
+    # with a valid key or, on a fresh install, via the no-key free trial (which
+    # is also what lets build_lite.py step_boot_check pass in an empty scratch
+    # home) never by an env flag.
+    _boot_check_active = _boot_check_ms > 0
 
     if IS_BUNDLED:
-        from managers.license_manager import attempt_cached_login
-        license_state = attempt_cached_login()
+        # License-KEY gate: the user pastes a license key copied from their
+        # 360heartsinthesky.com account; it is exchanged for a signed token and
+        # verified offline (managers/license_key.py). No account, no sign-in.
+        # Declining means exiting, so the "Continue without a key" button is
+        # hidden here.
+        from managers.license_key import (
+            attempt_key_login, trial_state, ensure_install_anchor,
+            has_been_licensed,
+        )
+        # Stamp the trial anchor at install time (idempotent) BEFORE the key
+        # check, so the 7-day window is measured from first launch even for a
+        # user who licenses immediately. Without this, a revoked payer whose
+        # caches are later cleared would be handed a fresh trial.
+        ensure_install_anchor()
+        license_state = attempt_key_login()
         if not license_state.is_licensed:
-            # Bundled installer — sign-in is required. The "Continue
-            # without account" button is explicitly disabled in this
-            # context: bundled users paid for access, and declining
-            # sign-in means exiting. The LoginDialog hides the button
-            # entirely rather than showing a misleading "Continue"
-            # label that would actually trigger sys.exit(0).
-            from apps.widgets.login_dialog import LoginDialog
-            login_dialog = LoginDialog(show_continue_without_account=False)
-            result = login_dialog.exec()
-            if result == LoginDialog.DialogCode.Accepted:
-                license_state = login_dialog.get_license_state()
+            # No valid key: fall back to the no-key free trial, UNLESS this
+            # machine was ever licensed (a former payer re-keys, never re-trials;
+            # this guard holds even if the install anchor failed to persist).
+            # First launch starts the trial (app opens immediately, no dialog);
+            # within the window it keeps granting. Once ended, require a key.
+            trial = None if has_been_licensed() else trial_state()
+            if trial is not None:
+                license_state = trial
             else:
-                sys.exit(0)
+                from apps.widgets.key_dialog import KeyDialog
+                key_dialog = KeyDialog(
+                    show_continue_without_account=False,
+                    message=(
+                        "Your 7-day free trial has ended. Enter your license "
+                        "key to continue."
+                    ),
+                )
+                if key_dialog.exec() == KeyDialog.DialogCode.Accepted:
+                    license_state = key_dialog.get_license_state()
+                else:
+                    sys.exit(0)
     else:
         # Anonymous source/self-host path. NO import of license_manager,
         # NO server call, NO dialog. license_state stays None; downstream
-        # refresh code is None-safe (see line 1272).
+        # refresh code is None-safe.
         license_state = None
+
+    # Arm the boot-check auto-quit ONLY after the auth gate has resolved. A
+    # key-gated (frozen) build reaches this line only if it got past the gate
+    # with a valid token, so the timer can never be used to escape a blocked
+    # gate and produce a vacuous "pass" (fail-closed: no token, no pass).
+    if _boot_check_active:
+        QTimer.singleShot(_boot_check_ms, app.quit)
 
     # ────────────────────────────────────────────────────────────
 
@@ -6975,7 +7101,7 @@ def main():
     # On a fresh install there is no bootstrap config yet, so we ask the
     # user where to store profiles, settings, and session files.
     from state.user_data import needs_first_run_setup
-    if needs_first_run_setup() and not _allow_boot_bypass:
+    if needs_first_run_setup() and not _boot_check_active:
         from apps.widgets.first_run_dialog import FirstRunDialog
         first_run = FirstRunDialog()
         if first_run.exec() != FirstRunDialog.DialogCode.Accepted:
@@ -6987,7 +7113,7 @@ def main():
     # popup never shows again. Intrusive by design: the user wanted
     # the welcome message to register before the main UI distracts them.
     from apps.widgets.welcome_dialog import WelcomeDialog, should_show_welcome
-    if should_show_welcome() and not _allow_boot_bypass:
+    if should_show_welcome() and not _boot_check_active:
         welcome = WelcomeDialog()
         welcome.exec()
 

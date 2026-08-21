@@ -24,6 +24,32 @@ Format rules, because a script parses this file:
 
 ---
 
+## 4.5.0 (2026-08-20)
+
+The desktop app changes how it is unlocked: a license key, like the mobile app,
+with a free trial so you can try everything first.
+
+### Added
+
+- **License keys, like the mobile app.** The desktop app is now unlocked with a
+  license key you copy from your 360heartsinthesky.com account and paste into
+  the app, instead of signing in. Paste it once from the new License menu; the
+  app verifies it and keeps working offline between checks.
+- **A 7 day free trial.** A fresh install runs with every feature for seven
+  days with no key, so you can try the app before you subscribe. The License
+  menu and the activation window show how many trial days are left, the same
+  countdown the mobile app shows. After the seven days it asks for a license
+  key.
+- **A License menu** with "Enter License Key" and "View Plans", replacing the
+  old account sign in. View Plans shows the current plans and which one unlocks
+  the desktop app.
+- **One click browser activation.** Instead of copying the key by hand, click
+  "Activate with my browser": your browser opens your 360heartsinthesky.com
+  account, you approve once, and the app activates itself. The manual key
+  field stays right below it for offline machines and anyone who prefers it.
+
+Questions and bug reports: astrologielorris@gmail.com
+
 ## 4.4.3 (2026-08-19)
 
 This release fixes packaging gaps in the Linux and macOS editions of 4.4.2.
