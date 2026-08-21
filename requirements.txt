@@ -20,7 +20,12 @@ python-dateutil>=2.8.0
 # required h3==3.7.7 (no wheels for Py3.14, source build fails on
 # modern CMake). Upgrading to 8.x lets pip pull a modern h3 wheel.
 # Do NOT pin h3 directly — timezonefinder picks the compatible version.
-timezonefinder>=8.0
+# <8.3: 8.3.0 (2026-08-19) split the ~60 MB dataset into a separate
+# timezonefinder-data package, which the macOS Nuitka bundling
+# (--include-package-data=timezonefinder) does not pick up — CI's own
+# bundle gate then fails on both arches. Lift only together with the
+# packaging scripts and a data-present check on every platform.
+timezonefinder>=8.0,<8.3
 
 # GUI framework
 PySide6>=6.6.0
