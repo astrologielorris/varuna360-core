@@ -613,7 +613,14 @@ def clear_token_cache():
             cache_file.write_bytes(b'\x00' * cache_file.stat().st_size)
         except OSError:
             pass  # best effort — file might be locked
-        cache_file.unlink(missing_ok=True)
+        try:
+            cache_file.unlink(missing_ok=True)
+        except OSError:
+            # Best effort: a locked file or denied directory must NOT propagate.
+            # Callers on the revoke path rely on this returning so they can
+            # de-license the session; a raised unlink would leave them licensed
+            # (fail-open). The token is already zeroed above, so access is gone.
+            logger.warning("Token cache unlink failed; file was zeroed")
         logger.info("Token cache cleared (overwritten + deleted)")
 
 
@@ -630,6 +637,11 @@ class LicenseState:
         self.firebase_refresh_token = ""
         self.license_token = ""
         self.grace_active = False
+        # Free-trial fields (no-key 7-day trial on packaged builds). is_trial is
+        # True when access is granted by the trial rather than a license key;
+        # trial_days_left is the whole days remaining (>= 1 while is_trial).
+        self.is_trial = False
+        self.trial_days_left = 0
 
     def to_dict(self) -> dict:
         return {
@@ -638,6 +650,8 @@ class LicenseState:
             "email": self.email,
             "valid_until": self.valid_until,
             "grace_active": self.grace_active,
+            "is_trial": self.is_trial,
+            "trial_days_left": self.trial_days_left,
         }
 
 
@@ -867,16 +881,25 @@ def logout(state: LicenseState) -> LicenseState:
 # ─── Helpers ──────────────────────────────────────────────────────────
 
 def _get_app_version() -> str:
-    """Return the app version string."""
+    """Return the app version string, from the shipped VERSION file.
+
+    NOT from app_settings.json: its "version" field is the SETTINGS SCHEMA
+    version ("2.0", managers/settings_manager.py DEFAULT_SETTINGS), which is
+    unrelated to the app release. Reading it here made the browser-activation
+    consent page (and the exchange binding metadata) report "Varuna360 2.0"
+    for a 4.5.0 build. The VERSION file ships in both the source tree and the
+    packaged app (build_lite.py ship list; same mechanism core/bug_report.py
+    relies on).
+    """
     try:
-        from state.user_data import get_user_data_dir, get_project_root
-        settings_path = (get_user_data_dir() or get_project_root()) / "app_settings.json"
-        if settings_path.exists():
-            data = json.loads(settings_path.read_text())
-            return data.get("version", "3.0.0")
+        from state.user_data import get_project_root
+        version = (get_project_root() / "VERSION").read_text(
+            encoding="utf-8").strip()
+        if version:
+            return version
     except Exception:
         pass
-    return "3.0.0"
+    return "unknown"
 
 
 class LicenseError(Exception):
