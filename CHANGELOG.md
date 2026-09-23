@@ -26,34 +26,53 @@ Format rules, because a script parses this file:
 
 ## 5.0.0 (2026-09-23)
 
-Version 5.0 is the long term support release of Core. It adds Zodiacal
-Releasing, a Human Design BodyGraph, a new action bar and a much more
-adjustable display.
+The most requested change was less color. This release is for everyone who
+prefers an older, more natural, down to earth look, and it lets you tweak
+that look to your liking. It also makes the app comfortable on lower
+resolution screens.
 
 ### Added
 
+- **The Aditya retinue on the South Indian chart.** Until now, seeing the
+  Aditya retinue meant switching to the Wheel chart. The South Indian chart
+  now shows the retinue just like the Wheel, so if you prefer the South
+  Indian chart you can use it fully, for everything.
+- **A natural theme for the South Indian chart.** A new theme built from
+  natural tree and wood colors, for those who prefer an older or natural look
+  with less color.
+- **Classic planet glyphs.** Standard planet glyphs, like in any astrology
+  application, for those who do not like the planet icon designs. Choose any
+  color you want for them.
+- **A guide to the Aditya structure.** It explains how to read the chart from
+  a different point of view and gives clues for interpretation, with examples
+  for each Aditya sign.
+- **A new action bar.** A major improvement in appearance, and it adapts to
+  lower resolution screens. The three zodiac choices are always visible and
+  the title shows whose chart is open. The classic bar stays available in
+  Settings.
+- **Made for lower resolution screens.** Lower resolution screens were one of
+  the main problems of the app. A lot of work went into making every page
+  adapt to them, and you can now change the font size of every text area so
+  that every character is easy to read on any screen.
+- **A better Font Sizes page in Settings,** with a clear view of each text
+  area and a preview of what it changes, and pop-up windows follow your Info
+  text size.
+- **Sign display choice.** Show signs by name, by zodiac picture or by Josh
+  Harper's Aditya glyphs, the same way on every chart style, with adjustable
+  sign shadows.
+- **Theme palette editor** to change the colors of any theme.
 - **Zodiacal Releasing.** A new dasha mode with Fortune, Spirit and the
   Hellenistic lots as releasers, Loosing of the Bond, start time and age for
   every period, and its own Settings tab.
 - **Human Design BodyGraph.** A new chart page with the BodyGraph, the
-  Personality and Design columns, the channel list and the incarnation cross,
-  with zoom, panning and hover on every gate.
-- **A new action bar.** Chart buttons regrouped in one bar with the three
-  zodiac choices always visible and a title that shows whose chart is open.
-  The classic bar stays available in Settings.
+  Personality and Design columns, the channel list and the incarnation cross.
 - **Surya Lagna and Chandra Lagna.** Read any chart from the Sun or the Moon
   as Ascendant with one click.
-- **Sign display choice.** Show signs by name, by zodiac picture or by Josh
-  Harper's Aditya glyphs, the same way on every chart style.
 - **Ten optional bodies and points** from the Swiss Ephemeris, with their own
   symbols, switched on in Settings.
 - **The Nakshatra wheel** as a chart view in Core.
 - **Chart from an image.** Paste a screenshot of birth data and an AI model
   of your choice reads it into a new chart.
-- **Theme palette editor** to change the colors of any theme, plus new planet
-  icon families with per planet colors and adjustable sign shadows.
-- **Simpler font sizes.** Every text area of the app can be sized from one
-  Settings page, and pop-up windows follow the Info text size.
 - **Date format setting** for all dates shown in the app.
 
 Questions and bug reports: astrologielorris@gmail.com
