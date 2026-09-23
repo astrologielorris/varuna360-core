@@ -20,6 +20,23 @@ from datetime import date, timedelta
 from dateutil.relativedelta import relativedelta
 import swisseph as swe
 
+from core.time_utils import format_display_ymd
+
+# td-okit c0-5/c0-7 (sol 6 / GLM P1, sol delta P2): Nisarga rows are NOT threaded
+# with a calendar `convention`, unlike the Vimshottari/ZR emitters. Those derive
+# their civil date from a JD via display_revjul, whose Julian-vs-Gregorian
+# rendering the setting controls. Nisarga instead builds its dates with Python
+# `datetime.date` + `timedelta`/`relativedelta`, which is ALWAYS proleptic
+# Gregorian. It DOES compute period-start JDs (swe.julday, below) for row
+# selection / transit navigation, but there is no display-side JD REVERSE
+# conversion: every visible date and age comes straight from the Python date
+# objects, so no calendar convention reaches this display path. format_display_ymd
+# only orders already-resolved (y, m, d) fields, so display.date_format is the
+# only display setting that reaches these rows, and the CLI passes it explicitly.
+# (The remote layer's read_dasha derives its ISO from those stored JDs via
+# display_revjul, so a pre-1582 Nisarga remote ISO follows the GUI calendar
+# convention by design — a display-convention-inventory item, not handled here.)
+
 # Short planet abbreviations (standard: Mo, Ma, Me, Ve, Ju, Su, Sa)
 PLANET_ABBREV = {
     "Moon": "Mo", "Mars": "Ma", "Mercury": "Me", "Venus": "Ve",
@@ -137,7 +154,7 @@ def _age_str(total_months):
     return f"{years}y {months}m"
 
 
-def format_nisarga_level1(birth_year, birth_month, birth_day):
+def format_nisarga_level1(birth_year, birth_month, birth_day, date_format=None):
     """Format Level 1: natural periods + maturation section at bottom.
 
     Returns list of dicts, each with:
@@ -170,8 +187,8 @@ def format_nisarga_level1(birth_year, birth_month, birth_day):
             try:
                 start_dt = birth + relativedelta(years=start)
                 end_dt = birth + relativedelta(years=end)
-                start_str = start_dt.strftime("%m/%d/%Y")
-                end_str = end_dt.strftime("%m/%d/%Y")
+                start_str = format_display_ymd(start_dt.year, start_dt.month, start_dt.day, date_format)
+                end_str = format_display_ymd(end_dt.year, end_dt.month, end_dt.day, date_format)
                 start_jd = swe.julday(start_dt.year, start_dt.month, start_dt.day, 12.0)
             except (ValueError, OverflowError):
                 pass
@@ -214,8 +231,8 @@ def format_nisarga_level1(birth_year, birth_month, birth_day):
             try:
                 start_dt = birth + relativedelta(years=start)
                 end_dt = birth + relativedelta(years=mat_age)
-                start_str = start_dt.strftime("%m/%d/%Y")
-                end_str = end_dt.strftime("%m/%d/%Y")
+                start_str = format_display_ymd(start_dt.year, start_dt.month, start_dt.day, date_format)
+                end_str = format_display_ymd(end_dt.year, end_dt.month, end_dt.day, date_format)
                 start_jd = swe.julday(start_dt.year, start_dt.month, start_dt.day, 12.0)
             except (ValueError, OverflowError):
                 pass
@@ -238,7 +255,7 @@ def format_nisarga_level1(birth_year, birth_month, birth_day):
     return entries
 
 
-def format_nisarga_level2(birth_year, birth_month, birth_day):
+def format_nisarga_level2(birth_year, birth_month, birth_day, date_format=None):
     """Format Level 2: sub-periods (each main period divided into 12).
 
     Sub-periods: Mo/1, Mo/2... Mo/12, Ma/1, Ma/2...
@@ -272,7 +289,7 @@ def format_nisarga_level2(birth_year, birth_month, birth_day):
             sub_jd = None
             if birth:
                 sub_start_dt = period_start_dt + timedelta(days=(sub_idx - 1) * sub_days)
-                date_str = sub_start_dt.strftime("%m/%d/%Y")
+                date_str = format_display_ymd(sub_start_dt.year, sub_start_dt.month, sub_start_dt.day, date_format)
                 time_str = sub_start_dt.strftime("%H:%M")
 
                 delta = relativedelta(sub_start_dt, birth)

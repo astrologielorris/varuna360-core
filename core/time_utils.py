@@ -87,6 +87,14 @@ def _read_calendar_convention():
     return value if value in _CALENDAR_CONVENTIONS else "astronomical"
 
 
+def read_calendar_convention():
+    """PUBLIC: display.calendar_convention as display_revjul resolves it when
+    given convention=None (td-t761 w2-1). The dasha controller/manager call this
+    to pass an EXPLICIT convention to the pure engine, byte-identically to the
+    settings read the display helpers do internally."""
+    return _read_calendar_convention()
+
+
 def _display_cal_flag(jd_val, convention):
     """Calendar flag for DISPLAY: proleptic forces GREG_CAL, else astronomical."""
     if convention == "proleptic_gregorian":
@@ -109,6 +117,65 @@ def display_revjul(jd_val, convention=None):
     if convention is None:
         convention = _read_calendar_convention()
     return swe.revjul(jd_val, _display_cal_flag(jd_val, convention))
+
+
+# ---------------------------------------------------------------------------
+# DISPLAY-ONLY numeric date format (SPEC-CAL / td-okit decision 7)
+#
+# The dasha rows print a numeric date whose FIELD ORDER is a user setting,
+# orthogonal to the calendar convention above: "MM/DD/YYYY" (US, default) or
+# "DD/MM/YYYY". Like display_revjul this NEVER appears in a civil->JD path — the
+# age column and remote ISO derive from the JD, not from this text. CLIs pass an
+# explicit date_format so they never read app settings.
+# ---------------------------------------------------------------------------
+
+_DATE_FORMATS = ("MM/DD/YYYY", "DD/MM/YYYY")
+
+
+def _read_date_format():
+    """Read display.date_format from settings; default 'MM/DD/YYYY'.
+
+    Lazy import so this module keeps no hard settings dependency (a CLI passing
+    an explicit date_format never reaches this).
+    """
+    try:
+        from managers.settings_manager import get_settings
+        value = get_settings().get("display.date_format", "MM/DD/YYYY")
+    except Exception:
+        return "MM/DD/YYYY"
+    return value if value in _DATE_FORMATS else "MM/DD/YYYY"
+
+
+def read_display_date_format():
+    """PUBLIC: display.date_format as format_display_ymd resolves it when given
+    date_format=None (td-t761 w2-1). The dasha controller/manager call this to
+    pass an EXPLICIT date_format to the pure engine, byte-identically to the
+    settings read the display helpers do internally."""
+    return _read_date_format()
+
+
+def format_display_ymd(year, month, day, date_format=None):
+    """Format an already-resolved civil (year, month, day) as the user's numeric
+    date string. `date_format` None reads display.date_format; an explicit value
+    never touches settings (CLI path). Zero-padded fields, 4-digit year."""
+    if date_format is None:
+        date_format = _read_date_format()
+    mm, dd, yyyy = f"{int(month):02d}", f"{int(day):02d}", f"{int(year):04d}"
+    if date_format == "DD/MM/YYYY":
+        return f"{dd}/{mm}/{yyyy}"
+    return f"{mm}/{dd}/{yyyy}"
+
+
+def format_display_date(jd_val, date_format=None, convention=None):
+    """DISPLAY-ONLY JD -> numeric date string in the user's field order.
+
+    Resolves the civil date through display_revjul (so the calendar convention
+    is honoured), then orders the fields per `date_format` (None -> the setting;
+    an explicit value never touches settings, for CLIs). The JD is never
+    modified. FORBIDDEN in any civil->JD path.
+    """
+    y, m, d, _h = display_revjul(jd_val, convention)
+    return format_display_ymd(y, m, d, date_format)
 
 
 def display_civil_date(year, month, day, convention=None):
@@ -279,6 +346,42 @@ def format_offset_from_hours(hours: float) -> str:
     return format_offset_seconds(int(round(float(hours) * 3600)))
 
 
+def _is_pre_standardization_instant(tz, aware_dt) -> bool:
+    """True when the zone was still on its founding local mean time here.
+
+    Structural detection, not abbreviation matching: most zones label the era
+    'LMT', but some use a named abbreviation (Warsaw 'WMT', +01:24 until
+    1915) that would otherwise pass as ordinary standard time — the von Braun
+    1912 chart was stored at the capital-meridian +01:24 that way. Modern
+    abbreviations like 'MST'/'GMT' are never misread because detection keys
+    on the zone's transition history, not the label.
+    """
+    # pytz: entry [0] is the founding mean time; the era ends at the first
+    # transition that actually CHANGES the offset. Offset-preserving
+    # transitions (tzdata's 1901-12-13 sentinel) don't count — Warsaw still
+    # sat on WMT +01:24 at that sentinel and only standardized in 1915.
+    transitions = getattr(tz, '_utc_transition_times', None)
+    infos = getattr(tz, '_transition_info', None)
+    if transitions and infos and len(transitions) > 1:
+        founding = infos[0][0]
+        birth_utc = aware_dt.replace(tzinfo=None) - aware_dt.utcoffset()
+        for when, info in zip(transitions[1:], infos[1:]):
+            if info[0] != founding:
+                return birth_utc < when
+        return False
+    # zoneinfo (no transition table exposed): the era is identified by the
+    # offset matching the zone's founding offset (year-2 probe) while
+    # differing from the modern one. A zone whose founding offset already
+    # equals its modern standard offset is genuinely fixed and stays False —
+    # numerically indistinguishable from the city's own LMT anyway.
+    try:
+        founding = datetime(2, 1, 2, tzinfo=tz).utcoffset()
+        modern = datetime(2020, 1, 15, tzinfo=tz).utcoffset()
+    except Exception:
+        return False
+    return aware_dt.utcoffset() == founding and founding != modern
+
+
 def resolve_total_offset(iana_name: str, year: int, month: int, day: int,
                          hour: int = 12, minute: int = 0,
                          longitude: float = None) -> Tuple[float, int]:
@@ -301,10 +404,15 @@ def resolve_total_offset(iana_name: str, year: int, month: int, day: int,
     - dst not equal to 1h (London 1943 double summer dst=2h, Lord Howe
       dst=0.5h): the FLAG is subtracted, not the dst, so std is
       unconventionally labeled for those zones; the invariant holds.
+    - Sole sanctioned deviation from the pytz-TOTAL contract: a
+      pre-standardization instant (founding mean-time era, incl. named labels
+      like 'WMT') with a longitude supplied is returned as the chart city's
+      own LMT — the capital-meridian value is never what such a record means.
 
     Args:
         iana_name: IANA zone name (e.g. "Europe/Paris")
         year, month, day, hour, minute: local birth instant (noon default)
+        longitude: chart city longitude; enables the LMT-era reinterpretation
 
     Returns:
         Tuple of (std_hours: float, dst_flag: int in {0, 1})
@@ -320,8 +428,9 @@ def resolve_total_offset(iana_name: str, year: int, month: int, day: int,
     except (pytz.exceptions.AmbiguousTimeError, pytz.exceptions.NonExistentTimeError):
         # Fold/gap instants: deterministic standard-time interpretation
         aware = tz.localize(dt, is_dst=False)
-    # LMT correction: IANA returns the capital's LMT, not the chart city's.
-    if longitude is not None and aware.tzname() == 'LMT':
+    # LMT-era correction: IANA returns the founding mean time on the reference
+    # city's meridian, not the chart city's.
+    if longitude is not None and _is_pre_standardization_instant(tz, aware):
         return longitude / 15.0, 0
 
     total = aware.utcoffset().total_seconds() / 3600.0
@@ -386,16 +495,18 @@ def lmt_corrected_offset(tz_name: str, year: int, month: int, day: int,
                          longitude: float) -> float:
     """Get UTC offset in hours, correcting for LMT-era dates.
 
-    ZoneInfo returns the capital's LMT for pre-standardization dates
-    (e.g. Berlin's LMT +0:53 for all of Europe/Berlin before 1893).
-    For astrology, LMT must be computed from the chart city's longitude.
+    ZoneInfo returns the founding mean time on the reference city's meridian
+    for pre-standardization dates (e.g. Berlin's LMT +0:53 for all of
+    Europe/Berlin before 1893) — labeled 'LMT' for most zones but under a
+    named abbreviation elsewhere (Warsaw 'WMT'). For astrology, that era's
+    time must be computed from the chart city's longitude.
     """
     from zoneinfo import ZoneInfo
 
     tz = ZoneInfo(tz_name)
     dt = datetime(year, month, day, hour, minute, second, tzinfo=tz)
 
-    if dt.tzname() == 'LMT':
+    if _is_pre_standardization_instant(tz, dt):
         return longitude / 15.0
 
     dt_fold1 = dt.replace(fold=1)

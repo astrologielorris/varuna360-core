@@ -55,7 +55,7 @@ COT_ORDER_KEY = "cot.planet_order"
 
 
 def read_persisted_order():
-    """The stored position order, falling back to the Kala-verified default.
+    """The stored position order, falling back to the verified default.
 
     The fallback is ``solar_system`` (SPEC-COT-001 D-5), NOT the library's
     ``vedic``: a missing setting must not silently mislabel three of the seven
@@ -237,6 +237,11 @@ class CotIndexMixin:
         self._cot_cache_chart = None
         self._cot_cache_order = None
         self._cot_faces_cache = {}
+        # One-shot renderers may override the two display settings without
+        # touching app_settings.json. ``None`` means "follow Settings"; a
+        # real bool/order is deliberately view-local and dies with the view.
+        self._cot_enabled_override = None
+        self._cot_order_override = None
 
         # WEAK reference, not ``self``. See the module docstring: ``on_changed``
         # never lets go, so what leaks now is one small closure per view rather
@@ -271,6 +276,8 @@ class CotIndexMixin:
         """Whether to draw the index right now."""
         if not self._cot_supported():
             return False
+        if self._cot_enabled_override is not None:
+            return self._cot_enabled_override
         try:
             from managers.settings_manager import get_settings
             return bool(get_settings().get(COT_SETTING_KEY, False))
@@ -278,6 +285,22 @@ class CotIndexMixin:
             print(f"{self._cot_log_prefix} Warning: could not read "
                   f"{COT_SETTING_KEY}: {e}")
             return False
+
+    def set_cot_render_override(self, enabled=None, order=None):
+        """Set non-persistent Cards of Truth options for image rendering.
+
+        ``enabled=None`` and ``order=None`` restore normal Settings-backed
+        behaviour.  The GUI never calls this method; it exists so headless
+        exports cannot briefly rewrite (or accidentally retain) a person's
+        desktop preferences.
+        """
+        if order == "week_day":
+            order = "vedic"
+        if order is not None and order not in ORDER_LABELS:
+            raise ValueError(f"unknown Cards of Truth order: {order}")
+        self._cot_enabled_override = (None if enabled is None else bool(enabled))
+        self._cot_order_override = order
+        self._cot_forget_faces()
 
     def _on_cot_setting(self):
         """A ``cot.*`` key changed: drop the memoised faces and redraw.
@@ -329,11 +352,13 @@ class CotIndexMixin:
         chart = self._cot_chart()
         if chart is None:
             return {}
-        try:
-            from managers.settings_manager import get_settings
-            order = get_settings().get(COT_ORDER_KEY, COT_DEFAULT_ORDER)
-        except Exception:                            # noqa: BLE001
-            order = COT_DEFAULT_ORDER
+        order = self._cot_order_override
+        if order is None:
+            try:
+                from managers.settings_manager import get_settings
+                order = get_settings().get(COT_ORDER_KEY, COT_DEFAULT_ORDER)
+            except Exception:                        # noqa: BLE001
+                order = COT_DEFAULT_ORDER
 
         # Identity, not equality: comparing Chart objects with == would call an
         # engine __eq__ this module knows nothing about, and `is` is what the

@@ -172,13 +172,16 @@ def draw_zodiac_icons(scene, cx, cy, radius, icon_size, rotation_offset,
             if scale_factor:
                 item.setScale(scale_factor)
             item.setZValue(z_base)
+            from apps.widgets.sign_shadow import apply_sign_shadow
+            apply_sign_shadow(item, i)
             scene.addItem(item)
 
 
 def draw_sign_names(scene, cx, cy, radius, rotation_offset,
                     aditya_mode, use_western_names, sign_language,
                     display_settings, z_base=5,
-                    cot_faces=None, cot_dpr=1.0, cot_tag=None):
+                    cot_faces=None, cot_dpr=1.0, cot_tag=None,
+                    scale_sign_labels=False, show_names=True):
     """Draw Aditya or Western sign names at sector centers.
 
     Args:
@@ -198,6 +201,7 @@ def draw_sign_names(scene, cx, cy, radius, rotation_offset,
             every other caller passes — nothing about this function changes.
         cot_dpr: device pixel ratio for the suit pip raster.
         cot_tag: UserRole tag written on the card items.
+        show_names: False draws standalone CoT plaques without sign-name items.
     """
     sign_settings = display_settings.get("sign_name", {})
     font_size = sign_settings.get("font_size", 26)
@@ -206,11 +210,29 @@ def draw_sign_names(scene, cx, cy, radius, rotation_offset,
     offset_x = sign_settings.get("offset_x", 0)
     offset_y = sign_settings.get("offset_y", 0)
 
+    # G2c (SPEC-FONT-001 §11.8): the wheel sign name is a chart label; follow the
+    # chart_labels PRESET only (base * live/default, NO get_scale_factor). The
+    # wheel/NI fit-to-view transform carries NO Display Scale (measured: _compute_
+    # fit_zoom reads viewport/extent only), so these names are deliberately
+    # Display-Scale-insensitive; and including get_scale_factor would grow the
+    # name past the fixed sector arc and drop COT cards (the G2b regression).
+    # Gated by scale_sign_labels: ONLY the wheel opts in — the shared function
+    # also serves the Antikythera name band and the preset-proof Nakshatra
+    # mini-ring, which keep raw sizing. Preset ratio <= 1, so the paired COT
+    # plaque never overflows the arc.
+    from ui.qt_theme import get_area_font_size, AREA_DEFAULTS
+    if scale_sign_labels:
+        eff_font = max(1, round(font_size * get_area_font_size('chart_labels') / AREA_DEFAULTS['chart_labels']))
+    else:
+        eff_font = font_size
+
     faces = cot_faces or {}
     if faces:
         from apps.widgets.cot_index_item import CotPlaque, scale_for_name
-        cot_scale = scale_for_name(font_size)
-        cot_gap = max(8.0, font_size * 0.5)
+        # The plaque tracks the sign name; derive its scale + gap from the SAME
+        # effective (preset-scaled) size so the pair keeps its ratio.
+        cot_scale = scale_for_name(eff_font)
+        cot_gap = max(8.0, eff_font * 0.5)
         # Tangential room in one sector at this radius. The card is dropped
         # rather than allowed to cross a sector boundary, where it would sit
         # against the wrong sign's colour and read as that sign's card.
@@ -220,24 +242,29 @@ def draw_sign_names(scene, cx, cy, radius, rotation_offset,
         center_angle = get_sector_center_angle(i, rotation_offset)
         x, y = polar_to_cartesian(cx, cy, radius, center_angle)
 
-        item = SignNameItem(
-            x, y, i, aditya_mode,
-            font_size=font_size,
-            use_western_names=use_western_names,
-            font_color=font_color,
-            font_weight=font_weight,
-            offset_x=offset_x,
-            offset_y=offset_y,
-            sign_language=sign_language
-        )
-        item.setZValue(z_base)
-        scene.addItem(item)
+        item = None
+        if show_names:
+            item = SignNameItem(
+                x, y, i, aditya_mode,
+                font_size=eff_font,
+                use_western_names=use_western_names,
+                font_color=font_color,
+                font_weight=font_weight,
+                offset_x=offset_x,
+                offset_y=offset_y,
+                sign_language=sign_language)
+            item.setZValue(z_base)
+            scene.addItem(item)
 
         card = faces.get(i)
         if card is None:
             continue
 
         plaque = CotPlaque(card, scale=cot_scale, dpr=cot_dpr)
+        if not show_names:
+            plaque.add_to(scene, x + offset_x, y + offset_y,
+                          tag=cot_tag, z=z_base)
+            continue
         name_rect = item.boundingRect()
 
         # Split along the TANGENT, never along the screen axes. The sector is a

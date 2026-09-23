@@ -4,7 +4,8 @@
 """
 Sign Selector Column (Z6b)
 
-Right-side mirror of the Varga column. Twelve buttons numbered 1..12
+Right-side mirror of the Varga column. Named Surya/Chandra Lagna controls
+followed by twelve buttons numbered 1..12
 (Aditya-order: 1=Dhata, 2=Aryama, ..., 12=Parjanya) with full Aditya
 name in the tooltip. Mutually exclusive AND fully deselectable:
 clicking the already-active button deselects it.
@@ -19,6 +20,79 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt
 
 from ui.qt_theme import get_theme_colors, scaled_px, scaled_area_px
+
+
+NAMED_LAGNAS = ("Surya Lagna", "Chandra Lagna")
+
+
+class NamedLagnaController:
+    """Own named-Lagna state without adding it to the ChartGUI blackboard."""
+
+    def __init__(self, gui):
+        self.gui = gui
+        self.buttons = {}
+        self.selected_name = None
+
+    def set_selection(self, name):
+        if name not in (None, *NAMED_LAGNAS):
+            return
+        for label, button in self.buttons.items():
+            button.setChecked(label == name)
+        if name is not None:
+            gui = self.gui
+            for button in (getattr(gui, "sign_selector_buttons", None) or {}).values():
+                button.setChecked(False)
+            gui.selected_z6b_sign = None
+        self.selected_name = name
+
+    def clear_selection(self):
+        self.set_selection(None)
+
+    def toggle(self, name):
+        if self.selected_name == name:
+            self.clear_selection()
+            handler = getattr(self.gui, "_on_z6b_selection_changed", None)
+            if callable(handler):
+                handler(None)
+        else:
+            self.set_selection(name)
+            self.refresh()
+        button = self.buttons.get(name)
+        if button is not None:
+            button.clearFocus()
+
+    def refresh(self):
+        name = self.selected_name
+        if name not in NAMED_LAGNAS:
+            return
+        chart = getattr(getattr(self.gui, "state", None), "active_chart", None)
+        if chart is None:
+            self.gui._on_z6b_selection_changed(None)
+            self.gui.statusBar().showMessage(f"Load a chart to use {name}")
+            return
+        planet_name = "Sun" if name == "Surya Lagna" else "Moon"
+        varga_number = getattr(self.gui.state, "current_varga", 1) or 1
+        use_varga = varga_number != 1 and not bool(
+            getattr(self.gui, "varga_in_center", False))
+        try:
+            source = chart.rashi()
+            if use_varga:
+                from core.varga_codes import to_libaditya_varga_code
+                source = chart.varga(to_libaditya_varga_code(varga_number))
+            sign_index = (source.planets()[planet_name].sign() - 1) % 12
+        except (KeyError, AttributeError, TypeError, ValueError, RuntimeError):
+            self.gui._on_z6b_selection_changed(None)
+            self.gui.statusBar().showMessage(f"{name} is unavailable for this chart")
+            return
+        self.gui._on_z6b_selection_changed(sign_index + 1)
+        chart_label = f"D-{varga_number}" if use_varga else "D-1"
+        self.gui.statusBar().showMessage(
+            f"{name}: {planet_name} as Ascendant in {chart_label}")
+
+
+def _named_lagna_controller(gui):
+    column = getattr(gui, "sign_selector_column", None)
+    return getattr(column, "named_lagna_controller", None)
 
 
 # Aditya names in 1..12 order (canonical mapping per zodiac spec).
@@ -89,6 +163,30 @@ def create_sign_selector_column(gui):
     # We implement single-selection manually in the click handler below.
     gui.sign_selector_buttons = {}
     gui.selected_z6b_sign = None  # 1-based, or None when nothing selected
+    named_lagna_controller = NamedLagnaController(gui)
+    scroll.named_lagna_controller = named_lagna_controller
+
+    host = getattr(gui, 'chart_view', None)
+    if host is not None and hasattr(host, 'vector_view'):
+        layout.addWidget(host.vector_view.guide.create_button(container))
+
+    for label, short_label in (("Surya Lagna", "SL"),
+                               ("Chandra Lagna", "CL")):
+        btn = QPushButton(short_label)
+        btn.setCheckable(True)
+        btn.setChecked(False)
+        btn.setStyleSheet(button_style)
+        planet = "Sun" if label == "Surya Lagna" else "Moon"
+        explanation = f"{label}: use the {planet}'s current varga sign as Ascendant"
+        btn.setToolTip(explanation)
+        btn.setAccessibleName(label)
+        btn.setAccessibleDescription(explanation)
+        btn.clicked.connect(
+            lambda _checked, name=label, controller=named_lagna_controller:
+            controller.toggle(name)
+        )
+        named_lagna_controller.buttons[label] = btn
+        layout.addWidget(btn)
 
     for sign_index in range(1, 13):  # 1..12
         btn = QPushButton(str(sign_index))
@@ -141,12 +239,47 @@ def set_column_selection(gui, sign_index_1based):
     for idx, btn in buttons.items():
         btn.setChecked(idx == sign_index_1based)
     gui.selected_z6b_sign = sign_index_1based
+    controller = _named_lagna_controller(gui)
+    if controller is not None:
+        controller.clear_selection()
+
+
+def set_named_lagna_selection(gui, name):
+    """Show a named Lagna selection without dispatching a sign change."""
+    controller = _named_lagna_controller(gui)
+    if controller is not None:
+        controller.set_selection(name)
+    if name is None:
+        for button in (getattr(gui, "sign_selector_buttons", None) or {}).values():
+            button.setChecked(False)
+        gui.selected_z6b_sign = None
+
+
+def _on_named_button_clicked(gui, name):
+    """Select/deselect Surya or Chandra Lagna and resolve it immediately."""
+    controller = _named_lagna_controller(gui)
+    if controller is not None:
+        controller.toggle(name)
+
+
+def refresh_named_lagna(gui):
+    """Re-resolve the selected planetary Lagna from the displayed chart.
+
+    Full-size vargas use that varga's Sun/Moon. When varga-in-center is on,
+    the main perimeter remains D-1, so the named Lagna follows D-1 as well.
+    """
+    controller = _named_lagna_controller(gui)
+    if controller is not None:
+        controller.refresh()
 
 
 def _on_button_clicked(gui, sign_index):
     """Handle Z6b button click. Implements click-to-deselect semantics
     that QButtonGroup.exclusive cannot provide.
     """
+    controller = _named_lagna_controller(gui)
+    if controller is not None:
+        controller.clear_selection()
     buttons = getattr(gui, "sign_selector_buttons", None) or {}
     clicked_btn = buttons.get(sign_index)
 
@@ -242,3 +375,7 @@ def refresh_sign_selector_theme(gui):
     style = _build_button_style(theme)
     for btn in getattr(gui, "sign_selector_buttons", {}).values():
         btn.setStyleSheet(style)
+    controller = _named_lagna_controller(gui)
+    if controller is not None:
+        for btn in controller.buttons.values():
+            btn.setStyleSheet(style)

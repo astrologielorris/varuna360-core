@@ -19,8 +19,9 @@ from ui.image_paste import extract_image as _extract_clipboard_image
 
 from ui.qt_theme import (
     SURFACE, BG, BORDER, TEXT_PRIMARY, TEXT_SECONDARY,
-    STATUS, HOVER, get_theme_colors, scaled_area_font
+    STATUS, HOVER, get_theme_colors, scaled_area_px
 )
+from ui.popup_fonts import tier_px, fit_fixed_button, popup_group_px
 # Issue 8b-R: Chart-Everywhere — uses core.chart_factory directly.
 
 
@@ -223,6 +224,8 @@ def elide_text(text, max_chars: int = SOURCE_SNIPPET_MAX_CHARS) -> str:
     return text[: max(0, max_chars - 1)].rstrip() + "…"
 
 
+
+
 class _ImagePasteTextEdit(QPlainTextEdit):
     """Birth-line input that diverts a pasted/dropped IMAGE to a signal.
 
@@ -394,7 +397,6 @@ class AddChartDialog(QDialog):
             # One prefilled line — a tall free-typing box is what crowded the
             # review content out and left acres of dead space.
             self.text_input.setMaximumHeight(64)
-        self.text_input.setFont(scaled_area_font('tables'))
         self.text_input.setPlaceholderText(
             "Name, Date, Time, Location\n"
             "(e.g. John Doe, January 15 1990, 10:30am, New York)"
@@ -408,6 +410,7 @@ class AddChartDialog(QDialog):
                 border: 2px solid {BORDER};
                 border-radius: 5px;
                 padding: 8px;
+                font-size: {scaled_area_px('info_text')}px;
             }}
             QPlainTextEdit:focus {{
                 border-color: {STATUS["success"]};
@@ -439,10 +442,11 @@ class AddChartDialog(QDialog):
                 "Examples: John Doe, January 15 1990, 10:30am, New York  \u2014  "
                 "Pierre Martin, 25/12/1975 23h15, Toulouse"
             )
-            hint_label.setFont(scaled_area_font('buttons'))
             hint_label.setWordWrap(True)
+            # O-6: font-size in QSS.
             hint_label.setStyleSheet(
-                f"color: {TEXT_SECONDARY}; background: transparent;")
+                f"color: {TEXT_SECONDARY}; background: transparent; "
+                f"font-size: {tier_px('info_text', 10)}px;")
             layout.addWidget(hint_label)
 
         # Status label
@@ -451,16 +455,19 @@ class AddChartDialog(QDialog):
             "the reading date."
             if self._review_mode
             else "Enter birth information and click 'Generate Chart'")
-        self.status_label.setFont(scaled_area_font('buttons'))
-        self.status_label.setStyleSheet(f"color: {TEXT_SECONDARY}; background: transparent;")
+        # O-6: font-size in QSS.
+        self.status_label.setStyleSheet(
+            f"color: {TEXT_SECONDARY}; background: transparent; "
+            f"font-size: {tier_px('info_text', 10)}px;")
         layout.addWidget(self.status_label)
 
         # Auto-confirm checkbox (fast mode: warnings non-blocking)
         self.auto_confirm_checkbox = QCheckBox("Auto-confirm (skip warning popups)")
         self.auto_confirm_checkbox.setChecked(False)
-        self.auto_confirm_checkbox.setFont(scaled_area_font('buttons'))
+        # O-6: font-size in QSS.
         self.auto_confirm_checkbox.setStyleSheet(
-            f"QCheckBox {{ color: {TEXT_SECONDARY}; background: transparent; }}"
+            f"QCheckBox {{ color: {TEXT_SECONDARY}; background: transparent; "
+            f"font-size: {scaled_area_px('buttons')}px; }}"
         )
         layout.addWidget(self.auto_confirm_checkbox)
 
@@ -475,7 +482,6 @@ class AddChartDialog(QDialog):
 
         # Generate button
         self.generate_btn = QPushButton("Generate Chart")
-        self.generate_btn.setFont(scaled_area_font('buttons', bold=True))
         self.generate_btn.setFixedSize(150, 35)
         self.generate_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.generate_btn.setStyleSheet(f"""
@@ -484,6 +490,8 @@ class AddChartDialog(QDialog):
                 color: {TEXT_PRIMARY};
                 border: none;
                 border-radius: 5px;
+                font-size: {tier_px('action_buttons', 10)}px;
+                font-weight: bold;
             }}
             QPushButton:hover {{
                 background-color: {HOVER};
@@ -501,7 +509,6 @@ class AddChartDialog(QDialog):
 
         # Cancel button
         cancel_btn = QPushButton("Cancel")
-        cancel_btn.setFont(scaled_area_font('buttons'))
         cancel_btn.setFixedSize(120, 35)
         cancel_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         cancel_btn.setStyleSheet(f"""
@@ -510,6 +517,7 @@ class AddChartDialog(QDialog):
                 color: {TEXT_PRIMARY};
                 border: 1px solid {BORDER};
                 border-radius: 5px;
+                font-size: {tier_px('action_buttons', 10)}px;
             }}
             QPushButton:hover {{
                 background-color: {HOVER};
@@ -517,8 +525,20 @@ class AddChartDialog(QDialog):
         """)
         cancel_btn.clicked.connect(self.reject)
         button_layout.addWidget(cancel_btn)
+        # The fixed sizes are floors: at Action buttons 24 the label was cut
+        # ('IERATE CH', td-168ze sweep).
+        fit_fixed_button(self.generate_btn, 150, 35)
+        fit_fixed_button(cancel_btn, 120, 35)
 
         layout.addLayout(button_layout)
+        # The button floors can outgrow the historical 750px shell. Let the
+        # shell widen with the row so enlarged action text remains reachable.
+        layout.activate()
+        required_width = max(750, layout.sizeHint().width())
+        if self._review_mode:
+            self.setFixedWidth(required_width)
+        else:
+            self.setFixedSize(required_width, 400)
 
         # Review mode sizes to its content (see the setFixedWidth comment).
         # adjustSize() alone is NOT enough — Qt caps it relative to the screen,
@@ -527,7 +547,7 @@ class AddChartDialog(QDialog):
         if self._review_mode:
             needed = layout.sizeHint().height()
             self.setMinimumHeight(needed)
-            self.resize(750, needed)
+            self.resize(required_width, needed)
 
         # Focus on text input
         self.text_input.setFocus()
@@ -542,10 +562,11 @@ class AddChartDialog(QDialog):
         theme = get_theme_colors()
         lbl = QLabel(text)
         lbl.setTextFormat(Qt.TextFormat.PlainText)
-        lbl.setFont(scaled_area_font('buttons', bold=True))
+        # O-6: font-size + weight in QSS.
         lbl.setStyleSheet(
             f"color: {theme['primary'] if accent else TEXT_SECONDARY}; "
-            "background: transparent;")
+            "background: transparent; "
+            f"font-size: {popup_group_px(10)}px; font-weight: bold;")
         layout.addWidget(lbl)
         return lbl
 
@@ -557,10 +578,11 @@ class AddChartDialog(QDialog):
         header = QLabel(
             "The AI read two things from your paste. Both are editable — "
             "correct anything it got wrong, then Generate.")
-        header.setFont(scaled_area_font('buttons'))
         header.setWordWrap(True)
+        # O-6: font-size in QSS.
         header.setStyleSheet(
-            f"color: {TEXT_SECONDARY}; background: transparent;")
+            f"color: {TEXT_SECONDARY}; background: transparent; "
+            f"font-size: {tier_px('info_text', 10)}px;")
         layout.addWidget(header)
 
         # --- role 1: the birth chart (its editable field is text_input, built
@@ -575,12 +597,13 @@ class AddChartDialog(QDialog):
             format_extraction_summary(self.review_payload))
         # Finding 7: LLM-extracted text — PlainText, never interpreted HTML.
         self.review_summary_label.setTextFormat(Qt.TextFormat.PlainText)
-        self.review_summary_label.setFont(scaled_area_font('buttons'))
         self.review_summary_label.setWordWrap(True)
         self.review_summary_label.setTextInteractionFlags(
             Qt.TextInteractionFlag.TextSelectableByMouse)
+        # O-6: font-size in QSS.
         self.review_summary_label.setStyleSheet(
-            f"color: {TEXT_SECONDARY}; background: transparent;")
+            f"color: {TEXT_SECONDARY}; background: transparent; "
+            f"font-size: {tier_px('info_text', 10)}px;")
         layout.addWidget(self.review_summary_label)
 
     def _build_transit_field(self, layout):
@@ -597,7 +620,6 @@ class AddChartDialog(QDialog):
             accent=True)
 
         self.transit_input = QLineEdit()
-        self.transit_input.setFont(scaled_area_font('tables'))
         self.transit_input.setPlaceholderText(
             "YYYY-MM-DD HH:MM   (leave empty to keep the current transit)")
         self.transit_input.setMinimumHeight(34)
@@ -609,6 +631,7 @@ class AddChartDialog(QDialog):
                 border-radius: 5px;
                 padding: 4px 8px;
                 font-weight: bold;
+                font-size: {tier_px('buttons', 11)}px;
             }}
             QLineEdit:focus {{ border-color: {STATUS["success"]}; }}
         """)
@@ -619,10 +642,11 @@ class AddChartDialog(QDialog):
         if not detected:
             hint = QLabel("No reading date detected — the transit chart stays "
                           "as it is unless you type one.")
-            hint.setFont(scaled_area_font('buttons'))
             hint.setWordWrap(True)
+            # O-6: font-size in QSS.
             hint.setStyleSheet(
-                f"color: {TEXT_SECONDARY}; background: transparent;")
+                f"color: {TEXT_SECONDARY}; background: transparent; "
+                f"font-size: {tier_px('info_text', 10)}px;")
             layout.addWidget(hint)
 
         # --- meta: confidence + which AI, on one line ------------------------
@@ -632,11 +656,11 @@ class AddChartDialog(QDialog):
         if meta_bits:
             self.review_provenance_label = QLabel("  ·  ".join(meta_bits))
             self.review_provenance_label.setTextFormat(Qt.TextFormat.PlainText)
-            self.review_provenance_label.setFont(scaled_area_font('buttons'))
             self.review_provenance_label.setWordWrap(True)
+            # O-6: font-size in QSS.
             self.review_provenance_label.setStyleSheet(
                 f"color: {TEXT_SECONDARY}; background: transparent; "
-                "font-style: italic;")
+                f"font-style: italic; font-size: {tier_px('info_text', 10)}px;")
             layout.addWidget(self.review_provenance_label)
 
         # Source snippet — kept as its OWN label rather than folded into the
@@ -653,26 +677,27 @@ class AddChartDialog(QDialog):
                 _prefix + elide_text(
                     snippet_full, SOURCE_SNIPPET_MAX_CHARS - len(_prefix)))
             self.review_snippet_label.setTextFormat(Qt.TextFormat.PlainText)
-            self.review_snippet_label.setFont(scaled_area_font('buttons'))
             self.review_snippet_label.setWordWrap(True)
             # Tooltips are always rich text in Qt; escape so the full snippet
             # displays literally (finding 7).
             self.review_snippet_label.setToolTip(html.escape(snippet_full))
             self.review_snippet_label.setTextInteractionFlags(
                 Qt.TextInteractionFlag.TextSelectableByMouse)
+            # O-6: font-size in QSS.
             self.review_snippet_label.setStyleSheet(
                 f"color: {TEXT_SECONDARY}; background: transparent; "
-                "font-style: italic;")
+                f"font-style: italic; font-size: {tier_px('info_text', 10)}px;")
             layout.addWidget(self.review_snippet_label)
 
         notes = str(self.review_payload.get("notes") or "").strip()
         if notes:
             self.review_notes_label = QLabel(f"Notes: {notes}")
             self.review_notes_label.setTextFormat(Qt.TextFormat.PlainText)
-            self.review_notes_label.setFont(scaled_area_font('buttons'))
             self.review_notes_label.setWordWrap(True)
+            # O-6: font-size in QSS.
             self.review_notes_label.setStyleSheet(
-                f"color: {TEXT_SECONDARY}; background: transparent;")
+                f"color: {TEXT_SECONDARY}; background: transparent; "
+                f"font-size: {tier_px('info_text', 10)}px;")
             layout.addWidget(self.review_notes_label)
 
     def _generate_multiple(self):
@@ -819,10 +844,12 @@ class AddChartDialog(QDialog):
         summary = "  ·  ".join(bits)
         if self._multi_chart_mode:
             self.generate_btn.setText(f"Create {len(lines)} Charts")
+            fit_fixed_button(self.generate_btn, 150, 35)
             lead = (f"Found {len(lines)} charts — one per line. Edit any of "
                     "them, then create.")
         else:
             self.generate_btn.setText("Generate Chart")
+            fit_fixed_button(self.generate_btn, 150, 35)
             lead = "Read from the image — check the line above, then Generate."
         self.status_label.setText(lead + (f"   {summary}" if summary else ""))
 

@@ -233,7 +233,10 @@ class ChartManager:
             self.gui.birth_jd = birth_jd
             self.gui.birth_lat = latitude
             self.gui.birth_lon = longitude
-            self.gui.is_human_design = False  # Reset HD mode on new chart load
+            # Reset HD mode on new chart load (Stage 2 td-ltha: is_human_design
+            # is owned by AppState; dispatch instead of poking the flag).
+            from state.events import SetHumanDesignMode
+            self.gui.state.dispatch(SetHumanDesignMode(enabled=False))
 
             # Build libaditya Chart from pre-computed JD and coordinates
             self.gui.loading_manager.update("Calculating positions...")
@@ -287,19 +290,14 @@ class ChartManager:
             self.gui.birth_country = birth_data.get('country', '')
             self.gui.current_timezone = birth_data.get('iana_timezone', 'UTC')
 
-            # Reset dasha levels for new chart load
-            self.gui.dasha_level_vedanga = 1
-            self.gui.dasha_level_vimshottari = 1
-            self.gui.vedanga_parent_chain = []
-            self.gui.vimshottari_parent_chain = []
-            self.gui.dasha_cycle_offset_vedanga = 0
-            self.gui.dasha_cycle_offset_vimshottari = 0
-            if hasattr(self.gui, 'vedanga_level_buttons'):
-                for idx, btn in enumerate(self.gui.vedanga_level_buttons):
-                    btn.setChecked(idx == 0)
-            if hasattr(self.gui, 'vimshottari_level_buttons'):
-                for idx, btn in enumerate(self.gui.vimshottari_level_buttons):
-                    btn.setChecked(idx == 0)
+            # Chart-context reset (decision 2, SPEC-DSH-002): clear ALL dasha
+            # navigation for the new chart through the manager — both sides'
+            # levels/chains/120-year offsets, the Nisarga level and the ZR drill.
+            # W5a dropped the per-load right-panel Nisarga reshape, so this is the
+            # single reset (GPT Sol W5a review finding 1). The re-list happens after.
+            self.gui.dasha_manager.reset_for_chart()
+            # w3-2 D-W3-4: the level-button reset rides reset_for_chart()
+            # (sync_level_buttons is its last statement).
 
             # Memory panel BEFORE finalize (dasha lazy-rebuild reads recipe)
             chart_name = birth_data.get('name', 'Unknown')
@@ -329,8 +327,9 @@ class ChartManager:
 
             self.gui._finalize_chart_load()
 
-            if getattr(self.gui, 'right_dasha_mode', 'vimshottari') == 'nisarga':
-                self.gui._configure_right_panel_for_nisarga()
+            # No explicit right-panel reshape here: the panel keeps its shape
+            # (set when the mode was entered) and _finalize_chart_load re-lists
+            # it for the current mode via the dispatcher (SPEC-ZR-001 §3.6).
             if _tz_warns:
                 _more = f" (+{len(_tz_warns) - 1} more)" if len(_tz_warns) > 1 else ""
                 self.gui.statusBar().showMessage(
@@ -434,6 +433,17 @@ class ChartManager:
             if hasattr(self.gui, 'cards_of_truth_view'):
                 self.gui.cards_of_truth_view.clear_chart()
 
+            # SPEC-HD-001: same hole for the HD page — _update_all_chart_views
+            # never reaches it with active_chart None, and its activation branch
+            # only pushes when a model exists, so the closed chart's BodyGraph
+            # would stay on screen. Drop the manager cache and feed the view an
+            # empty model here (update_from_chart(None) -> "no chart loaded").
+            if hasattr(self.gui, 'hd_manager'):
+                self.gui.hd_manager.clear()
+            _hd_view = getattr(self.gui, 'human_design_view', None)
+            if _hd_view is not None and hasattr(_hd_view, 'update_from_chart'):
+                _hd_view.update_from_chart(None)
+
             # Clear active chart FIRST so fallback cannot resurrect (six-eyes M3)
             from state.events import SetActiveChart, SetVarga
             self.gui.state.dispatch(SetActiveChart(chart=None))
@@ -443,10 +453,18 @@ class ChartManager:
             self.gui.current_birth_data = None
 
             # Clear panels
-            if hasattr(self.gui, 'vedanga_list'):
-                self.gui.vedanga_list.clear()
-            if hasattr(self.gui, 'vimshottari_list'):
-                self.gui.vimshottari_list.clear()
+            # w2-4 (SPEC-DSH-002 render token): this path empties both dasha lists
+            # DIRECTLY, with no renderer and no reset_for_chart. A Vimshottari-family
+            # render suspended at a _pump would resume and append rows to the emptied
+            # lists — so abort both in-flight renders FIRST by bumping their tokens.
+            if hasattr(self.gui, 'dasha_manager'):
+                self.gui.dasha_manager.invalidate_renders()
+            _lp = getattr(self.gui, 'vedanga_panel', None)
+            if _lp is not None:
+                _lp.list_widget.clear()
+            _rp = getattr(self.gui, 'vimshottari_panel', None)
+            if _rp is not None:
+                _rp.list_widget.clear()
             if hasattr(self.gui, 'karakas_table'):
                 self.gui.karakas_table.clearContents()
                 self.gui.karakas_table.setRowCount(0)
@@ -455,7 +473,10 @@ class ChartManager:
                 self.gui.strength_table.setRowCount(0)
 
             # Update title
-            if hasattr(self.gui, 'chart_title_label'):
+            _bar = getattr(self.gui, 'chart_title_widget', None)
+            if hasattr(_bar, 'set_title'):
+                _bar.set_title(None)      # SPEC-BAR-001 M3 W9 (Dm3-13)
+            elif hasattr(self.gui, 'chart_title_label'):
                 self.gui.chart_title_label.setText("No Chart Loaded")
 
             self.gui.setWindowTitle("Varuna360")

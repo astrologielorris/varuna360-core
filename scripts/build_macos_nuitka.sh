@@ -210,6 +210,7 @@ INCLUDE_ARGS=(
   --include-module=jwt
   --include-module=cryptography
   --include-module=requests
+  --include-module=anthropic
 )
 
 if "$PYTHON_BIN" -c "import geocoder" >/dev/null 2>&1; then

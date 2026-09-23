@@ -1,0 +1,135 @@
+{
+  "family": "optional-symbols",
+  "setting": "display.additional_body_icon_set",
+  "setting_value": "custom_svg",
+  "viewBox": "0 0 100 100",
+  "base_stroke_width": 5,
+  "status_values": {
+    "original": "Geometry drawn independently for this app from the topology of the cited reference; no pixels traced or embedded.",
+    "custom": "No reliable reference glyph; clearly labeled custom path monogram."
+  },
+  "rights": "Reference images are Astrodienst Astrowiki (or Wikimedia) material kept outside application assets for study only. The SVG geometry is original work under the project license.",
+  "bodies": [
+    {
+      "body": "Chiron",
+      "file": "chiron.svg",
+      "status": "original",
+      "reference": {
+        "source_page": "https://www.astro.com/astrowiki/en/Chiron",
+        "image_url": "https://www.astro.com/imwiki/en/Chi.gif",
+        "accessed": "2026-09-14",
+        "note": "Article \"Symbol\" image, 11x15 GIF."
+      },
+      "topology": "Key: round orb at the foot, upright stem, K-shaped arms opening to the right from one junction. Stem offset left so the orb and arms balance around the center. The 1-pixel stub under the reference orb is not drawn; the larger Asteroid List glyph (Symbol-chi-big.gif) ends the stem at the orb."
+    },
+    {
+      "body": "Lilith",
+      "file": "lilith.svg",
+      "status": "original",
+      "identity": "Mean lunar apogee (Swiss Ephemeris MEAN_APOG), not asteroid 1181 Lilith.",
+      "reference": {
+        "source_page": "https://www.astro.com/astrowiki/en/Lilith",
+        "image_url": "https://www.astro.com/im/wiki/symbole/A31_135.gif",
+        "accessed": "2026-09-14",
+        "note": "Article \"Symbol\" image is a filled crescent, horns to the left. Astrodienst chart drawings (Radix_Eros_Fotonachweis.gif) draw Lilith as a dark crescent over a cross."
+      },
+      "topology": "Filled crescent, horns to the left, above a cross. The cross keeps it distinct from a plain Moon crescent."
+    },
+    {
+      "body": "Ceres",
+      "file": "ceres.svg",
+      "status": "original",
+      "reference": {
+        "source_page": "https://www.astro.com/astrowiki/en/Ceres",
+        "image_url": "https://www.astro.com/im/wiki/symbole/A21_039.gif",
+        "accessed": "2026-09-14",
+        "note": "Article: \"The glyph for Ceres represents the sickle\"."
+      },
+      "topology": "Sickle hook opening to the lower left, returning to a stem with a crossbar."
+    },
+    {
+      "body": "Pallas",
+      "file": "pallas.svg",
+      "status": "original",
+      "reference": {
+        "source_page": "https://www.astro.com/astrowiki/en/Pallas",
+        "image_url": "https://www.astro.com/im/wiki/symbole/a03_168_pallas.gif",
+        "accessed": "2026-09-14",
+        "note": "Article \"Symbol\" image."
+      },
+      "topology": "Diamond on a stem with a crossbar; the lower vertex of the diamond starts the stem."
+    },
+    {
+      "body": "Juno",
+      "file": "juno.svg",
+      "status": "original",
+      "reference": {
+        "source_page": "https://www.astro.com/astrowiki/en/Juno",
+        "image_url": "https://www.astro.com/im/wiki/symbole/A28_111.gif",
+        "accessed": "2026-09-14",
+        "note": "Article \"Symbol\" image; footnote: scepter topped with a star. The Asteroid List also shows a star-over-circle variant (Juno2.png), not used."
+      },
+      "topology": "Eight-ray star whose vertical ray continues as the scepter stem, with a crossbar."
+    },
+    {
+      "body": "Vesta",
+      "file": "vesta.svg",
+      "status": "original",
+      "reference": {
+        "source_page": "https://www.astro.com/astrowiki/en/Vesta",
+        "image_url": "https://www.astro.com/im/wiki/symbole/a05_243vesta.gif",
+        "accessed": "2026-09-14",
+        "note": "Article \"Symbol\" image. The Asteroid List also shows a curled-flame variant (Vesta.png) and an altar variant (Vesta2.png), not used."
+      },
+      "topology": "Vertical flame line inside a small V, nested in a larger V with horizontal rim wings."
+    },
+    {
+      "body": "Eros",
+      "file": "eros.svg",
+      "status": "custom",
+      "reference": {
+        "source_page": "https://www.astro.com/astrowiki/en/Eros",
+        "image_url": "https://upload.wikimedia.org/wikipedia/commons/b/b2/Eros_asteroid_symbol_proposal.png",
+        "accessed": "2026-09-14",
+        "note": "The article shows only a \"Symbol proposal on Wikipedia\" by one user (2013). Astrodienst chart drawings label the body \"433 Eros\" with no glyph (Radix_Eros_Fotonachweis.gif)."
+      },
+      "topology": "Custom path monogram \"Er\" (the body abbreviation), mono-line strokes. No reliable Astrodienst glyph exists and the proposal is not adopted by Astrodienst charts, so no symbol is invented."
+    },
+    {
+      "body": "Psyche",
+      "file": "psyche.svg",
+      "status": "original",
+      "reference": {
+        "source_page": "https://www.astro.com/astrowiki/en/Psyche_(Asteroid)",
+        "image_url": "https://www.astro.com/imwiki/de/thumb/a/a9/Psyche.png/50px-Psyche.png",
+        "accessed": "2026-09-14",
+        "note": "Article \"Symbol\" image (the plain Psyche page has no text). Footnote: star and butterfly wings."
+      },
+      "topology": "Six-ray star (horizontal bar and two diagonals) above a closed arch with a flat base."
+    },
+    {
+      "body": "Pholus",
+      "file": "pholus.svg",
+      "status": "original",
+      "reference": {
+        "source_page": "https://www.astro.com/astrowiki/en/Pholus",
+        "image_url": "https://www.astro.com/im/wiki/symbole/a04_171_pholus.gif",
+        "accessed": "2026-09-14",
+        "note": "Article \"Symbol\" image."
+      },
+      "topology": "Centaur family: wide flat ellipse, centered stem, closed P bowl to the right at the top."
+    },
+    {
+      "body": "Nessus",
+      "file": "nessus.svg",
+      "status": "original",
+      "reference": {
+        "source_page": "https://www.astro.com/astrowiki/en/Nessus",
+        "image_url": "https://www.astro.com/im/wiki/symbole/a02_162_nessus.gif",
+        "accessed": "2026-09-14",
+        "note": "Article \"Symbol\" image."
+      },
+      "topology": "Centaur family: wide flat ellipse, centered stem forming the left leg of an N whose diagonal falls to a right leg. Open zigzag versus the closed Pholus bowl."
+    }
+  ]
+}

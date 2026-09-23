@@ -5,11 +5,7 @@
 North Indian Chart Graphics Items
 Custom QGraphicsItem subclasses for the diamond-style North Indian chart.
 
-Contains:
-- NorthIndianPlanetClickSignal - Signal emitter for planet clicks
-- DiamondCellItem - Diamond/triangle shaped cell for each house
-- NorthIndianPlanetItem - Planet icon with click signal
-- NorthIndianZodiacItem - Zodiac icon for house display
+Contains the North Indian cells, click signals, planets, and sign artwork.
 """
 from pathlib import Path
 
@@ -18,14 +14,14 @@ from PySide6.QtWidgets import (
     QGraphicsPixmapItem,
     QGraphicsTextItem,
 )
-from PySide6.QtCore import Qt, Signal, QObject
+from PySide6.QtCore import Qt, Signal, QObject, QPointF
 from PySide6.QtGui import QPen, QBrush, QColor, QFont, QPolygonF, QRadialGradient
 
 # Project root for absolute paths
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 
 # Import theme for consistent colors
-from ui.qt_theme import GOLD, desat_hex
+from ui.qt_theme import GOLD, desat_hex, get_theme_colors
 
 # Canonical element palette (td-s6u7 dedupe): single source of truth shared
 # with chart_view and the wheel renderers.
@@ -33,6 +29,7 @@ from visualizations.wheel_constants import (
     ELEMENT_COLORS as _WHEEL_ELEMENT_COLORS,
     ELEMENT_CYCLE as _WHEEL_ELEMENT_CYCLE,
 )
+from apps.widgets.sign_shadow import apply_sign_shadow
 
 
 class NorthIndianPlanetClickSignal(QObject):
@@ -248,3 +245,45 @@ class PlanetDegreeLabel(QGraphicsTextItem):
         self.setZValue(7)
 
         self.setData(Qt.ItemDataRole.UserRole, "degree_label")
+
+
+def badge_corners_inside(point_in_polygon_with_margin, bleft, btop, bw, bh,
+                         poly, margin):
+    """True if all 4 corners of (bleft, btop, bw, bh) clear `poly` by `margin`.
+
+    `point_in_polygon_with_margin` is NorthIndianView's static checker, passed
+    in so this stays a plain module function (keeps the god-view from growing)."""
+    corners = (QPointF(bleft, btop), QPointF(bleft + bw, btop),
+               QPointF(bleft, btop + bh), QPointF(bleft + bw, btop + bh))
+    return all(point_in_polygon_with_margin(c, poly, margin) for c in corners)
+
+
+def place_sign_icon(scene, sign_display, sign_index, cx, cy, size, ink, tag,
+                    load_zodiac_icon):
+    """Place the sign badge's accompaniment icon CENTRED at (cx, cy).
+
+    ``zodiac`` -> the zodiac symbol pixmap (clickable NorthIndianZodiacItem);
+    ``josh`` -> the Aditya division glyph in the live theme ink (view-agnostic
+    AdityaGlyphItem; division index == sign_index, Aries = Dhata = 0 in every
+    zodiac system per SPEC-ZOD-001). ``names`` never reaches here — the caller
+    guards on show_icon. A missing or Qt-unrenderable josh glyph is skipped so
+    the caller's label still draws; z=4.5 sits above the cell fill, below it."""
+    if sign_display in ('josh', 'josh_only'):
+        from apps.widgets.aditya_glyph_render import glyph_svg, AdityaGlyphItem
+        svg_bytes = glyph_svg(sign_index, get_theme_colors()['secondary_text'])
+        if not svg_bytes:
+            return
+        item = AdityaGlyphItem(svg_bytes, size)
+        if not item.valid:
+            return
+        item.setPos(cx - size / 2, cy - size / 2)
+    else:
+        pixmap = load_zodiac_icon(sign_index, size=size)
+        if not pixmap:
+            return
+        item = NorthIndianZodiacItem(pixmap, cx, cy, sign_index)
+    item.setZValue(4.5)
+    apply_sign_shadow(item, sign_index)
+    if tag:
+        item.setData(Qt.ItemDataRole.UserRole, tag)
+    scene.addItem(item)

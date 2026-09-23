@@ -107,11 +107,29 @@ Key handling (probe-driven, 2026-07-30)
 * F2 is gated on ``cycle`` — chart_stack only.
 """
 
-from PySide6.QtCore import Qt, QTimer, QSignalBlocker
+from PySide6.QtCore import Qt, QTimer, QSignalBlocker, QObject, QEvent
 from PySide6.QtGui import QKeySequence, QShortcut
-from PySide6.QtWidgets import (QFrame, QGraphicsView, QHBoxLayout, QLabel,
+from PySide6.QtWidgets import (QApplication, QFrame, QGraphicsView, QHBoxLayout, QLabel,
                                QSlider, QStackedWidget, QToolButton, QVBoxLayout,
                                QWidget)
+
+
+class _FullscreenSlot(QWidget):
+    """Keep the source layout's constraints while its live content is away."""
+
+    def __init__(self, source):
+        super().__init__(source.parentWidget())
+        self._hint = source.sizeHint()
+        self._minimum_hint = source.minimumSizeHint()
+        self.setSizePolicy(source.sizePolicy())
+        self.setMinimumSize(source.minimumSize())
+        self.setMaximumSize(source.maximumSize())
+
+    def sizeHint(self):
+        return self._hint
+
+    def minimumSizeHint(self):
+        return self._minimum_hint
 
 
 class _FullscreenContainer(QWidget):
@@ -348,15 +366,34 @@ class _FullscreenContainer(QWidget):
         event.accept()
 
 
-class ViewFloatManager:
+class ViewFloatManager(QObject):
     """Enter/exit fullscreen for the active tab's chart surface. Idempotent."""
 
     def __init__(self, gui):
+        super().__init__(gui if isinstance(gui, QWidget) else None)
         self._gui = gui
         self._container = None
         self._saved = None       # restore state while fullscreen, else None
         self._shortcut = None    # QShortcut("F") on the container while fullscreen
         self._signal_conns = []  # refit_signals connected this session
+        if isinstance(gui, QWidget):
+            gui.installEventFilter(self)
+
+    def eventFilter(self, watched, event):
+        if (watched is getattr(self, "_gui", None)
+                and event.type() == QEvent.Type.WindowActivate
+                and self.is_fullscreen):
+            # Activation is still in flight here. Wait until Qt can distinguish
+            # the main window from a modal dialog or the fullscreen container.
+            container = self._container
+            QTimer.singleShot(0, lambda: self._return_to_main(container))
+        return super().eventFilter(watched, event)
+
+    def _return_to_main(self, container):
+        if (container is self._container and self.is_fullscreen
+                and QApplication.activeWindow() is self._gui
+                and QApplication.activeModalWidget() is None):
+            self.exit_fullscreen()
 
     @property
     def is_fullscreen(self):
@@ -437,6 +474,7 @@ class ViewFloatManager:
             return None
         try:
             scene_center = None
+            fit_state = getattr(view, "interaction", view)
             vp = view.viewport()
             if vp is not None and vp.width() > 0 and vp.height() > 0:
                 scene_center = view.mapToScene(vp.rect().center())
@@ -448,6 +486,9 @@ class ViewFloatManager:
                 # enter clears it, so capture and restore it or a later
                 # _refit_if_auto discards the user's restored zoom (codex M-4).
                 "user_zoomed": getattr(view, "user_zoomed", None),
+                "fit_state": fit_state,
+                "fit_mode": getattr(fit_state, "_fit_mode", None),
+                "has_fit_mode": hasattr(fit_state, "_fit_mode"),
                 "h": view.horizontalScrollBar().value(),
                 "v": view.verticalScrollBar().value(),
                 "scene_center": scene_center,
@@ -524,6 +565,8 @@ class ViewFloatManager:
             # user's zoom (codex M-4).
             if vs.get("user_zoomed") is not None:
                 view.user_zoomed = vs["user_zoomed"]
+            if vs.get("has_fit_mode"):
+                vs["fit_state"]._fit_mode = vs["fit_mode"]
             view.setTransform(vs["transform"])
             if vs.get("pan_via_center") and vs.get("scene_center") is not None:
                 # Free-pan surface across a viewport-size change: centre on the
@@ -674,11 +717,16 @@ class ViewFloatManager:
             self.exit_fullscreen, self._cycle_view, background,
             can_cycle=bool(desc.get("cycle", False)))
 
-        # Move the widget: remove from the old layout FIRST (reparenting alone
-        # leaves a dangling layout item behind), then mount into the container.
+        # Replace the live widget with an equivalent layout slot FIRST, so the
+        # main window keeps its proportions while its chart is fullscreen.
         # With an alternate, detach it from its owner splitter and hand both to
         # the container's content stack (chart page + alternate page).
-        layout.removeWidget(widget)
+        slot = _FullscreenSlot(widget)
+        self._saved["slot"] = slot
+        self._saved["alignment"] = layout.itemAt(index).alignment()
+        old_item = layout.replaceWidget(widget, slot)
+        del old_item
+        slot.setVisible(not self._saved["prim_hidden"])
         alt_widget = alt_state["widget"] if alt_state else None
         if alt_widget is not None:
             try:
@@ -864,6 +912,11 @@ class ViewFloatManager:
             # scale(zoom_factor)); the queued restore then only re-affirms
             # transform + pan. Robust to the zero-timer vs showEvent order (PM-3).
             for vs in view_states:
+                if vs.get("has_fit_mode"):
+                    try:
+                        vs["fit_state"]._fit_mode = vs["fit_mode"]
+                    except RuntimeError:
+                        pass
                 if vs.get("zoom_factor") is not None:
                     try:
                         vs["view"].zoom_factor = vs["zoom_factor"]
@@ -873,8 +926,14 @@ class ViewFloatManager:
             # Put the widget back in its exact slot AND its original stretch.
             if widget is not None and layout is not None:
                 try:
-                    layout.insertWidget(saved.get("index", 0), widget,
-                                        stretch=saved.get("stretch", 1))
+                    slot = saved.get("slot")
+                    if slot is not None and layout.indexOf(slot) >= 0:
+                        old_item = layout.replaceWidget(slot, widget)
+                        del old_item
+                    else:
+                        layout.insertWidget(saved.get("index", 0), widget,
+                                            stretch=saved.get("stretch", 1),
+                                            alignment=saved.get("alignment", Qt.AlignmentFlag(0)))
                     # Restore the primary's visibility: the QStackedWidget path
                     # hid it on removeWidget and the reinsert does not undo that
                     # (gpt-5.6-sol F1). isHidden() at enter was False for a shown
@@ -883,6 +942,13 @@ class ViewFloatManager:
                 except RuntimeError:
                     pass
         finally:
+            slot = saved.get("slot")
+            if slot is not None:
+                try:
+                    slot.hide()
+                    slot.deleteLater()
+                except RuntimeError:
+                    pass
             # Rule 18: the widget is reparented out, so deleting the container
             # cannot take a live child down with it. hide() before deleteLater()
             # so the now-empty window does not flash a black frame.

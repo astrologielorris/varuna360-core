@@ -105,9 +105,9 @@ birth_card_order = list(cards.__reversed__())
 # and was the ONLY break in that progression, which shifted every one of the 29
 # November birth cards by three and pushed 30 November past the end of the deck.
 # Corrected to "6D" (index 20) on 2026-07-27 against the published birth-card
-# table (NOV 1 = 6D, NOV 30 = 3H) and against Kala: Alain Delon 1935-11-08
-# returns KC with this value and TC with the old one; Kala says KC, and all 14
-# of his spread cards then match. SPEC-COT-001 E-4.
+# table (NOV 1 = 6D, NOV 30 = 3H): Alain Delon 1935-11-08 returns KC with
+# this value and TC with the old one; the reference is KC, and all 14 of his
+# spread cards then match. SPEC-COT-001 E-4.
 first_card_of_the_month = [birth_card_order.index(card) for card in ["KS","JS","9S","7S","5S","3S","AS","QD","TD","8D","6D","4D"]]
 
 def is_leap_year(year: int) -> bool:

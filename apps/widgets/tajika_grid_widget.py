@@ -27,7 +27,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, Signal
 
-from ui.qt_theme import get_theme_colors, desat_hex
+from ui.qt_theme import get_theme_colors, desat_hex, scaled_area_px, scaled_px
 from ui.themed_style import ThemedStyleMixin
 from apps.delegates.highlight_delegate import TajikaHighlightDelegate
 from AI_tools.AI_main_function.tajika import (
@@ -35,6 +35,60 @@ from AI_tools.AI_main_function.tajika import (
 )
 from AI_tools.AI_main_function.tajika_yogas import detect_all_tajika_yogas
 from AI_tools.AI_main_function.tajika_cross import cross_chart_tajika
+
+
+# ---------------------------------------------------------------------------
+# Font-driven geometry (B7-e FIX 1, td-2o8u): B7-e made the tables' fonts scale
+# with the 'tables'/'table_headers' areas, but the row sections and close-button
+# widths were fixed (setDefaultSectionSize(20), setFixedWidth(28)); at the
+# supported max (area 24 × scale 1.6) a ~50px glyph clipped a 20px row and a 42px
+# header, and the ✕ advance (~32) clipped a 28px box. Derive the geometry from
+# the RESOLVED area fonts instead, at construction AND in refresh_theme. Every
+# helper is parity-preserving at defaults (floored at the old fixed values).
+# ---------------------------------------------------------------------------
+
+def painted_fm_height(widget, area):
+    """Height of the font ACTUALLY painted on `widget` for `area` (B7-e fix
+    round-2): the POLISHED widget's font (its real family/weight after qt-material
+    polish) resized to the QSS PIXEL SIZE the area resolves to. Neither a synthetic
+    `QFont()` (wrong family — generic Sans over-measures the real Roboto/Inter) nor
+    `widget.font()` alone (the header keeps its polished 13pt while the QSS paints
+    `scaled_area_px('table_headers')`) is the painted truth: family FROM the widget,
+    size FROM the paint. Same lesson as the composer round-3, one layer deeper."""
+    from PySide6.QtGui import QFont, QFontMetrics
+    widget.ensurePolished()
+    f = QFont(widget.font())          # real polished family + weight
+    f.setPixelSize(scaled_area_px(area))   # the size the QSS actually paints
+    return QFontMetrics(f).height()
+
+
+def _fit_tajika_table(table):
+    """Size a table's row sections and horizontal-header height to the fonts each
+    surface ACTUALLY paints (painted_fm_height): the ROW from the table body font
+    (`tables` area), the HEADER from the horizontal header's own font
+    (`table_headers` area). setMinimumHeight only GROWS the header, so the default
+    look is unchanged when the auto height already fits."""
+    row_h = max(20, painted_fm_height(table, 'tables') + 4)
+    header_h = max(20, painted_fm_height(table.horizontalHeader(), 'table_headers') + 6)
+    table.verticalHeader().setDefaultSectionSize(row_h)
+    table.horizontalHeader().setMinimumHeight(header_h)
+
+
+def _fit_tajika_close_btn(btn, glyph="✕"):
+    """Width a ✕ close button so its CONTENT rect holds the glyph advance at the
+    resolved 'buttons' font. Measures the button's OWN style overhead (the core
+    and cross close styles differ, ~7 vs ~14px), floored at 28 (default parity)."""
+    from PySide6.QtGui import QFontMetrics
+    from PySide6.QtWidgets import QStyle, QStyleOptionButton
+    from PySide6.QtCore import QRect
+    btn.ensurePolished()
+    adv = QFontMetrics(btn.font()).horizontalAdvance(glyph)
+    opt = QStyleOptionButton(); opt.initFrom(btn); opt.text = glyph
+    opt.rect = QRect(0, 0, 200, max(24, btn.height()))
+    content = btn.style().subElementRect(
+        QStyle.SubElement.SE_PushButtonContents, opt, btn).width()
+    overhead = 200 - content
+    btn.setFixedWidth(max(28, int(adv + overhead + 4)))
 
 
 # ---------------------------------------------------------------------------
@@ -245,7 +299,7 @@ def fill_yogas(text_edit, yogas):
         html += (
             f'<div style="padding:2px 4px; margin-top:4px; '
             f'border-left:3px solid {color}; background-color:{theme["secondary"]};">'
-            f'<b style="color:{color}; font-size:11px;">{cat} ({len(cat_yogas)})</b></div>')
+            f'<b style="color:{color}; font-size:{scaled_px(11)}px;">{cat} ({len(cat_yogas)})</b></div>')
 
         for yoga in cat_yogas:
             yname = yoga.get("yoga_name", "")
@@ -261,11 +315,11 @@ def fill_yogas(text_edit, yogas):
             html += (
                 f'<div style="padding:2px 4px 2px 8px; '
                 f'border-bottom:1px solid {theme["secondary_light"]};">'
-                f'{label} <span style="font-size:10px; color:{theme["secondary_text"]};">'
+                f'{label} <span style="font-size:{scaled_px(10)}px; color:{theme["secondary_text"]};">'
                 f'[{planets_short}]</span><br/>'
-                f'<span style="font-size:10px; color:{theme["secondary_text"]};">'
+                f'<span style="font-size:{scaled_px(10)}px; color:{theme["secondary_text"]};">'
                 f'{description}</span><br/>'
-                f'<i style="font-size:10px; color:{theme["secondary_text"]};">'
+                f'<i style="font-size:{scaled_px(10)}px; color:{theme["secondary_text"]};">'
                 f'{effect}</i></div>')
 
     html += '</div>'
@@ -301,8 +355,13 @@ def fill_speeds(table, chart):
             status_item = QTableWidgetItem("D")
             status_item.setForeground(Qt.GlobalColor.green)
         status_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        # Painted item font (honored under qt-material): bold, and sized to the
+        # 'tables' area in PIXELS so the R/D glyph matches its QSS-styled row
+        # siblings (setFont overrides the table's QSS inheritance, so without an
+        # explicit size it would render at the default and ignore the area). B7-e.
         font = status_item.font()
         font.setBold(True)
+        font.setPixelSize(scaled_area_px('tables'))
         status_item.setFont(font)
         table.setItem(i, 2, status_item)
 
@@ -350,9 +409,9 @@ class TajikaGridWidget(ThemedStyleMixin, QWidget):
         close_row.addStretch()
         self.close_btn = QPushButton("✕")
         self.close_btn.setCursor(Qt.PointingHandCursor)
-        self.close_btn.setFixedWidth(28)
         self.close_btn.setToolTip("Hide the Tajika grid")
         self._register_themed(self.close_btn, self._close_btn_style)
+        _fit_tajika_close_btn(self.close_btn)   # width from ✕ advance (B7-e FIX 1)
         self.close_btn.clicked.connect(self.closeRequested)
         close_row.addWidget(self.close_btn)
         self._close_bar.setVisible(False)
@@ -384,9 +443,9 @@ class TajikaGridWidget(ThemedStyleMixin, QWidget):
         self._register_themed(self.matrix_table, self._table_style)
         self.matrix_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.matrix_table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
-        self.matrix_table.verticalHeader().setDefaultSectionSize(20)
         self.matrix_table.verticalHeader().setMinimumWidth(25)
         self.matrix_table.horizontalHeader().setDefaultSectionSize(20)
+        _fit_tajika_table(self.matrix_table)   # row + header height from fonts (B7-e FIX 1)
         for col in range(11):
             self.matrix_table.horizontalHeader().setSectionResizeMode(
                 col, QHeaderView.ResizeMode.Stretch)
@@ -420,7 +479,7 @@ class TajikaGridWidget(ThemedStyleMixin, QWidget):
         for col in range(1, 5):
             self.rel_table.horizontalHeader().setSectionResizeMode(
                 col, QHeaderView.ResizeMode.Stretch)
-        self.rel_table.verticalHeader().setDefaultSectionSize(20)
+        _fit_tajika_table(self.rel_table)   # row + header height from fonts (B7-e FIX 1)
 
         self.rel_delegate = TajikaHighlightDelegate(parent=self.rel_table)
         self.rel_table.setItemDelegate(self.rel_delegate)
@@ -464,7 +523,7 @@ class TajikaGridWidget(ThemedStyleMixin, QWidget):
         self._register_themed(self.speed_table, self._table_style)
         self.speed_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.speed_table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
-        self.speed_table.verticalHeader().setDefaultSectionSize(20)
+        _fit_tajika_table(self.speed_table)   # row + header height from fonts (B7-e FIX 1)
         for col in range(3):
             self.speed_table.horizontalHeader().setSectionResizeMode(
                 col, QHeaderView.ResizeMode.Stretch)
@@ -548,7 +607,7 @@ class TajikaGridWidget(ThemedStyleMixin, QWidget):
     def _grid_label_style(self):
         theme = get_theme_colors()
         return f"""
-            font-size: 11px; font-weight: bold;
+            font-size: {scaled_area_px('table_headers')}px; font-weight: bold;
             color: {theme["primary"]}; padding: 2px;
             background-color: {theme["secondary"]};
             border-bottom: 1px solid {theme["secondary_light"]};
@@ -562,7 +621,7 @@ class TajikaGridWidget(ThemedStyleMixin, QWidget):
                 color: {theme["secondary_text"]};
                 gridline-color: {theme["secondary_light"]};
                 border: none;
-                font-size: 11px;
+                font-size: {scaled_area_px('tables')}px;
             }}
             QHeaderView::section {{
                 background-color: {theme["secondary"]};
@@ -570,7 +629,7 @@ class TajikaGridWidget(ThemedStyleMixin, QWidget):
                 font-weight: bold;
                 padding: 2px;
                 border: 1px solid {theme["secondary_light"]};
-                font-size: 10px;
+                font-size: {scaled_area_px('table_headers')}px;
             }}
         """
 
@@ -581,7 +640,7 @@ class TajikaGridWidget(ThemedStyleMixin, QWidget):
                 background-color: {theme["secondary_dark"]};
                 color: {theme["secondary_text"]};
                 border: none;
-                font-size: 11px;
+                font-size: {scaled_px(11)}px;
             }}
         """
 
@@ -594,7 +653,7 @@ class TajikaGridWidget(ThemedStyleMixin, QWidget):
                 border: 1px solid {theme["secondary_light"]};
                 border-radius: 4px;
                 font-weight: bold;
-                font-size: 12px;
+                font-size: {scaled_area_px('buttons')}px;
                 padding: 1px;
             }}
             QPushButton:hover {{
@@ -618,8 +677,18 @@ class TajikaGridWidget(ThemedStyleMixin, QWidget):
         baked-in colors (their delegates read the theme at paint time), so
         the style replay covers them (codex review F5)."""
         self._replay_themed()
+        # B7-e FIX 1: re-fit the font-driven geometry (rows/header/close) so a
+        # live font change grows the sections with the new size (td-2o8u).
+        _fit_tajika_table(self.matrix_table)
+        _fit_tajika_table(self.rel_table)
+        _fit_tajika_table(self.speed_table)
+        _fit_tajika_close_btn(self.close_btn)
         if self._last_chart is not None:
             fill_yogas(self.yogas_text, self._last_yogas)
+            # B7-e: the painted status glyph (fill_speeds) bakes scaled_area_px at
+            # fill time, so re-run it here to re-resolve on a live font change (the
+            # QSS replay above covers the other, inheritance-styled, cells).
+            fill_speeds(self.speed_table, self._last_chart)
 
 
 # ---------------------------------------------------------------------------
@@ -745,9 +814,9 @@ class CrossTajikaGridWidget(ThemedStyleMixin, QWidget):
 
         self.close_btn = QPushButton("✕")
         self.close_btn.setCursor(Qt.PointingHandCursor)
-        self.close_btn.setFixedWidth(28)
         self.close_btn.setToolTip("Hide the cross-chart Tajika grid")
         self._register_themed(self.close_btn, self._header_btn_style)
+        _fit_tajika_close_btn(self.close_btn)   # width from ✕ advance (B7-e FIX 1)
         self.close_btn.clicked.connect(self.closeRequested)
         header_row.addWidget(self.close_btn)
         self._header_bar.setVisible(False)
@@ -780,9 +849,9 @@ class CrossTajikaGridWidget(ThemedStyleMixin, QWidget):
         self._register_themed(self.matrix_table, self._table_style)
         self.matrix_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.matrix_table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
-        self.matrix_table.verticalHeader().setDefaultSectionSize(20)
         self.matrix_table.verticalHeader().setMinimumWidth(25)
         self.matrix_table.horizontalHeader().setDefaultSectionSize(20)
+        _fit_tajika_table(self.matrix_table)   # row + header height from fonts (B7-e FIX 1)
         self.matrix_delegate = TajikaHighlightDelegate(parent=self.matrix_table)
         self.matrix_table.setItemDelegate(self.matrix_delegate)
         matrix_layout.addWidget(self.matrix_table, 1)
@@ -806,7 +875,7 @@ class CrossTajikaGridWidget(ThemedStyleMixin, QWidget):
         self._register_themed(self.rec_table, self._table_style)
         self.rec_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.rec_table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
-        self.rec_table.verticalHeader().setDefaultSectionSize(20)
+        _fit_tajika_table(self.rec_table)   # row + header height from fonts (B7-e FIX 1)
         for col in range(len(_CROSS_RECORD_COLUMNS)):
             self.rec_table.horizontalHeader().setSectionResizeMode(
                 col, QHeaderView.ResizeMode.Stretch)
@@ -909,6 +978,10 @@ class CrossTajikaGridWidget(ThemedStyleMixin, QWidget):
         tables carry no baked-in colors (the delegate reads the theme at paint
         time), so the style replay covers everything; nothing is re-filled."""
         self._replay_themed()
+        # B7-e FIX 1: re-fit the font-driven geometry (td-2o8u).
+        _fit_tajika_table(self.matrix_table)
+        _fit_tajika_table(self.rec_table)
+        _fit_tajika_close_btn(self.close_btn)
 
     # ── Internals ──
 
@@ -1110,11 +1183,12 @@ class CrossTajikaGridWidget(ThemedStyleMixin, QWidget):
     def _grid_label_style(self):
         theme = get_theme_colors()
         return """
-            font-size: 11px; font-weight: bold;
+            font-size: {fs}px; font-weight: bold;
             color: {p}; padding: 2px;
             background-color: {s};
             border-bottom: 1px solid {sl};
-        """.format(p=theme["primary"], s=theme["secondary"], sl=theme["secondary_light"])
+        """.format(fs=scaled_area_px('table_headers'), p=theme["primary"],
+                   s=theme["secondary"], sl=theme["secondary_light"])
 
     def _table_style(self):
         theme = get_theme_colors()
@@ -1124,7 +1198,7 @@ class CrossTajikaGridWidget(ThemedStyleMixin, QWidget):
                 color: {st};
                 gridline-color: {sl};
                 border: none;
-                font-size: 11px;
+                font-size: {tbl}px;
             }}
             QHeaderView::section {{
                 background-color: {s};
@@ -1132,20 +1206,21 @@ class CrossTajikaGridWidget(ThemedStyleMixin, QWidget):
                 font-weight: bold;
                 padding: 2px;
                 border: 1px solid {sl};
-                font-size: 10px;
+                font-size: {hdr}px;
             }}
         """.format(sd=theme["secondary_dark"], st=theme["secondary_text"],
-                   sl=theme["secondary_light"], s=theme["secondary"])
+                   sl=theme["secondary_light"], s=theme["secondary"],
+                   tbl=scaled_area_px('tables'), hdr=scaled_area_px('table_headers'))
 
     def _message_style(self):
         theme = get_theme_colors()
-        return "color: {st}; font-size: 11px; padding: 16px;".format(
-            st=theme["secondary_text"])
+        return (f"color: {theme['secondary_text']}; "
+                f"font-size: {scaled_area_px('info_text')}px; padding: 16px;")
 
     def _footnote_style(self):
         theme = get_theme_colors()
-        return "color: {st}; font-size: 10px; padding: 2px 4px;".format(
-            st=theme["secondary_text"])
+        return (f"color: {theme['secondary_text']}; "
+                f"font-size: {scaled_area_px('status')}px; padding: 2px 4px;")
 
     def _header_btn_style(self):
         theme = get_theme_colors()
@@ -1156,12 +1231,12 @@ class CrossTajikaGridWidget(ThemedStyleMixin, QWidget):
                 border: 1px solid {sl};
                 border-radius: 4px;
                 font-weight: bold;
-                font-size: 11px;
+                font-size: {fs}px;
                 padding: 1px 6px;
             }}
             QPushButton:hover {{ background-color: {sl}; }}
         """.format(s=theme["secondary"], st=theme["secondary_text"],
-                   sl=theme["secondary_light"])
+                   sl=theme["secondary_light"], fs=scaled_area_px('buttons'))
 
 
 # ---------------------------------------------------------------------------

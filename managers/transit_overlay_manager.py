@@ -47,6 +47,10 @@ class TransitOverlayManager(QObject):
         self.overlay_label = ""
         self.overlay_source = None  # {"kind": "memory"|"file", "id": ..., "path": ...}
         self.overlay_frame = None   # (mode, ayanamsa, house_system) at build time (INV-3)
+        # SPEC-BAR-001 D-23(b) / F2: the overlaid chart's own birth-identity
+        # payload (an OverlayBirthDisplay, or None). Built at the overlay call
+        # site from the recipe/birth_data and displayed in the title-well chip.
+        self.overlay_birth = None
 
         self._timer = QTimer(self)
         self._timer.setInterval(60_000)
@@ -88,6 +92,7 @@ class TransitOverlayManager(QObject):
         self.overlay_label = ""
         self.overlay_source = None
         self.overlay_frame = None
+        self.overlay_birth = None       # D-23(b) / F2: clear the chip payload
 
     @staticmethod
     def _read_transit_bundle(chart):
@@ -111,7 +116,7 @@ class TransitOverlayManager(QObject):
         self.transit_cusps = cusps
         self.transit_jd = jd
 
-    def overlay_chart(self, chart, label="", source=None):
+    def overlay_chart(self, chart, label="", source=None, birth=None):
         """Overlay an already-built Chart on the rim (SPEC-TRN-006).
 
         Unlike the live-sky path, this NEVER recomputes at the observer's current
@@ -141,6 +146,7 @@ class TransitOverlayManager(QObject):
         self.overlay_chart_obj = chart
         self.overlay_label = label or ""
         self.overlay_source = source
+        self.overlay_birth = birth      # D-23(b) / F2: chip birth payload
         self.overlay_frame = self._current_frame()  # INV-3 frame diff baseline
         self.transit_mode = "overlay_chart"
         self.transit_enabled = True

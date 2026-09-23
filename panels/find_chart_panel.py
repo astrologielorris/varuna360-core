@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
     QApplication, QMenu, QMessageBox
 )
 from PySide6.QtCore import Signal, QTimer, Qt, QThread
-from PySide6.QtGui import QFont, QColor
+from PySide6.QtGui import QFont, QFontMetrics, QColor
 import os
 import json
 import platform
@@ -34,6 +34,19 @@ from ui.qt_theme import (
     FONT_PRIMARY, desat_hex,
     scaled_area_px, scaled_area_size, scaled_area_font
 )
+
+
+def _fm_min_height(area, pad=8):
+    """Vertical floor for a migrated text widget at the CURRENT font size
+    (td-2o8u). Under qt-material the QSS-driven sizeHint().height() tracks the
+    font px (~38 at composed max), still below fontMetrics().height() (~50), so
+    the reliable floor is an explicit fm-derived minimumHeight, re-derived on
+    every live font change (see _refresh_geometry)."""
+    f = QFont()
+    f.setPixelSize(scaled_area_px(area))
+    return QFontMetrics(f).height() + pad
+
+
 
 _VERIFY_PLUGIN = False
 _fcp = None
@@ -358,6 +371,16 @@ class FindChartPanel(QWidget):
         self.sort_banner = None
         self.sort_count_label = None
         self.sort_btn = None
+        # Migrated-font widgets that _refresh_fonts replays on a live font change
+        # (this panel is persistent, not rebuilt per open).
+        self._folder_path_labels = []
+        self._remove_buttons = []
+        self._browse_buttons = []      # td-2o8u: geometry floors re-derived live
+        self.sort_label = None
+        self.group_label = None
+        self.icon_label = None
+        self.search_group = None
+        self.results_group = None
 
         # Build UI
         self._create_ui()
@@ -489,7 +512,8 @@ class FindChartPanel(QWidget):
 
         # Add Folder button (left) - hidden, fixed at 3 folder slots
         self.add_folder_btn = QPushButton("+ Add Folder")
-        self.add_folder_btn.setFont(scaled_area_font('buttons'))
+        # O-6: font-size in QSS (also replayed in refresh_theme).
+        self.add_folder_btn.setStyleSheet(f"font-size: {scaled_area_px('buttons')}px;")
         self.add_folder_btn.setMinimumHeight(32)
         self.add_folder_btn.clicked.connect(self._add_folder_entry)
         self.add_folder_btn.setVisible(False)
@@ -497,29 +521,15 @@ class FindChartPanel(QWidget):
 
         # Index status label (center)
         self.index_status = QLabel("")
-        self.index_status.setFont(scaled_area_font('status'))
+        # O-6: font-size in QSS (also replayed in refresh_theme).
+        self.index_status.setStyleSheet(f"font-size: {scaled_area_px('status')}px;")
         self.index_status.setAlignment(Qt.AlignmentFlag.AlignCenter)
         btn_row_layout.addWidget(self.index_status, 1)  # Stretch
 
         # Rebuild Index button (right, green)
         self.rebuild_btn = QPushButton("Rebuild Index")
-        self.rebuild_btn.setFont(scaled_area_font('buttons', bold=True))
         self.rebuild_btn.setMinimumHeight(32)
-        self.rebuild_btn.setStyleSheet(f"""
-            QPushButton {{
-                background-color: #27AE60;
-                color: white;
-                border: none;
-                border-radius: 4px;
-                padding: 8px 16px;
-            }}
-            QPushButton:hover {{
-                background-color: #229954;
-            }}
-            QPushButton:pressed {{
-                background-color: #1E8449;
-            }}
-        """)
+        self.rebuild_btn.setStyleSheet(self._rebuild_btn_css())
         self.rebuild_btn.clicked.connect(self._rebuild_index)
         self.rebuild_btn.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.rebuild_btn.customContextMenuRequested.connect(self._show_rebuild_context_menu)
@@ -547,42 +557,38 @@ class FindChartPanel(QWidget):
 
         # Label
         label = QLabel(f"Path {idx + 1}:")
-        label.setFont(scaled_area_font('buttons'))
-        label.setFixedWidth(50)
+        # O-6: font-size in QSS (replayed live via _refresh_fonts).
+        label.setStyleSheet(self._label_font_css())
+        self._folder_path_labels.append(label)
+        # td-2o8u: width floor derived from label advance in _refresh_geometry
+        # (a fixed 50 clipped "Path N:" at large fonts).
         label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         entry_layout.addWidget(label)
 
         # Entry field
         line_edit = QLineEdit()
-        line_edit.setFont(scaled_area_font('tables'))
+        # O-6: font-size in QSS.
+        line_edit.setStyleSheet(self._entry_font_css())
         line_edit.setMinimumHeight(28)
         line_edit.setPlaceholderText("Browse for folder...")
         entry_layout.addWidget(line_edit, 1)  # Stretch
 
         # Browse button (blue)
         browse_btn = QPushButton("Browse")
-        browse_btn.setFont(scaled_area_font('buttons'))
-        browse_btn.setMinimumHeight(28)
-        browse_btn.setFixedWidth(80)
+        # O-6: font-size in QSS (also replayed in refresh_theme's browse loop).
+        browse_btn.setStyleSheet(f"font-size: {scaled_area_px('buttons')}px;")
+        # td-2o8u: drop the fixed width (grows to content) + fm height floor via
+        # _refresh_geometry (a fixed 80 clipped "Browse" and 28h clipped glyphs).
+        self._browse_buttons.append(browse_btn)
         browse_btn.clicked.connect(lambda: self._browse_folder(line_edit))
         entry_layout.addWidget(browse_btn)
 
         # Remove button (red, only for entries 4+)
         if idx >= 3:
             remove_btn = QPushButton("✕")
-            remove_btn.setFont(scaled_area_font('buttons', bold=True))
             remove_btn.setFixedSize(28, 28)
-            remove_btn.setStyleSheet(f"""
-                QPushButton {{
-                    background-color: {desat_hex(STATUS['error'])};
-                    color: white;
-                    border: none;
-                    border-radius: 14px;
-                }}
-                QPushButton:hover {{
-                    background-color: #CC0000;
-                }}
-            """)
+            remove_btn.setStyleSheet(self._remove_btn_css())
+            self._remove_buttons.append(remove_btn)
             remove_btn.clicked.connect(lambda: self._remove_folder_entry(entry_widget, line_edit, checkbox))
             entry_layout.addWidget(remove_btn)
 
@@ -594,6 +600,10 @@ class FindChartPanel(QWidget):
 
         # Add to container layout
         self.folders_container.layout().addWidget(entry_widget)
+
+        # td-2o8u: apply fm-based geometry floors to the just-created widgets
+        # (refresh_theme is not auto-called when a folder is added at runtime).
+        self._refresh_geometry()
 
     def _remove_folder_entry(self, frame, entry, checkbox):
         """Remove a folder entry."""
@@ -689,8 +699,10 @@ class FindChartPanel(QWidget):
 
             # Label
             label = QLabel(f"{label_text}:")
-            label.setFont(scaled_area_font('buttons', bold=True))
-            label.setFixedWidth(60)
+            # O-6: font-size + weight in QSS (replayed live via _refresh_fonts).
+            label.setStyleSheet(self._bold_label_font_css())
+            # td-2o8u: width floor = max(legacy 60, widest advance) via
+            # _refresh_geometry (a fixed 60 clipped long names at large fonts).
             label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             row_layout.addWidget(label)
             self.planet_labels[planet_key] = label
@@ -698,9 +710,12 @@ class FindChartPanel(QWidget):
             # Dropdown
             combo = QComboBox()
             combo.addItems(display_signs)
-            combo.setFont(scaled_area_font('buttons'))
+            # O-6: font-size in QSS (inactive default; active/reset re-apply it).
+            combo.setStyleSheet(self._inactive_filter_style())
+            # td-2o8u: keep the pristine fixed WIDTH (combos elide, so width is
+            # never a glyph clip and this preserves default parity); only the
+            # HEIGHT is grown, in _refresh_geometry.
             combo.setFixedWidth(100)
-            combo.setFixedHeight(24)
             combo.currentTextChanged.connect(lambda val, pk=planet_key: self._on_planet_filter_changed(pk))
             row_layout.addWidget(combo)
 
@@ -719,7 +734,6 @@ class FindChartPanel(QWidget):
         button_row_layout.addStretch(1)
 
         self.clear_filters_btn = QPushButton("Clear All Filters")
-        self.clear_filters_btn.setFont(scaled_area_font('buttons'))
         self.clear_filters_btn.setMinimumHeight(28)
         self.clear_filters_btn.setStyleSheet(f"""
             QPushButton {{
@@ -728,6 +742,7 @@ class FindChartPanel(QWidget):
                 border: none;
                 border-radius: 4px;
                 padding: 6px 12px;
+                font-size: {scaled_area_px('buttons')}px;
             }}
             QPushButton:hover {{
                 background-color: #C0392B;
@@ -787,8 +802,10 @@ class FindChartPanel(QWidget):
             row_layout = row1_layout if i < 5 else row2_layout
 
             label = QLabel(f"{label_text}:")
-            label.setFont(scaled_area_font('buttons', bold=True))
-            label.setFixedWidth(60)
+            # O-6: font-size + weight in QSS (replayed live via _refresh_fonts).
+            label.setStyleSheet(self._bold_label_font_css())
+            # td-2o8u: width floor = max(legacy 60, widest advance) via
+            # _refresh_geometry.
             label.setAlignment(
                 Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
             )
@@ -797,9 +814,10 @@ class FindChartPanel(QWidget):
 
             combo = QComboBox()
             combo.addItems(being_items)
-            combo.setFont(scaled_area_font('buttons'))
+            # O-6: font-size in QSS (inactive default).
+            combo.setStyleSheet(self._inactive_filter_style())
+            # td-2o8u: keep pristine fixed width (elides); height via _refresh_geometry.
             combo.setFixedWidth(200)
-            combo.setFixedHeight(24)
             combo.currentTextChanged.connect(
                 lambda val, bk=being_key: self._on_being_filter_changed(bk)
             )
@@ -812,6 +830,262 @@ class FindChartPanel(QWidget):
         filter_layout.addWidget(row1_widget)
         filter_layout.addWidget(row2_widget)
 
+    def _active_filter_style(self):
+        """QSS for an ACTIVE filter combo (theme-primary highlight), read LIVE.
+
+        Single source (td-s3vv) shared by both filter-change handlers AND
+        refresh_theme's re-apply loop, so the selection-time paint and the
+        theme-switch re-apply cannot drift apart (the LNY single-source pattern).
+        Reads get_theme_colors() on every call so a live theme switch re-resolves
+        the highlight instead of freezing the construction-time palette."""
+        theme = get_theme_colors()
+        return f"""
+                QComboBox {{
+                    background-color: {theme["primary"]};
+                    color: {theme["primary_text"]};
+                    border: 1px solid {theme["primary_light"]};
+                    border-radius: 4px;
+                    padding: 2px 4px;
+                    font-size: {scaled_area_px('buttons')}px;
+                }}
+            """
+
+    def _inactive_filter_style(self):
+        """QSS for an INACTIVE filter combo. O-6: an empty stylesheet lets the
+        qt-material global (13px) win, refreezing the combo, so the default state
+        still carries the font-size. Single source for construction, the
+        '(Any)' resets, and refresh_theme's re-apply loop."""
+        return f"QComboBox {{ font-size: {scaled_area_px('buttons')}px; }}"
+
+    # -- font style builders (single source: construction AND _refresh_fonts) --
+    # This panel is PERSISTENT (not rebuilt per open), so a LIVE font-setting
+    # change must re-compose every migrated widget's QSS. Each builder reads
+    # scaled_area_px live; construction and the _refresh_fonts replay share them
+    # so the two paint paths cannot drift.
+
+    @staticmethod
+    def _label_font_css():
+        """Plain label font-size (path labels)."""
+        return f"font-size: {scaled_area_px('buttons')}px;"
+
+    @staticmethod
+    def _bold_label_font_css():
+        """Bold label (filter labels, sort/group labels)."""
+        return f"font-size: {scaled_area_px('buttons')}px; font-weight: bold;"
+
+    @staticmethod
+    def _entry_font_css():
+        """Line-edit / search-entry / icon font-size."""
+        return f"font-size: {scaled_area_px('tables')}px;"
+
+    @staticmethod
+    def _plain_combo_css():
+        """Sort/group combos (no highlight)."""
+        return f"QComboBox {{ font-size: {scaled_area_px('buttons')}px; }}"
+
+    @staticmethod
+    def _group_title_css():
+        """QGroupBox title (Search / Results)."""
+        return (f"QGroupBox {{ font-size: {scaled_area_px('panel_titles')}px; "
+                f"font-weight: bold; }}")
+
+    @staticmethod
+    def _table_font_css():
+        # F-C3 (Release 5 font audit): the QTableWidget rule sized the CONTENT
+        # (tables area) but the result-table column headers had no rule, so they
+        # stayed at the qt-material default and did not follow table_headers.
+        # Both rules are replayed live via _refresh_fonts (results_table restyle).
+        return (f"QTableWidget {{ font-size: {scaled_area_px('tables')}px; }}"
+                f"QHeaderView::section {{ font-size: {scaled_area_px('table_headers')}px; }}")
+
+    @staticmethod
+    def _rebuild_btn_css():
+        """Rebuild-Index button (hardcoded green; font-size follows the setting)."""
+        return f"""
+            QPushButton {{
+                background-color: #27AE60;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 8px 16px;
+                font-size: {scaled_area_px('buttons')}px;
+                font-weight: bold;
+            }}
+            QPushButton:hover {{
+                background-color: #229954;
+            }}
+            QPushButton:pressed {{
+                background-color: #1E8449;
+            }}
+        """
+
+    @staticmethod
+    def _clear_btn_css():
+        """Clear-All-Filters button (hardcoded red; font-size follows setting)."""
+        return f"""
+            QPushButton {{
+                background-color: {desat_hex(STATUS['error'])};
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 6px 12px;
+                font-size: {scaled_area_px('buttons')}px;
+            }}
+            QPushButton:hover {{
+                background-color: #C0392B;
+            }}
+        """
+
+    @staticmethod
+    def _remove_btn_css(radius=14):
+        """Folder remove '✕' button (hardcoded red circle; font follows setting).
+        td-2o8u: border-radius follows the (square) button size = height/2 so it
+        stays a circle at every font size; default 14 = the pristine 28px circle.
+        """
+        return f"""
+                QPushButton {{
+                    background-color: {desat_hex(STATUS['error'])};
+                    color: white;
+                    border: none;
+                    border-radius: {radius}px;
+                    font-size: {scaled_area_px('buttons')}px;
+                    font-weight: bold;
+                }}
+                QPushButton:hover {{
+                    background-color: #CC0000;
+                }}
+            """
+
+    def _refresh_fonts(self):
+        """Re-compose the font QSS of EVERY migrated widget from the live
+        settings. Called from refresh_theme so a font-size change propagates into
+        this persistent panel without a rebuild. Font-only widgets get a font-only
+        QSS (theme colour comes from the panel-level QSS re-applied in
+        refresh_theme); the hardcoded-colour buttons get their full QSS. The
+        theme-coloured widgets (add-folder / browse buttons, index-status,
+        results-count, active filter combos) already carry the font-size in the
+        colour QSS re-applied by refresh_theme, so they are not repeated here."""
+        # font-only labels
+        for lbl in (list(self.planet_labels.values())
+                    + list(self.being_labels.values())):
+            lbl.setStyleSheet(self._bold_label_font_css())
+        for lbl in self._folder_path_labels:
+            lbl.setStyleSheet(self._label_font_css())
+        for lbl in (self.sort_label, self.group_label):
+            if lbl is not None:
+                lbl.setStyleSheet(self._bold_label_font_css())
+        if self.icon_label is not None:
+            self.icon_label.setStyleSheet(self._entry_font_css())
+        # entries
+        for le in self.folder_entries:
+            le.setStyleSheet(self._entry_font_css())
+        if self.search_entry is not None:
+            self.search_entry.setStyleSheet(self._entry_font_css())
+        # sort/group combos + results table
+        for combo in (self.sort_combo, self.group_combo):
+            if combo is not None:
+                combo.setStyleSheet(self._plain_combo_css())
+        if self.results_table is not None:
+            self.results_table.setStyleSheet(self._table_font_css())
+        # group titles
+        for grp in (self.search_group, self.results_group):
+            if grp is not None:
+                grp.setStyleSheet(self._group_title_css())
+        # INACTIVE filter combos (active ones are re-applied with their highlight
+        # in refresh_theme; this is the missing inactive-combo replay branch).
+        for combo in (list(self.being_filters.values())
+                      + list(self.planet_filters.values())):
+            if combo.currentText() == '(Any)':
+                combo.setStyleSheet(self._inactive_filter_style())
+        # hardcoded-colour buttons (never re-styled by refresh_theme otherwise)
+        if self.rebuild_btn is not None:
+            self.rebuild_btn.setStyleSheet(self._rebuild_btn_css())
+        if self.clear_filters_btn is not None:
+            self.clear_filters_btn.setStyleSheet(self._clear_btn_css())
+        for rb in self._remove_buttons:
+            rb.setStyleSheet(self._remove_btn_css())
+
+    # Legacy fixed dimensions (find_chart construction, pre-td-2o8u). Floors are
+    # max(legacy, fm): at default areas/scale the fm term is below these, so the
+    # panel renders EXACTLY as pristine (GLM default-parity law); growth engages
+    # only when the metric exceeds the legacy value.
+    _LEGACY_ENTRY_H = 28        # folder line_edit.setMinimumHeight(28)
+    _LEGACY_FILTER_COMBO_H = 24 # planet/being combo.setFixedHeight(24)
+    _LEGACY_SORTGROUP_COMBO_H = 26  # sort/group combo.setFixedHeight(26)
+    _LEGACY_BROWSE_H = 28       # browse_btn.setMinimumHeight(28)
+    _LEGACY_BROWSE_W = 80       # browse_btn.setFixedWidth(80)
+    _LEGACY_REMOVE_SQ = 28      # remove "X" setFixedSize(28, 28); radius 14
+    _LEGACY_WEB_SEARCH_W = 200  # web_search_btn.setFixedWidth(200)
+    _LEGACY_PATH_LABEL_W = 50   # path label.setFixedWidth(50)
+    _LEGACY_FILTER_LABEL_W = 60 # planet/being label.setFixedWidth(60)
+
+    def _refresh_geometry(self):
+        """td-2o8u: re-derive geometry floors as max(legacy, fm) for every
+        migrated widget that shipped with setFixedHeight(24/26)/setFixedWidth.
+        Called from refresh_theme (after _refresh_fonts) and from
+        _add_folder_entry, so floors track every live Font-Size area x Display
+        Scale while never dropping below the pristine default size. Dropping the
+        fixed dimension is NOT enough under qt-material (its QSS pins
+        sizeHint().height() to the font px, below fontMetrics()), so heights are
+        explicit. Combos keep their fixed WIDTH (they elide) and their pristine
+        setFixedHeight, now max(legacy, fm); entries/browse keep setMinimumHeight
+        semantics; labels (no scroll/elide) get a uniform width = max(legacy,
+        widest advance); primary web-search button grows in WIDTH only (its
+        sizeHint is already tall)."""
+        # Entries: height floor only (QLineEdit scrolls -> width never clips)
+        eh = max(self._LEGACY_ENTRY_H, _fm_min_height('tables'))
+        for le in self.folder_entries:
+            le.setMinimumHeight(eh)
+
+        # Combos: fixed height at max(legacy, fm); width kept fixed at construction
+        fch = max(self._LEGACY_FILTER_COMBO_H, _fm_min_height('buttons'))
+        for combo in (list(self.planet_filters.values())
+                      + list(self.being_filters.values())):
+            combo.setFixedHeight(fch)
+        sgh = max(self._LEGACY_SORTGROUP_COMBO_H, _fm_min_height('buttons'))
+        for combo in (self.sort_combo, self.group_combo):
+            if combo is not None:
+                combo.setFixedHeight(sgh)
+
+        # Widths are CAPPED with setFixedWidth (a min would balloon these to the
+        # row width where the neighbour has no stretch, breaking parity). A cap
+        # must cover the real glyph advance, so it is measured with each widget's
+        # OWN fontMetrics (the QSS/qt-material font is Roboto — a synthetic QFont
+        # underestimates and clips). +pad covers button padding/margins.
+        def _cap_w(widget, legacy, pad):
+            adv = widget.fontMetrics().horizontalAdvance(widget.text()) + pad
+            widget.setFixedWidth(max(legacy, adv))
+
+        # Browse buttons: height floor (max(legacy, fm)); width capped to content
+        bh = max(self._LEGACY_BROWSE_H, _fm_min_height('buttons'))
+        for btn in self._browse_buttons:
+            btn.setMinimumHeight(bh)
+            _cap_w(btn, self._LEGACY_BROWSE_W, 24)
+        # web-search: FIX-H, width capped; height from QSS (primary button)
+        if getattr(self, "web_search_btn", None) is not None:
+            _cap_w(self.web_search_btn, self._LEGACY_WEB_SEARCH_W, 24)
+
+        # Remove "X": grow as a LARGER CIRCLE, never a pill — square side =
+        # max(legacy 28, fm) and border-radius = side/2, so it stays circular at
+        # every font size (default 28 -> radius 14 = pristine).
+        rsq = max(self._LEGACY_REMOVE_SQ, _fm_min_height('buttons'))
+        for rb in self._remove_buttons:
+            rb.setFixedSize(rsq, rsq)
+            rb.setStyleSheet(self._remove_btn_css(radius=rsq // 2))
+
+        # Labels (no scroll/elide): uniform fixed width = max(legacy, widest
+        # advance) so the grid stays aligned and long names never clip.
+        def _cap_labels(group, legacy, pad=12):
+            if not group:
+                return
+            w = max(legacy, max(l.fontMetrics().horizontalAdvance(l.text())
+                                for l in group) + pad)
+            for l in group:
+                l.setFixedWidth(w)
+        _cap_labels(self._folder_path_labels, self._LEGACY_PATH_LABEL_W)
+        _cap_labels(list(self.planet_labels.values()), self._LEGACY_FILTER_LABEL_W)
+        _cap_labels(list(self.being_labels.values()), self._LEGACY_FILTER_LABEL_W)
+
     def _on_being_filter_changed(self, being_key):
         """Handle being filter dropdown change."""
         combo = self.being_filters.get(being_key)
@@ -819,21 +1093,12 @@ class FindChartPanel(QWidget):
             return
 
         selection = combo.currentText()
-        theme = get_theme_colors()
 
         if selection == '(Any)':
-            combo.setStyleSheet("")
+            combo.setStyleSheet(self._inactive_filter_style())
             self._remove_filter_from_search(being_key)
         else:
-            combo.setStyleSheet(f"""
-                QComboBox {{
-                    background-color: {theme["primary"]};
-                    color: {theme["primary_text"]};
-                    border: 1px solid {theme["primary_light"]};
-                    border-radius: 4px;
-                    padding: 2px 4px;
-                }}
-            """)
+            combo.setStyleSheet(self._active_filter_style())
             being_name = selection.split(' (')[0]
             self._add_being_filter_to_search(being_key, being_name)
 
@@ -844,25 +1109,16 @@ class FindChartPanel(QWidget):
             return
 
         selection = combo.currentText()
-        theme = get_theme_colors()
 
         # Update dropdown appearance based on selection
         if selection == '(Any)':
             # Reset to default appearance
-            combo.setStyleSheet("")
+            combo.setStyleSheet(self._inactive_filter_style())
             # Remove this filter from search query
             self._remove_filter_from_search(planet_key)
         else:
             # Highlight active filter with theme primary color (blue)
-            combo.setStyleSheet(f"""
-                QComboBox {{
-                    background-color: {theme["primary"]};
-                    color: {theme["primary_text"]};
-                    border: 1px solid {theme["primary_light"]};
-                    border-radius: 4px;
-                    padding: 2px 4px;
-                }}
-            """)
+            combo.setStyleSheet(self._active_filter_style())
             # Add/update this filter in search query
             self._add_filter_to_search(planet_key, selection)
 
@@ -927,11 +1183,11 @@ class FindChartPanel(QWidget):
         """Clear all planet and retinue being filters."""
         for planet_key, combo in self.planet_filters.items():
             combo.setCurrentIndex(0)
-            combo.setStyleSheet("")
+            combo.setStyleSheet(self._inactive_filter_style())
 
         for being_key, combo in self.being_filters.items():
             combo.setCurrentIndex(0)
-            combo.setStyleSheet("")
+            combo.setStyleSheet(self._inactive_filter_style())
 
         current_search = self.search_entry.text()
 
@@ -950,18 +1206,23 @@ class FindChartPanel(QWidget):
 
         # GroupBox with title
         search_group = QGroupBox("Search")
-        search_group.setFont(scaled_area_font('panel_titles', bold=True))
+        self.search_group = search_group
+        # O-6: QGroupBox title font-size in QSS (replayed live via _refresh_fonts).
+        search_group.setStyleSheet(self._group_title_css())
         search_layout = QHBoxLayout(search_group)
         search_layout.setSpacing(10)
 
         # Search icon (magnifying glass emoji)
         icon_label = QLabel("🔍")
-        icon_label.setFont(scaled_area_font('tables'))
+        self.icon_label = icon_label
+        # O-6: font-size in QSS.
+        icon_label.setStyleSheet(self._entry_font_css())
         search_layout.addWidget(icon_label)
 
         # Search entry
         self.search_entry = QLineEdit()
-        self.search_entry.setFont(scaled_area_font('tables'))
+        # O-6: font-size in QSS.
+        self.search_entry.setStyleSheet(self._entry_font_css())
         self.search_entry.setMinimumHeight(36)
         self.search_entry.setPlaceholderText("Type name, city, or country to search...")
         self.search_entry.textChanged.connect(self._on_search_changed)
@@ -969,7 +1230,8 @@ class FindChartPanel(QWidget):
 
         # Persistent "Search Web" button — always available
         self.web_search_inline_btn = QPushButton("Search Web")
-        self.web_search_inline_btn.setFont(scaled_area_font('buttons'))
+        # O-6: font-size comes from the shared secondary-button style
+        # (action_buttons area, g1); the inert setFont is dropped.
         self.web_search_inline_btn.setMinimumHeight(36)
         self.web_search_inline_btn.setStyleSheet(get_secondary_button_style())
         self.web_search_inline_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -998,14 +1260,17 @@ class FindChartPanel(QWidget):
 
         # Sort by
         sort_label = QLabel("Sort by:")
-        sort_label.setFont(scaled_area_font('buttons', bold=True))
+        self.sort_label = sort_label
+        # O-6: font-size + weight in QSS (replayed live via _refresh_fonts).
+        sort_label.setStyleSheet(self._bold_label_font_css())
         controls_layout.addWidget(sort_label)
 
         self.sort_combo = QComboBox()
         self.sort_combo.addItems(['name', 'ascendant', 'sun', 'moon', 'city', 'country', 'birth_date', 'file_modified'])
-        self.sort_combo.setFont(scaled_area_font('buttons'))
+        # O-6: font-size in QSS.
+        self.sort_combo.setStyleSheet(self._plain_combo_css())
+        # td-2o8u: keep pristine fixed width (elides); height via _refresh_geometry.
         self.sort_combo.setFixedWidth(120)
-        self.sort_combo.setFixedHeight(26)
         self.sort_combo.currentTextChanged.connect(self._on_sort_dropdown_changed)
         controls_layout.addWidget(self.sort_combo)
 
@@ -1013,14 +1278,17 @@ class FindChartPanel(QWidget):
 
         # Group by
         group_label = QLabel("Group by:")
-        group_label.setFont(scaled_area_font('buttons', bold=True))
+        self.group_label = group_label
+        # O-6: font-size + weight in QSS (replayed live via _refresh_fonts).
+        group_label.setStyleSheet(self._bold_label_font_css())
         controls_layout.addWidget(group_label)
 
         self.group_combo = QComboBox()
         self.group_combo.addItems(['none', 'folder', 'ascendant', 'sun', 'moon', 'country', 'city'])
-        self.group_combo.setFont(scaled_area_font('buttons'))
+        # O-6: font-size in QSS.
+        self.group_combo.setStyleSheet(self._plain_combo_css())
+        # td-2o8u: keep pristine fixed width (elides); height via _refresh_geometry.
         self.group_combo.setFixedWidth(120)
-        self.group_combo.setFixedHeight(26)
         self.group_combo.currentTextChanged.connect(lambda: self._refresh_results())
         controls_layout.addWidget(self.group_combo)
 
@@ -1028,8 +1296,9 @@ class FindChartPanel(QWidget):
 
         # Results count label (right-aligned)
         self.results_label = QLabel("0 charts")
-        self.results_label.setFont(scaled_area_font('status'))
-        self.results_label.setStyleSheet("font-style: italic;")
+        # O-6: font-size in QSS.
+        self.results_label.setStyleSheet(
+            f"font-style: italic; font-size: {scaled_area_px('status')}px;")
         controls_layout.addWidget(self.results_label)
 
         parent_layout.addWidget(controls_widget)
@@ -1046,7 +1315,9 @@ class FindChartPanel(QWidget):
 
         # GroupBox with title
         results_group = QGroupBox("Results")
-        results_group.setFont(scaled_area_font('panel_titles', bold=True))
+        self.results_group = results_group
+        # O-6: QGroupBox title font-size in QSS (replayed live via _refresh_fonts).
+        results_group.setStyleSheet(self._group_title_css())
         results_layout = QVBoxLayout(results_group)
         results_layout.setContentsMargins(10, 10, 10, 10)
 
@@ -1057,8 +1328,11 @@ class FindChartPanel(QWidget):
             'Name', 'Asc', 'Sun', 'Moon', 'City', 'Country', 'Birth', 'Modified', 'Path'
         ])
 
-        # Table properties
-        self.results_table.setFont(scaled_area_font('tables'))
+        # Table properties. font-size in the table's own QSS (setFont is the O-6
+        # class under qt-material — frozen at 13px). Cells inherit this; the
+        # group-header QTableWidgetItem sets its own font (model item, honoured).
+        # Replayed live via _refresh_fonts.
+        self.results_table.setStyleSheet(self._table_font_css())
         self.results_table.setAlternatingRowColors(True)
         self.results_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.results_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
@@ -1133,7 +1407,8 @@ class FindChartPanel(QWidget):
         self.web_search_btn = QPushButton("Search Web")
         self.web_search_btn.setStyleSheet(get_primary_button_style())
         self.web_search_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.web_search_btn.setFixedWidth(200)
+        # td-2o8u: width floor (max(legacy 200, advance)) is derived in
+        # _refresh_geometry, which _create_ui runs after this section is built.
         self.web_search_btn.clicked.connect(self._on_web_search_clicked)
         btn_row.addWidget(self.web_search_btn)
         btn_row.addStretch()
@@ -1296,7 +1571,7 @@ class FindChartPanel(QWidget):
         results = self.cache.search(
             query, sort_by, group_by, reverse=self.sort_reverse,
             mode=self.gui.state.aditya_mode,
-            ayanamsa_offset=getattr(self.gui, 'chart_ayanamsa_offset', 0.0),
+            ayanamsa_id=getattr(self.gui, 'chart_sidereal_ayanamsa_id', 100),
         )
 
         # Filter by checked folders
@@ -1330,7 +1605,8 @@ class FindChartPanel(QWidget):
             for group_name, entries in results.items():
                 # Add group header row
                 self.results_table.insertRow(row_idx)
-                group_item = QTableWidgetItem(f"── {group_name} ({len(entries)}) ──")
+                display_group = self._convert_sign_name(group_name) if group_by in ('ascendant', 'sun', 'moon') else group_name
+                group_item = QTableWidgetItem(f"── {display_group} ({len(entries)}) ──")
                 group_item.setFont(scaled_area_font('table_headers', bold=True))
                 group_item.setBackground(color_group)
                 group_item.setForeground(QColor(theme["secondary_text"]))
@@ -1353,12 +1629,17 @@ class FindChartPanel(QWidget):
                 self._insert_entry(entry, row_idx, color_odd if row_idx % 2 == 1 else color_even)
 
         # Update count label
-        self.results_label.setText(f"{count} charts")
+        needs_epoch = self.gui.state.aditya_mode == 'sidereal' and any(
+            not e.get('_skipped') and any(e.get(k) is None for k in ('birth_jd', 'birth_lat', 'birth_lon'))
+            for e in self.cache.index.values())
+        self.results_label.setText(
+            f"{count} charts — Rebuild index for complete Sidereal results"
+            if needs_epoch else f"{count} charts")
 
         # Show/hide web download section
         search_query = self.search_entry.text().strip()
         if self.web_download_widget:
-            if count == 0 and len(search_query) >= 3:
+            if count == 0 and len(search_query) >= 3 and not needs_epoch:
                 self.no_results_label.setText(f'No local charts found for "{search_query}"')
                 self.web_download_widget.show()
                 self.web_result_label.hide()
@@ -1552,18 +1833,17 @@ class FindChartPanel(QWidget):
         """Display sign for a cached planet, computed in the current zodiac mode.
 
         Uses the stored tropical longitude so the column matches the wheel and the
-        search filter in every mode. Falls back to the legacy Aditya-name relabel
-        for pre-v3 cache entries that lack longitudes.
+        search filter in every mode. Legacy Aditya entries retain their stored ordinal; other modes require
+        a rebuild when coordinates or birth JD are missing.
         """
-        from cache.chart_index_cache import sign_index_in_mode
+        from cache.chart_index_cache import entry_sign_index
         from core.aditya_mode import ADITYA_NAMES
-        lon = entry.get(f'{planet_key}_lon')
-        if lon is None:
-            return self._convert_sign_name(entry.get(planet_key, ''))
-        idx = sign_index_in_mode(
-            lon, self.gui.state.aditya_mode,
-            getattr(self.gui, 'chart_ayanamsa_offset', 0.0),
+        idx = entry_sign_index(
+            entry, planet_key, self.gui.state.aditya_mode,
+            getattr(self.gui, 'chart_sidereal_ayanamsa_id', 100),
         )
+        if idx is None:
+            return 'Rebuild index' if not entry.get('_skipped') else '?'
         return self._convert_sign_name(ADITYA_NAMES[idx])
 
     def _insert_entry(self, entry, row_index, bg_color):
@@ -1882,7 +2162,8 @@ class FindChartPanel(QWidget):
             }}
         """)
 
-        # Update Add Folder button
+        # Update Add Folder button. Replay font-size (O-6): the construction QSS
+        # carried it, so re-styling here without it would refreeze at 13px.
         self.add_folder_btn.setStyleSheet(f"""
             QPushButton {{
                 background-color: {theme['primary']};
@@ -1890,6 +2171,7 @@ class FindChartPanel(QWidget):
                 border: none;
                 border-radius: 4px;
                 padding: 8px 16px;
+                font-size: {scaled_area_px('buttons')}px;
             }}
             QPushButton:hover {{
                 background-color: {theme['primary_light']};
@@ -1914,17 +2196,22 @@ class FindChartPanel(QWidget):
                                     border: none;
                                     border-radius: 4px;
                                     padding: 4px 8px;
+                                    font-size: {scaled_area_px('buttons')}px;
                                 }}
                                 QPushButton:hover {{
                                     background-color: {theme['primary_light']};
                                 }}
                             """)
 
-        # Update index status label
-        self.index_status.setStyleSheet(f"color: {theme['secondary_text']};")
+        # Update index status label (replay font-size — O-6, else refreeze@13).
+        self.index_status.setStyleSheet(
+            f"color: {theme['secondary_text']}; "
+            f"font-size: {scaled_area_px('status')}px;")
 
-        # Update results label
-        self.results_label.setStyleSheet(f"color: {theme['secondary_text']}; font-style: italic;")
+        # Update results label (replay font-size — O-6, else refreeze@13).
+        self.results_label.setStyleSheet(
+            f"color: {theme['secondary_text']}; font-style: italic; "
+            f"font-size: {scaled_area_px('status')}px;")
 
         # Update collapsible section headers (Folder Paths, Filter by ...).
         # Built once at construction, so they need an explicit restyle here.
@@ -1969,3 +2256,22 @@ class FindChartPanel(QWidget):
                     border-radius: 6px;
                 }}
             """)
+
+        # Re-apply the active-filter highlight so it survives a live theme switch
+        # (td-s3vv). Only combos currently ACTIVE (a filter is selected, not
+        # "(Any)") get the primary highlight; inactive combos keep their own
+        # _inactive_filter_style() (which carries the O-6 font-size) and are
+        # deliberately left untouched here, so they are never refrozen. Shares
+        # _active_filter_style() with the handlers so the paint paths cannot drift.
+        for combo in list(self.being_filters.values()) + list(self.planet_filters.values()):
+            if combo.currentText() != '(Any)':
+                combo.setStyleSheet(self._active_filter_style())
+
+        # Persistent-surface live-replay: this panel is not rebuilt when the font
+        # settings change, so re-compose every migrated widget's font QSS from the
+        # live values (sol review: construction-only QSS otherwise stays stale on a
+        # live area change). Runs last so nothing it sets is overwritten.
+        self._refresh_fonts()
+        # td-2o8u: re-derive fm-based geometry floors so migrated widgets that
+        # kept setFixedHeight(24/26)/setFixedWidth do not clip at large fonts.
+        self._refresh_geometry()

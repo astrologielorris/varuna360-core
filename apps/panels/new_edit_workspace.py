@@ -80,7 +80,8 @@ from PySide6.QtSvg import QSvgRenderer
 
 from apps.panels.edit_map_subtab import EditMapSubTab
 from apps.widgets.token_entry_bar import TokenEntryBar
-from ui.qt_theme import desat_hex, dim_text, get_theme_colors, is_light_theme
+from ui.qt_theme import (desat_hex, dim_text, get_theme_colors, is_light_theme,
+                         scaled_area_factor, scaled_tier_size)
 from ui.themed_style import ThemedStyleMixin
 
 __all__ = ["NewEditWorkspace"]
@@ -165,17 +166,36 @@ ELEMENT_COLORS = {
 MONO = "'JetBrains Mono', 'DejaVu Sans Mono', monospace"
 
 # ---- Type scale and metrics, ported from the mockup ------------------------
-# The mockup states these in px and they are RELATIVE to its 13px base, which is
-# also what qt-material sets, so px ports 1:1 and keeps the intended
-# proportions. Pinning them here also stops the panel inheriting a size for
-# controls while its labels stay fixed — that mismatch is what made the form
-# look inflated next to the mockup.
-BASE_FONT = "13px"        # --fs, and .inp / .combo input
-LABEL_FONT = "10.5px"     # .fl row labels, .chip
-UNIT_FONT = "9.5px"       # .combo .unit
-TITLE_FONT = "11px"       # .sthead h3
-TAG_FONT = "10.5px"       # tags and step badges
-CHIP_VALUE_FONT = "12px"  # summary card values
+# The mockup states these in px, RELATIVE to its 13px base (also what qt-material
+# sets). They are no longer frozen literals: each is a base tier scaled by its
+# role's font area (_tier_px), so the form follows the resolution presets AND
+# Display Scale while KEEPING the mockup's proportions. Role -> area:
+# BASE/LABEL/UNIT -> info_text, CHIP/BUTTON -> buttons, TAG -> status.
+# The in-FORM section titles and the Rodden dialog title are ALSO on info_text,
+# NOT panel_titles: SPEC-FONT-002 §3.1 caps panel_titles at 10 in every preset
+# (app-wide panel titles like "STRENGTH" truncate in their fixed boxes above
+# 10pt). Routing these wide-form headers through that cap would shrink them
+# BELOW the field labels they head (hierarchy inversion) at every preset. They
+# are not the narrow app panel titles the cap protects, so they scale with the
+# rest of the form. Do NOT "fix" them back to panel_titles (see §3.1).
+def _tier_px(base, area):
+    """QSS ``font-size`` for a base tier scaled by its area factor. Local
+    round-HALF-UP twin of ``qt_theme.scaled_tier_size`` (which uses banker's
+    round): Qt's QSS parser renders ``font-size: 10.5px`` at pixelSize 11, so
+    int(x+0.5) here makes the migration off the old fractional-px literals
+    byte-identical at defaults (area factor 1.0). Kept local rather than in
+    qt_theme so the migration does not bump that module's line ceiling; the
+    painted-QFont path (setPixelSize, which truncates) keeps scaled_tier_size."""
+    return f"{max(1, int(base * scaled_area_factor(area) + 0.5))}px"
+
+
+def _base_px():          return _tier_px(13,   "info_text")     # --fs, .inp/.combo input
+def _label_px():         return _tier_px(10.5, "info_text")     # .fl row labels, .chip
+def _unit_px():          return _tier_px(9.5,  "info_text")     # .combo .unit
+def _section_title_px(): return _tier_px(11,   "info_text")     # .sthead h3 (see note: NOT panel_titles, §3.1)
+def _tag_px():           return _tier_px(10.5, "status")        # tags and step badges
+def _chip_px():          return _tier_px(12,   "buttons")       # summary card values
+def _dialog_title_px():  return _tier_px(15,   "info_text")     # .rodden dialog title (NOT panel_titles, §3.1)
 
 #: The mockup's `.fr` gap is 10 and its `.fl` column is 84. Both are shaved a
 #: little here because the widest row (coordinates: label + two 6-decimal
@@ -184,8 +204,24 @@ CHIP_VALUE_FONT = "12px"  # summary card values
 #: and the steps viewport now shows a scrollbar rather than clipping if a large
 #: font eats even that.
 ROW_SPACING = 8
-LABEL_COLUMN = 78
-HINT_FONT = "10.5px"      # .smartline .hintk
+
+
+def _label_column():
+    """Fixed width of the `.fl` label column, scaled by the SAME info_text factor
+    as the labels it holds — a container that grows with the font, not fonts that
+    shrink to fit (G3b clip rule). At defaults the factor is 1.0 so this is 78,
+    byte-identical to the old constant. Applied at construction AND re-applied in
+    refresh_theme (the labels re-scale on the live font path, so a column frozen
+    at its build width would clip them)."""
+    return scaled_tier_size(78, "info_text")
+
+
+def _badge_dim():
+    """Side of the square step-number badge, scaled by the SAME status factor as
+    the digit it holds (_tag_px), floored at the mockup's 20px. Container grows
+    with the font (G3b): a fixed 20px box clipped a scaled digit. At defaults the
+    status factor is 1.0 so this is 20, byte-identical to the old constant."""
+    return max(20, round(20 * scaled_area_factor("status")))
 
 #: --ok from the mockup: the toast's confirmation edge. Rule 20 semantic
 #: exception (success), desaturated once like the element colours.
@@ -203,18 +239,9 @@ MAX_WIDGET_WIDTH = 16777215
 BUTTON_RADIUS = 10        # --r
 BUTTON_HEIGHT = 34        # .btn height
 BUTTON_PAD_X = 15         # .btn padding
-BUTTON_FONT = "12.5px"    # .btn font
+def _button_px():        return _tier_px(12.5, "buttons")       # .btn font
 BUTTON_WEIGHT = 600
 
-#: The mockup states `.btn.primary{color:#fff}` outright, and white-on-blue is
-#: what a primary action looks like everywhere. Contrast-picking the ink instead
-#: chose BLACK on both themes (on #448aff black measures 5.2:1 to white's 3.3:1)
-#: and inverted the design. This is a deliberate, measured deviation from
-#: contrast-optimal: the ratio is the mockup's own, and the button is a large,
-#: bold, unambiguous target. The element BADGES keep the measured pick, because
-#: there the mockup itself concedes the principle — it hardcodes dark ink on the
-#: light Air badge for exactly this reason.
-PRIMARY_BUTTON_INK = "#ffffff"
 #: The mockup says 32, but a QLineEdit at 13px will not paint below 34 — its
 #: own minimumSizeHint (font metrics + frame margins) outranks a QSS max-height,
 #: verified by measurement. Matching the combos to the real floor keeps the row
@@ -488,11 +515,28 @@ class ToggleSwitch(QWidget):
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setAccessibleName(label)
         self._font = QFont()
-        self._font.setPixelSize(int(float(LABEL_FONT.rstrip("px"))))
+        self._apply_font_metrics()
+
+    def _apply_font_metrics(self):
+        """Size the painted label QFont and the fixed track+label geometry from
+        the current info_text factor. Painted QFont (not QSS), so scaled_tier_size
+        (int) is used — matching the old int(float("10.5"))==10 truncation at
+        defaults. Called at construction AND from refresh_font() so a live preset
+        / Display-Scale change grows the toggle in step with the QSS labels
+        beside it instead of leaving it frozen (G3b)."""
+        self._font.setPixelSize(scaled_tier_size(10.5, "info_text"))
         metrics = QFontMetrics(self._font)
-        self._text_w = metrics.horizontalAdvance(label) if label else 0
+        self._text_w = metrics.horizontalAdvance(self._label) if self._label else 0
         self.setFixedHeight(max(self._TRACK_H + 4, metrics.height() + 4))
-        self.setFixedWidth(self._TRACK_W + (8 + self._text_w if label else 0))
+        self.setFixedWidth(self._TRACK_W + (8 + self._text_w if self._label else 0))
+
+    def refresh_font(self):
+        """Re-scale the painted label to the current font settings and repaint.
+        Called by the host's refresh_theme (the QSS-styled siblings re-scale on
+        that path; this keeps the painted toggle from lagging behind them)."""
+        self._apply_font_metrics()
+        self.updateGeometry()
+        self.update()
 
     # -- state ---------------------------------------------------------------
 
@@ -650,6 +694,14 @@ class NewEditWorkspace(ThemedStyleMixin, QWidget):
         #: (field, widest text it must hold, chrome px) — re-measured whenever
         #: the font can have changed, so a width is never stale.
         self._measured_fields = []
+        #: The fixed-width `.fl` label column widgets. Their width scales with the
+        #: info_text factor (_label_column), so it must be re-applied on every
+        #: refresh_theme — the labels themselves re-scale on the live font path,
+        #: and a column frozen at its construction width would clip them (G3b).
+        self._column_labels = []
+        #: Square step-number badges; their side scales with the status factor
+        #: (_badge_dim) so a scaled digit is not clipped by a fixed 20px box.
+        self._step_badges = []
         #: Splitter orientation currently applied; see ``_apply_orientation``.
         self._orientation = Qt.Orientation.Horizontal
 
@@ -822,7 +874,8 @@ class NewEditWorkspace(ThemedStyleMixin, QWidget):
         gr.setContentsMargins(0, 0, 0, 0)
         gr.setSpacing(ROW_SPACING)
         glabel = QLabel("GENDER")
-        glabel.setFixedWidth(LABEL_COLUMN)
+        glabel.setFixedWidth(_label_column())
+        self._column_labels.append(glabel)
         glabel.setAlignment(Qt.AlignmentFlag.AlignRight
                             | Qt.AlignmentFlag.AlignVCenter)
         self._register_themed(glabel, self._field_label_style)
@@ -1102,7 +1155,7 @@ class NewEditWorkspace(ThemedStyleMixin, QWidget):
                 "QToolButton:hover { border-color: %s; }"
                 "QToolButton:focus { border-color: %s; }"
                 "QToolButton::menu-indicator { image: none; width: 0px; }"
-                % (ink, theme["secondary_dark"], border, LABEL_FONT,
+                % (ink, theme["secondary_dark"], border, _label_px(),
                    _hairline(0.40), _accent_ink()))
 
     def _rodden_help_style(self):
@@ -1151,8 +1204,8 @@ class NewEditWorkspace(ThemedStyleMixin, QWidget):
                 % (theme["secondary"], _hairline(0.20)))
 
     def _rodden_dialog_title_style(self):
-        return ("QLabel { color: %s; font-size: 15px; font-weight: 800;"
-                " background: transparent; }" % _accent_ink())
+        return ("QLabel { color: %s; font-size: %s; font-weight: 800;"
+                " background: transparent; }" % (_accent_ink(), _dialog_title_px()))
 
     def _rodden_code_cell_style(self):
         theme = get_theme_colors()
@@ -1161,11 +1214,11 @@ class NewEditWorkspace(ThemedStyleMixin, QWidget):
                 " padding: 3px 8px; font-family: %s; font-weight: 700;"
                 " font-size: %s; }"
                 % (theme["secondary_text"], theme["secondary_dark"],
-                   _hairline(0.24), MONO, LABEL_FONT))
+                   _hairline(0.24), MONO, _tier_px(10.5, "tables")))   # code cells are data (SPEC-FONT-001 §3.2)
 
     def _rodden_meaning_cell_style(self):
         return ("QLabel { color: %s; font-size: %s; background: transparent; }"
-                % (get_theme_colors()["secondary_text"], LABEL_FONT))
+                % (get_theme_colors()["secondary_text"], _label_px()))
 
     def _rodden_close_style(self):
         ink = _accent_ink()
@@ -1173,7 +1226,7 @@ class NewEditWorkspace(ThemedStyleMixin, QWidget):
                 " border: 1px solid %s; border-radius: 8px;"
                 " padding: 5px 16px; font-size: %s; font-weight: 700; }"
                 "QPushButton:hover { background-color: %s; }"
-                % (ink, _rgba(ink, 0.12), _rgba(ink, 0.34), LABEL_FONT,
+                % (ink, _rgba(ink, 0.12), _rgba(ink, 0.34), _tier_px(10.5, "action_buttons"),
                    _rgba(ink, 0.22)))
 
     def _build_step_two(self):
@@ -1590,7 +1643,8 @@ class NewEditWorkspace(ThemedStyleMixin, QWidget):
         head_layout.setSpacing(9)
 
         badge = QLabel(str(number))
-        badge.setFixedSize(20, 20)
+        badge.setFixedSize(_badge_dim(), _badge_dim())
+        self._step_badges.append(badge)
         badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
         title_label = QLabel(title.upper())
         head_layout.addWidget(badge)
@@ -1616,7 +1670,8 @@ class NewEditWorkspace(ThemedStyleMixin, QWidget):
         layout.setSpacing(ROW_SPACING)
 
         label = QLabel(label_text.upper())
-        label.setFixedWidth(LABEL_COLUMN)
+        label.setFixedWidth(_label_column())
+        self._column_labels.append(label)
         label.setAlignment(Qt.AlignmentFlag.AlignRight
                            | Qt.AlignmentFlag.AlignVCenter)
         self._register_themed(label, self._field_label_style)
@@ -1823,14 +1878,14 @@ class NewEditWorkspace(ThemedStyleMixin, QWidget):
     def _panel_title_style(self):
         return ("QLabel { color: %s; font-size: %s; font-weight: 700;"
                 " background: transparent; }"
-                % (get_theme_colors()["secondary_text"], TITLE_FONT))
+                % (get_theme_colors()["secondary_text"], _section_title_px()))
 
     def _tag_style(self, element=None):
         ink = _element_ink(element, tint=TAG_TINT) if element else _accent_ink()
         return ("QLabel { color: %s; background-color: %s;"
                 " border: 1px solid %s; border-radius: 6px;"
                 " padding: 3px 8px; font-size: %s; font-weight: 700; }"
-                % (ink, _rgba(ink, TAG_TINT), _rgba(ink, 0.34), TAG_FONT))
+                % (ink, _rgba(ink, TAG_TINT), _rgba(ink, 0.34), _tag_px()))
 
     def _segment_frame_style(self):
         theme = get_theme_colors()
@@ -1845,9 +1900,9 @@ class NewEditWorkspace(ThemedStyleMixin, QWidget):
                 " color: %s; background: transparent; }"
                 "QPushButton:hover { background-color: %s; color: %s; }"
                 "QPushButton:checked { background-color: %s; color: %s; }"
-                % (BUTTON_FONT, _muted_ink(), _hairline(0.14),
+                % (_button_px(), _muted_ink(), _hairline(0.14),
                    theme["secondary_text"], theme["primary"],
-                   PRIMARY_BUTTON_INK))
+                   theme["primary_text"]))
 
     def _step_style(self, element):
         return ("QFrame#stepFrame { background: transparent;"
@@ -1860,16 +1915,16 @@ class NewEditWorkspace(ThemedStyleMixin, QWidget):
         return ("QLabel { background-color: %s; color: %s;"
                 " border-radius: 7px; font-size: %s; font-weight: 700;"
                 " font-family: %s; }"
-                % (fill, _ink_on(fill), TAG_FONT, MONO))
+                % (fill, _ink_on(fill), _tag_px(), MONO))
 
     def _step_title_style(self):
         return ("QLabel { color: %s; font-size: %s; font-weight: 700;"
                 " background: transparent; }"
-                % (get_theme_colors()["secondary_text"], TITLE_FONT))
+                % (get_theme_colors()["secondary_text"], _section_title_px()))
 
     def _field_label_style(self):
         return ("QLabel { color: %s; font-size: %s; font-weight: 700;"
-                " background: transparent; }" % (_muted_ink(), LABEL_FONT))
+                " background: transparent; }" % (_muted_ink(), _label_px()))
 
     def _input_style(self, mono=False):
         theme = get_theme_colors()
@@ -1889,7 +1944,7 @@ class NewEditWorkspace(ThemedStyleMixin, QWidget):
                 % (theme["secondary_dark"], theme["secondary_text"],
                    _hairline(0.24), BUTTON_RADIUS,
                    FIELD_HEIGHT - BORDER_ADJUST,
-                   BASE_FONT,
+                   _base_px(),
                    (" font-family: %s;" % MONO) if mono else "",
                    _hairline(0.4), theme["primary"],
                    _rgba(theme["primary"], 0.16),
@@ -1911,7 +1966,7 @@ class NewEditWorkspace(ThemedStyleMixin, QWidget):
                 "QLineEdit:focus { background-color: %s; border-radius: 6px; }"
                 # Locked (read-only) UTC clock keeps the same ink, never greyed.
                 "QLineEdit:read-only { background: transparent; color: %s; }"
-                % (theme["secondary_text"], MONO, BASE_FONT,
+                % (theme["secondary_text"], MONO, _base_px(),
                    _rgba(theme["primary"], 0.16), theme["secondary_text"]))
 
     def _unit_style(self):
@@ -1920,7 +1975,7 @@ class NewEditWorkspace(ThemedStyleMixin, QWidget):
         return ("QLabel { color: %s; font-size: %s; font-weight: 700;"
                 " background: transparent; padding: 0px 9px;"
                 " border-left: 1px solid %s; }"
-                % (_muted_ink(), UNIT_FONT, _hairline(0.18)))
+                % (_muted_ink(), _unit_px(), _hairline(0.18)))
 
     def _chip_style(self):
         theme = get_theme_colors()
@@ -1928,7 +1983,7 @@ class NewEditWorkspace(ThemedStyleMixin, QWidget):
                 " border: 1px solid %s; border-radius: 7px;"
                 " padding: 4px 8px; font-size: %s; font-weight: 600; }"
                 % (theme["secondary_text"], theme["secondary_dark"],
-                   _hairline(0.24), LABEL_FONT))
+                   _hairline(0.24), _label_px()))
 
     def _locked_chip_style(self):
         """Muted ink on the same ground as :meth:`_chip_style`.
@@ -1939,7 +1994,7 @@ class NewEditWorkspace(ThemedStyleMixin, QWidget):
         surface, so "muted" never becomes "unreadable" on either theme.
         """
         theme = get_theme_colors()
-        # UNIT_FONT, not LABEL_FONT: this states a fact about the fields next to
+        # _unit_px(), not _label_px(): this states a fact about the fields next to
         # it, so it should sit at the same weight as the "local" unit marker
         # rather than compete with the controls. It also has to earn its place —
         # at label size the Local time row's minimum went 6 px past the steps
@@ -1949,22 +2004,22 @@ class NewEditWorkspace(ThemedStyleMixin, QWidget):
                 " border: 1px solid %s; border-radius: 7px;"
                 " padding: 3px 7px; font-size: %s; font-weight: 600; }"
                 % (_muted_ink(), theme["secondary_dark"],
-                   _hairline(0.18), UNIT_FONT))
+                   _hairline(0.18), _unit_px()))
 
     def _radio_style(self):
         return ("QRadioButton, QCheckBox { color: %s; spacing: 7px;"
                 " background: transparent; font-size: %s; }"
                 "QRadioButton::indicator, QCheckBox::indicator {"
                 " width: 15px; height: 15px; }"
-                % (get_theme_colors()["secondary_text"], BASE_FONT))
+                % (get_theme_colors()["secondary_text"], _base_px()))
 
     def _muted_style(self):
         return ("QLabel { color: %s; font-size: %s;"
-                " background: transparent; }" % (_muted_ink(), LABEL_FONT))
+                " background: transparent; }" % (_muted_ink(), _label_px()))
 
     def _accent_note_style(self):
         return ("QLabel { color: %s; font-weight: 700; font-size: %s;"
-                " background: transparent; }" % (_accent_ink(), LABEL_FONT))
+                " background: transparent; }" % (_accent_ink(), _label_px()))
 
     def _summary_card_style(self, element):
         theme = get_theme_colors()
@@ -1977,7 +2032,7 @@ class NewEditWorkspace(ThemedStyleMixin, QWidget):
     def _summary_value_style(self):
         return ("QLabel { color: %s; font-family: %s; font-size: %s;"
                 " font-weight: 600; background: transparent; }"
-                % (get_theme_colors()["secondary_text"], MONO, CHIP_VALUE_FONT))
+                % (get_theme_colors()["secondary_text"], MONO, _chip_px()))
 
     def _scroll_style(self):
         return "QScrollArea { border: none; background: transparent; }"
@@ -2001,7 +2056,7 @@ class NewEditWorkspace(ThemedStyleMixin, QWidget):
                 "x1:0, y1:0, x2:0, y2:1, stop:0 %s, stop:1 %s); }"
                 "QPushButton:disabled { background: %s; color: %s; }"
                 % (BUTTON_RADIUS, BUTTON_PAD_X, BUTTON_HEIGHT, BUTTON_HEIGHT,
-                   BUTTON_FONT, BUTTON_WEIGHT, PRIMARY_BUTTON_INK,
+                   _button_px(), BUTTON_WEIGHT, theme["primary_text"],
                    theme["primary_light"], theme["primary"],
                    _lighten(theme["primary_light"]), theme["primary"],
                    theme["secondary_dark"], _muted_ink()))
@@ -2016,7 +2071,7 @@ class NewEditWorkspace(ThemedStyleMixin, QWidget):
                 % (theme["secondary_dark"], theme["secondary_text"],
                    _hairline(0.24), BUTTON_RADIUS, BUTTON_PAD_X,
                    BUTTON_HEIGHT - BORDER_ADJUST,
-                   BUTTON_HEIGHT - BORDER_ADJUST, BUTTON_FONT, BUTTON_WEIGHT,
+                   BUTTON_HEIGHT - BORDER_ADJUST, _button_px(), BUTTON_WEIGHT,
                    _rgba(theme["primary"], 0.16), _rgba(theme["primary"], 0.5)))
 
     def _toast_style(self):
@@ -2028,7 +2083,7 @@ class NewEditWorkspace(ThemedStyleMixin, QWidget):
                 " border-radius: 12px; padding: 11px 18px;"
                 " font-size: %s; font-weight: 600; }"
                 % (theme["secondary"], theme["secondary_text"],
-                   _hairline(0.28), desat_hex(OK_HEX), BUTTON_FONT))
+                   _hairline(0.28), desat_hex(OK_HEX), _button_px()))
 
     def refresh_theme(self):
         """Re-apply every registered style, and cascade to the two children."""
@@ -2036,6 +2091,28 @@ class NewEditWorkspace(ThemedStyleMixin, QWidget):
         # A theme switch can bring a different font with it, and a width
         # measured under the previous one clips exactly like the constant did.
         self._refit_fields()
+        # The `.fl` label column and the painted DST toggle are fixed-geometry,
+        # so _replay_themed (stylesheets only) does not resize them. Re-apply
+        # their font-scaled geometry here or a live preset / Display-Scale change
+        # grows the labels past a column frozen at its construction width, and
+        # leaves the toggle text small beside them (G3b clip rule: containers
+        # grow with the font).
+        for _lbl in self._column_labels:
+            try:
+                _lbl.setFixedWidth(_label_column())
+            except Exception:
+                traceback.print_exc()
+        for _badge in self._step_badges:
+            try:
+                _badge.setFixedSize(_badge_dim(), _badge_dim())
+            except Exception:
+                traceback.print_exc()
+        _toggle = getattr(self, "dst_applied_toggle", None)
+        if _toggle is not None and hasattr(_toggle, "refresh_font"):
+            try:
+                _toggle.refresh_font()
+            except Exception:
+                traceback.print_exc()
         for child in (getattr(self, "token_bar", None),
                       getattr(self, "map_tab", None)):
             try:

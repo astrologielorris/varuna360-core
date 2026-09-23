@@ -68,7 +68,7 @@ class CardsOfTruth(CoT):
         # midnightJD anchors on the UTC date, and whenever the two differ the
         # test answered a question about a different day than the one whose
         # card was then looked up — one day early, silently. Witness: Anver
-        # Joffrey 1928-12-24 18:43 Seattle returned 8H where Kala says 7H;
+        # Joffrey 1928-12-24 18:43 Seattle returned 8H where the reference is 7H;
         # 18:43 is long after sunrise, but in UTC the birth is 1928-12-25
         # 02:43, which is before it. SPEC-COT-001 E-6, fixed 2026-07-27.
         sunrise_time = Sun(EphContext(timeJD=self.context.timeJD.usr_midnightJD(),location=sunrise_location)).rise()

@@ -114,7 +114,21 @@ except Exception:                                     # noqa: BLE001
 #: (`core.aditya_data.PLANET_COLORS` is a different set for a different job.)
 from apps.widgets.planet_shadow import planet_shadow_color
 from apps.widgets.chart_view import PlanetClickSignal, SouthIndianView, PROJECT_ROOT
-from ui.qt_theme import is_light_theme, get_scale_factor, desat_image, sat_key
+from ui.qt_theme import is_light_theme, get_scale_factor, desat_image, sat_key, scaled_area_px
+from ui.popup_fonts import live_style, tier_px
+
+
+def _chart_labels_ratio() -> float:
+    """The chart_labels font-area base over its default, WITHOUT the global
+    display scale (td-l0jfa). Every CoT text size already carries the scale --
+    the card height is capped by get_scale_factor() and three chrome sizes use
+    it directly -- so only the per-area component is folded in here, to avoid
+    double-applying the scale. EXACTLY 1.0 at the default base (parity: zero
+    visual change on migration day); a larger area grows the painted text.
+    Defined here rather than in qt_theme, whose module line ceiling is ratcheted
+    (SI architecture guard, one-directional)."""
+    from ui.qt_theme import get_area_font_size, AREA_DEFAULTS
+    return get_area_font_size("chart_labels") / (AREA_DEFAULTS.get("chart_labels") or 16)
 
 PLANETS_PATH = PROJECT_ROOT / "img" / "planets"
 
@@ -651,9 +665,11 @@ class _GestureCard(QDialog):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(22, 16, 22, 18)
         layout.addWidget(label)
-        self.setStyleSheet(
+        # Gesture help is prose: Info text, live while the card is open (§3.2).
+        live_style(self, self, lambda: (
             f"QDialog {{ background: {QColor(pal['bg1']).name()}; }}"
-            f"QLabel {{ color: {QColor(pal['ink']).name()}; }}")
+            f"QLabel {{ color: {QColor(pal['ink']).name()};"
+            f" font-size: {tier_px('info_text', 13)}px; }}"))
         self.setMinimumWidth(430)
 
 
@@ -1699,7 +1715,7 @@ class CardsOfTruthView(QWidget):
     def _paint_message(self, p, pal, text):
         """INV-12 — the visible in-view failure state."""
         f = QFont()
-        f.setPointSizeF(max(9.0, 11.0 * get_scale_factor()))
+        f.setPointSizeF(max(9.0, 11.0 * get_scale_factor()) * _chart_labels_ratio())
         p.setFont(f)
         p.setPen(QPen(pal["ink_soft"]))
         p.drawText(self.rect().adjusted(40, 0, -40, 0),
@@ -1912,7 +1928,8 @@ class CardsOfTruthView(QWidget):
         has_sub = any(sub for _, sub in years.values())
         f = QFont()
         f.setFamilies(_SERIF_FAMILIES)
-        f.setPixelSize(max(8, int(h * (0.062 if has_sub else 0.082))))
+        f.setPixelSize(max(8, int(h * (0.062 if has_sub else 0.082)
+                                     * _chart_labels_ratio())))
         fm = QFontMetrics(f)
         p.setFont(f)
 
@@ -2310,7 +2327,7 @@ class CardsOfTruthView(QWidget):
     @staticmethod
     def _plain_font(pixel_size, bold=False):
         f = QFont()
-        f.setPixelSize(max(6, int(round(pixel_size))))
+        f.setPixelSize(max(6, int(round(pixel_size * _chart_labels_ratio()))))
         if bold:
             f.setWeight(QFont.Weight.DemiBold)
         return f
@@ -2509,7 +2526,11 @@ class CardsOfTruthView(QWidget):
         if rank:
             f = QFont()
             f.setFamilies(_SERIF_FAMILIES)
-            f.setPixelSize(max(8, int(disc * 0.34)))
+            # Grows with the chart_labels area but clamped to the medallion so a
+            # large area shrinks-to-fit inside the milled ring, never overflows
+            # it (td-l0jfa).
+            f.setPixelSize(max(8, int(min(disc * 0.34 * _chart_labels_ratio(),
+                                          disc * 0.50))))
             f.setWeight(QFont.Weight.DemiBold)
             fm = QFontMetrics(f)
             p.save()
@@ -3008,6 +3029,10 @@ class CardsOfTruthView(QWidget):
         p.drawEllipse(r)
         p.restore()
 
+        from apps.widgets.planet_icon_style import paint_svg
+        inset = r.width() * 0.07
+        if paint_svg(p, r.adjusted(inset, inset, -inset, -inset), body['name']):
+            return
         px = self._icon_pixmap(body["name"], int(r.width() * 0.86))
         if px is not None and not px.isNull():
             target = QRectF(0, 0, px.width() / px.devicePixelRatio(),
@@ -3055,33 +3080,62 @@ class CardsOfTruthView(QWidget):
                                   top + fm.height() * 0.86 + mini / 2.0))
             p.drawPixmap(mr.topLeft(), px)
 
-    def _paint_position(self, p, pal, rect, h, entry, lifted):
-        """The position label, optically centred on the card face.
+    def _rank_column_right(self, rect, h, rank_display="10"):
+        """Right edge of the top-left rank column (the rank glyph in
+        _paint_index) for ``rank_display``. Defaults to the WIDEST rank "10", so
+        a caller that wants a uniform value across the seven row-2 cards (a
+        shared berth their titles line up in) gets one (td-l0jfa)."""
+        rank_f = QFont()
+        rank_f.setFamilies(_SERIF_FAMILIES)
+        rank_f.setPixelSize(max(7, int(h * _RANK)))
+        rank_f.setWeight(QFont.Weight.DemiBold)
+        return rect.left() + h * 0.055 + QFontMetrics(rank_f).horizontalAdvance(
+            rank_display or "10")
 
-        Absolute centring, not a flex row: a 'J' and a '10' have different
-        widths, so a label laid out beside the rank would land in a different
-        place on every card and the seven cards of row 2 would not line up.
-        """
+    def _position_layout(self, rect, h, label, rank_display="10"):
+        """(font, x_left, advance) for the card title.
+
+        Centred on the card while it clears THIS card's rank (the clean default:
+        a one-digit rank leaves the centred title well clear). When a card-centred
+        title would collide with the rank glyph -- which it does once the
+        chart_labels font area is large, since the rank stays card-proportional
+        while the title grows -- the title is shifted into the berth to the RIGHT
+        of the rank column and the font is shrunk to fit it, so it never overlaps
+        the rank and never loses a glyph (td-l0jfa). The berth uses the UNIFORM
+        widest-rank width, so the shifted titles still line up across the seven
+        row-2 cards. Pure geometry (no painting) so the invariant is unit-testable."""
+        f = self._label_font(max(7.0, min(13.0, h * 0.0525)), spacing=117)
+        fm = QFontMetrics(f)
+        gap = h * 0.05
+        centred_left = rect.center().x() - fm.horizontalAdvance(label) / 2.0
+        if centred_left >= self._rank_column_right(rect, h, rank_display) + gap:
+            return f, centred_left, float(fm.horizontalAdvance(label))
+        berth_left = self._rank_column_right(rect, h, "10") + gap
+        berth_w = max(1.0, (rect.right() - h * 0.055) - berth_left)
+        while fm.horizontalAdvance(label) > berth_w and f.pixelSize() > 6:
+            f.setPixelSize(f.pixelSize() - 1)
+            fm = QFontMetrics(f)
+        adv = float(fm.horizontalAdvance(label))
+        return f, berth_left + max(0.0, (berth_w - adv) / 2.0), adv
+
+    def _paint_position(self, p, pal, rect, h, entry, lifted):
+        """The position label on the card face — centred on the card, or shifted
+        into the berth right of the rank and shrunk to fit when a card-centred
+        title would collide with the rank glyph (see _position_layout, td-l0jfa).
+        The seven row-2 cards still line up because the berth is uniform."""
         text = entry["position"]
         if not text or entry["is_base"]:
             return
 
-        size = max(7.0, min(13.0, h * 0.0525))
-        f = self._label_font(size, spacing=117)
-        fm = QFontMetrics(f)
-
-        avail = rect.width() - h * 0.11
         label = text.upper()
-        if fm.horizontalAdvance(label) > avail:
-            label = text[:3].upper()              # SAT / JUP — degrade, don't clip
-            if fm.horizontalAdvance(label) > avail:
-                return
-
+        f, x_left, adv = self._position_layout(rect, h, label,
+                                               entry.get("rank_display", "10"))
+        fm = QFontMetrics(f)
         p.save()
         p.setFont(f)
         p.setPen(QPen(pal["ink_soft"] if lifted else pal["ink_faint"]))
-        band = QRectF(rect.left(), rect.top() + h * 0.074, rect.width(), fm.height())
-        p.drawText(band, Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop, label)
+        band = QRectF(x_left, rect.top() + h * 0.074, adv, fm.height())
+        p.drawText(band, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop, label)
         p.restore()
 
     @staticmethod
@@ -3324,7 +3378,7 @@ class CardsOfTruthView(QWidget):
 
     def _label_font(self, pixel_size, spacing):
         f = QFont()
-        f.setPixelSize(max(6, int(round(pixel_size))))
+        f.setPixelSize(max(6, int(round(pixel_size * _chart_labels_ratio()))))
         f.setWeight(QFont.Weight.Bold)
         f.setCapitalization(QFont.Capitalization.AllUppercase)
         f.setLetterSpacing(QFont.SpacingType.PercentageSpacing, spacing)

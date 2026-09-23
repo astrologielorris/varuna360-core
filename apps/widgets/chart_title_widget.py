@@ -25,11 +25,10 @@ from ui.qt_theme import (
     STATUS,
     GOLD,
     get_theme_colors,
-    get_secondary_button_style,
     scaled_area_px,
-    scaled_area_font,
     desat_hex,
 )
+from ui.popup_fonts import tier_px, in_dialog_button_style
 
 import urllib.parse
 
@@ -98,21 +97,28 @@ def _get_all_dasha_entries(gui, panel_side):
     Returns:
         tuple: (list_of_entries, dasha_label)
     """
+    # Dasha navigation state now lives on DashaManager.dasha_state
+    # (SPEC-DSH-002); read it via the accessors, guarding a missing manager.
+    dm = getattr(gui, 'dasha_manager', None)
     if panel_side == 'left':
-        dasha_data = getattr(gui, 'vedanga_dasha_data', None)
+        dasha_data = dm.rows("left") if dm else None
         # Label reflects current ayanamsa setting (Vedanga, Dhruva, Lahiri, etc.)
         from core.ayanamsa_data import get_ayanamsa_name
-        ayan_id = getattr(gui, 'vedanga_ayanamsa', 100)
+        ayan_id = dm.ayanamsa("left") if dm else 100
         dasha_label = get_ayanamsa_name(ayan_id) or "Dasha"
         is_nisarga = False
     else:
-        right_mode = getattr(gui, 'right_dasha_mode', 'nisarga')
+        right_mode = dm.right_mode if dm else 'nisarga'
         is_nisarga = right_mode == "nisarga"
+        # SPEC-ZR-001: Zodiacal Releasing reads its rows from the list widget
+        # like Nisarga (there is no cached mahadasha tree), labelled "Releasing".
+        if right_mode == "zr":
+            return _get_zr_entries(gui), "Releasing"
         if is_nisarga:
             dasha_data = None
             dasha_label = "Planetary Ages"
         else:
-            dasha_data = getattr(gui, 'vimshottari_dasha_data', None)
+            dasha_data = dm.rows("right") if dm else None
             dasha_label = "Vimshottari"
 
     if is_nisarga:
@@ -207,7 +213,8 @@ def _get_all_dasha_entries(gui, panel_side):
 def _get_nisarga_entries(gui):
     """Get Nisarga (Planetary Ages + Maturation) entries from the list widget."""
     import re
-    list_widget = getattr(gui, 'vimshottari_list', None)
+    _rp = getattr(gui, 'vimshottari_panel', None)
+    list_widget = _rp.list_widget if _rp is not None else None
     if not list_widget:
         return []
 
@@ -247,40 +254,81 @@ def _get_nisarga_entries(gui):
     return entries
 
 
+def _get_zr_entries(gui):
+    """SPEC-ZR-001: Zodiacal Releasing entries from the displayed list widget.
+
+    Reads the currently listed level (one level shows at a time). Each row
+    carries lord, sign_label, local start date and is_current in its UserRole.
+    Rows tile, so there is no separate end date; is_maturation is always False
+    so the caller renders one flat "Releasing" submenu.
+    """
+    _rp = getattr(gui, 'vimshottari_panel', None)
+    list_widget = _rp.list_widget if _rp is not None else None
+    if not list_widget:
+        return []
+
+    entries = []
+    for i in range(list_widget.count()):
+        item = list_widget.item(i)
+        if not item:
+            continue
+        entry = item.data(Qt.ItemDataRole.UserRole)
+        if not entry or not entry.get('lord') or entry.get('is_separator'):
+            continue
+        lord = entry['lord']
+        sign = entry.get('sign_label', '')
+        start = entry.get('date', '')
+        display = f"{sign} {lord} ({start})".strip() if start else f"{sign} {lord}".strip()
+        entries.append({
+            'lord': lord,
+            'start': start,
+            'end': "",
+            'display': display,
+            'is_current': entry.get('is_current', False),
+            'is_maturation': False,
+        })
+
+    return entries
+
+
 _TRANSIT_IDLE_TOOLTIP = ("Show current planetary transits overlay. "
                          "Drop a chart here to overlay it.")
 
 
 def _style_overlay_chip(gui):
-    """Theme the overlay chip (SPEC-TRN-006, Rule 20 — no hardcoded hex)."""
+    """Theme the overlay chip (SPEC-TRN-006, Rule 20 — no hardcoded hex).
+
+    D-23(b) / F2 / M3 repaint: the ◇·name·info body is now the painted
+    OverlayChip (`gui.overlay_chip_view`), which reads `bar_tokens()` at paint
+    time and carries its own --ctl fill + 0.5px --hair-soft inset hairline — no
+    blue border, no QLabel styling here. This styles only the transparent
+    container and the × clear button (the mockup's separate `.xbtn`).
+    """
     if not hasattr(gui, 'overlay_chip'):
         return
+    # F2 / MAJOR 2 + MINOR 6 / INV-4: the v2 bar's chip is fully painted — the
+    # OverlayChip body self-themes via bar_tokens() at paint time, its container
+    # is a plain transparent QWidget, and the × clear is a HIDDEN programmatic
+    # proxy (the well's painted chevron is the visible clear affordance). It
+    # needs NO stylesheet (QSS is reserved for the overflow menu), so skip the
+    # QSS path entirely for it and keep it only for the LEGACY bar's visible ×.
+    if getattr(gui, '_overlay_chip_painted', False):
+        return
     theme = get_theme_colors()
-    gui.overlay_chip.setStyleSheet(f"""
-        QWidget {{
-            background-color: {theme["secondary_dark"]};
-            border: 1px solid {theme["primary"]};
-            border-radius: 11px;
-        }}
-    """)
-    gui.overlay_chip_label.setStyleSheet(f"""
-        QLabel {{
-            color: {theme["secondary_text"]};
-            background: transparent;
-            border: none;
-            font-family: 'Inter', 'Segoe UI', 'Arial', sans-serif;
-            font-size: {scaled_area_px('buttons')}px;
-        }}
-    """)
+    gui.overlay_chip.setStyleSheet("QWidget { background: transparent; border: none; }")
+    # Legacy bar only: the clear glyph wears the faint muted weight. Hover lifts
+    # it to secondary_text. --muted lives in bar_tokens (the mockup CSS var
+    # table), not the widget theme dict; read it from there.
+    from ui.qt_theme import bar_tokens as _bar_tokens
+    _muted = _bar_tokens()["muted"].name()
     gui.overlay_chip_clear.setStyleSheet(f"""
         QPushButton {{
-            color: {theme["secondary_text"]};
+            color: {_muted};
             background: transparent;
             border: none;
             font-size: {scaled_area_px('buttons')}px;
-            font-weight: bold;
         }}
-        QPushButton:hover {{ color: {theme["primary_text"]}; }}
+        QPushButton:hover {{ color: {theme["secondary_text"]}; }}
     """)
 
 
@@ -296,11 +344,36 @@ def update_overlay_chip(gui, mgr):
         return
     is_overlay = (getattr(mgr, 'transit_mode', '') == "overlay_chart"
                   and getattr(mgr, 'transit_enabled', False))
+    # D-23(b) / F2: while a chip is shown it carries the identity, so the meta
+    # yields to it (the mockup's trimMeta hides #chartMeta once #ovlChip
+    # crowds the well). Flag it so the layout controller keeps the meta hidden.
+    gui._overlay_chip_active = is_overlay
+    ctl = getattr(gui, "bar_layout_controller", None)
+    if ctl is not None and hasattr(ctl, "_update_meta"):
+        ctl._update_meta()
+    elif hasattr(gui, "chart_title_meta") and is_overlay:
+        gui.chart_title_meta.setVisible(False)   # old bar: no controller
+    view = getattr(gui, "overlay_chip_view", None)
     if is_overlay:
         name = mgr.overlay_label or "chart"
-        shown = name if len(name) <= 18 else name[:17] + "…"
-        gui.overlay_chip_label.setText(f"⟐ {shown}")
-        gui.overlay_chip_label.setToolTip(name)
+        # The birth-info span: `· DD/MM/YYYY HH:MM · City, Country`.
+        birth = getattr(mgr, "overlay_birth", None)
+        info_text = birth.info if birth is not None else ""
+        if view is not None:
+            # D-23(b) / F2: the painted chip owns ◇ + name + info and elides
+            # them itself (info gives ground first, name last). The controller
+            # owns only the d1 tier gate (collapse info) — honour the current
+            # tier so an overlay STARTED while already compact does not flash it.
+            view.set_content(name, info_text)
+            view.setToolTip(f"{name}{(' ' + info_text.lstrip(' ·').strip()) if info_text else ''}")
+            tier = 0
+            ctl = getattr(gui, "bar_layout_controller", None)
+            if ctl is not None:
+                try:
+                    tier = ctl.tier
+                except Exception:
+                    tier = 0
+            view.set_collapsed(tier >= 1)
         # Do not reveal the chip in compact mode: the TRANSIT button is hidden
         # there, so a visible chip would be a dead control (reachable when an
         # overlay is started while already compact, e.g. via the right-click entry).
@@ -308,10 +381,13 @@ def update_overlay_chip(gui, mgr):
         if hasattr(gui, 'transit_btn'):
             gui.transit_btn.setText("⟐ Overlay")
             gui.transit_btn.setToolTip(
-                f"Overlay: {name}. Click to turn the rim off, or use the x on "
-                f"the chip to go back to live sky.")
+                f"Overlay: {name}. Click to turn the rim off, or click the "
+                f"chevron on the chip (or right-click here) to go back to live "
+                f"sky.")
     else:
         gui.overlay_chip.setVisible(False)
+        if view is not None:
+            view.set_content("", "")
         if hasattr(gui, 'transit_btn'):
             gui.transit_btn.setText("⟐ Transit")
             gui.transit_btn.setToolTip(_TRANSIT_IDLE_TOOLTIP)
@@ -558,7 +634,8 @@ class ChartSearchDialog(QDialog):
         # Search input — SPEC-THM-001 G12 live theme colors.
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText("Type a name to search across all profiles...")
-        self.search_input.setFont(scaled_area_font('buttons', family="Segoe UI"))
+        # O-6: font-size + the Segoe UI family in QSS (setFont is inert under
+        # qt-material). Size was already correct; the family never landed.
         self.search_input.setStyleSheet(f"""
             QLineEdit {{
                 background-color: {_theme['secondary']};
@@ -567,6 +644,7 @@ class ChartSearchDialog(QDialog):
                 border-radius: 10px;
                 padding: 10px 16px;
                 font-size: {scaled_area_px('buttons')}px;
+                font-family: "Segoe UI";
             }}
             QLineEdit:focus {{
                 border: 2px solid {_theme['primary']};
@@ -577,12 +655,14 @@ class ChartSearchDialog(QDialog):
 
         # Result count label — SPEC-THM-001 G12 live theme color.
         self.count_label = QLabel("")
-        self.count_label.setStyleSheet(f"color: {_theme['secondary_text']}; font-size: {scaled_area_px('buttons')}px; padding-left: 4px;")
+        self.count_label.setStyleSheet(f"color: {_theme['secondary_text']}; font-size: {tier_px('status', 10)}px; padding-left: 4px;")
         layout.addWidget(self.count_label)
 
         # Results list — SPEC-THM-001 G12 live theme colors.
         self.results_list = QListWidget()
-        self.results_list.setFont(scaled_area_font('buttons', family="Segoe UI"))
+        # O-6: the list had NO QSS font-size, so setFont was inert and it froze
+        # at the qt-material default (13px). Compose font-size + the Segoe UI
+        # family into the QListWidget QSS (items inherit the widget font).
         self.results_list.setStyleSheet(f"""
             QListWidget {{
                 background-color: {_theme['secondary']};
@@ -591,6 +671,8 @@ class ChartSearchDialog(QDialog):
                 border-radius: 8px;
                 padding: 4px;
                 outline: none;
+                font-size: {scaled_area_px('sidebar')}px;
+                font-family: "Segoe UI";
             }}
             QListWidget::item {{
                 padding: 10px 12px;
@@ -621,16 +703,22 @@ class ChartSearchDialog(QDialog):
 
         # "Search in Find Chart" button (hidden by default, shown when 0 results)
         self.find_chart_btn = QPushButton("Search in Find Chart tab")
-        self.find_chart_btn.setFont(scaled_area_font('buttons', family="Segoe UI"))
+        # O-6: the inert setFont is dropped; the shared secondary-button style
+        # carries the font-size (action_buttons area, td-c038 g1 finding 2). The
+        # Segoe UI family it had is re-composed into the button's OWN QSS on top
+        # of the helper (the helper deliberately sets no family), so this button
+        # matches its sibling search widgets.
         self.find_chart_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.find_chart_btn.setStyleSheet(get_secondary_button_style())
+        self.find_chart_btn.setStyleSheet(
+            in_dialog_button_style()
+            + ' QPushButton { font-family: "Segoe UI"; }')
         self.find_chart_btn.clicked.connect(self._redirect_to_find_chart)
         self.find_chart_btn.setVisible(False)
         layout.addWidget(self.find_chart_btn)
 
         # Hint label — SPEC-THM-001 G12 live theme color.
         hint = QLabel("Double-click or press Enter to load chart  ·  Searches all profiles")
-        hint.setStyleSheet(f"color: {_theme['secondary_text']}; font-size: {scaled_area_px('buttons')}px; padding-left: 4px;")
+        hint.setStyleSheet(f"color: {_theme['secondary_text']}; font-size: {tier_px('info_text', 10)}px; padding-left: 4px;")
         hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(hint)
 
@@ -847,6 +935,11 @@ def create_chart_title_widget(gui):
     """
     Create chart title widget with all control buttons matching the old CustomTkinter GUI.
 
+    SPEC-BAR-001: behind ``ui.action_bar_v2`` this whole construction is
+    replaced by the Vibrancy Segmented bar (``apps/widgets/action_bar``),
+    which assigns the same ``gui.<attr>`` census (INV-5). This legacy body
+    is retained until one release after M6 ships default-on (D-15).
+
     Layout: [LEFT buttons] [stretch] [Chart Pill + Close] [stretch] [RIGHT buttons]
 
     Args:
@@ -875,6 +968,16 @@ def create_chart_title_widget(gui):
         - gui.dual_rim_btn (QPushButton) - Aditya + Tropical dual rim (wheel view only)
         - gui.tropical_btn (QPushButton) - Tropical Classic toggle
     """
+    # SPEC-BAR-001 flag branch — the v2 bar assigns the same attribute census.
+    try:
+        from managers.settings_manager import get_settings
+        _v2 = bool(get_settings().get_action_bar_v2())
+    except Exception:
+        _v2 = False
+    if _v2:
+        from apps.widgets.action_bar import create_action_bar
+        return create_action_bar(gui)
+
     # Get theme colors for dynamic theming
     theme = get_theme_colors()
 
@@ -1055,10 +1158,12 @@ def create_chart_title_widget(gui):
     # overlay. Hidden by default; update_overlay_chip() drives its state.
     gui.overlay_chip = QWidget()
     _chip_layout = QHBoxLayout(gui.overlay_chip)
-    _chip_layout.setContentsMargins(8, 2, 6, 2)
-    _chip_layout.setSpacing(6)
-    gui.overlay_chip_label = QLabel("")
-    _chip_layout.addWidget(gui.overlay_chip_label)
+    _chip_layout.setContentsMargins(0, 0, 0, 0)
+    _chip_layout.setSpacing(4)
+    # D-23(b) / F2 / M3 repaint: the painted ◇·name·info chip + a separate ×.
+    from apps.widgets.action_bar.overlay_chip import OverlayChip as _OverlayChip
+    gui.overlay_chip_view = _OverlayChip(fs=1.0)
+    _chip_layout.addWidget(gui.overlay_chip_view)
     gui.overlay_chip_clear = QPushButton("×")
     gui.overlay_chip_clear.setFixedSize(18, 18)
     gui.overlay_chip_clear.setFlat(True)
@@ -1259,6 +1364,15 @@ def set_chart_title_compact(gui, compact):
     - Shrinks the name pill and close button
     - Reduces overall title bar height from 55px to 35px
     """
+    # SPEC-BAR-001 M3 (Dm3-43/44): under the v2 bar the d0–d5 ladder owns
+    # density — record the flag for the four legacy readers (Dm3-45) and do
+    # NOTHING else. No tier cap: the ladder selects from measured widths of
+    # the BAR, and the 1400px window threshold predates those metrics.
+    if getattr(getattr(gui, 'chart_title_widget', None),
+               'layout_controller', None) is not None:
+        gui._title_is_compact = bool(compact)
+        return
+
     if getattr(gui, '_title_is_compact', False) == compact:
         return
     gui._title_is_compact = compact

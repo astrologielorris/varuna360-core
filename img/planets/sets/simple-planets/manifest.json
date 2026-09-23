@@ -1,0 +1,155 @@
+{
+  "family": "simple-planets",
+  "setting": "display.planet_icon_set",
+  "setting_value": "simple_svg",
+  "viewBox": "0 0 100 100",
+  "base_stroke_width": 5.0,
+  "passes": "SIMPLE_PASSES in apps/widgets/planet_svg_provider.py: casing 10 + fill outline 3.5, core 6.5",
+  "sources_note": "Geometry hand-measured from the default img/planets WebPs (git-ignored); see docs/design/simple-planets/design-map.md. Nothing traced or embedded.",
+  "bodies": [
+    {
+      "body": "Sun",
+      "file": "sun.svg",
+      "source": "img/planets/sun.webp",
+      "source_sha256": "4588c05d2ec087c7e823d5156997334b726c5c2d41632d5c17cdcaaef7bcee05",
+      "casing_bbox": [
+        11.9,
+        11.9,
+        88.1,
+        88.1
+      ]
+    },
+    {
+      "body": "Moon",
+      "file": "moon.svg",
+      "source": "img/planets/moon.webp",
+      "source_sha256": "a46926c633e5417f7aec3181957186d8c6507166a8e9f512077012a2a72b2243",
+      "casing_bbox": [
+        23.0,
+        20.9,
+        77.1,
+        79.1
+      ]
+    },
+    {
+      "body": "Mercury",
+      "file": "mercury.svg",
+      "source": "img/planets/Mercury.webp",
+      "source_sha256": "162cc9d48060b87015264d6ad1049c5341cdf7b05c6befe12dd28ce0ad36efe5",
+      "casing_bbox": [
+        30.3,
+        14.4,
+        69.7,
+        85.6
+      ]
+    },
+    {
+      "body": "Venus",
+      "file": "venus.svg",
+      "source": "img/planets/Venus.webp",
+      "source_sha256": "c1cb3a7fcf3286a2e98b187357b621fd026aa4462572c964375b0cd10cac53c1",
+      "casing_bbox": [
+        19.1,
+        4.0,
+        80.9,
+        96.0
+      ]
+    },
+    {
+      "body": "Mars",
+      "file": "mars.svg",
+      "source": "img/planets/Mars.webp",
+      "source_sha256": "93a45d5935b89f6c4b70c72aa26cda3b1e4fe20770bd23122e7085a5b1d793bb",
+      "casing_bbox": [
+        16.8,
+        16.6,
+        83.2,
+        83.4
+      ]
+    },
+    {
+      "body": "Jupiter",
+      "file": "jupiter.svg",
+      "source": "img/planets/Jupiter.webp",
+      "source_sha256": "3c04265a6af2d51efa76312f202eddcc436e0a1e6fafe35627edd5dbe73af36c",
+      "casing_bbox": [
+        9.5,
+        8.9,
+        90.5,
+        91.1
+      ]
+    },
+    {
+      "body": "Saturn",
+      "file": "saturn.svg",
+      "source": "img/planets/Saturn.webp",
+      "source_sha256": "f1ee0416b77365bba2cfe576a93e2329d5f61b7b65b74c49666b17f88e94fed2",
+      "casing_bbox": [
+        23.3,
+        13.4,
+        76.7,
+        86.6
+      ]
+    },
+    {
+      "body": "Rahu",
+      "file": "rahu.svg",
+      "source": "img/planets/rahu.webp",
+      "source_sha256": "9ab01ebb4aa2ea7767b847fa1b9984d1fcc7d1196605dc9744425b14a1bd075d",
+      "casing_bbox": [
+        9.9,
+        8.2,
+        90.1,
+        91.8
+      ]
+    },
+    {
+      "body": "Ketu",
+      "file": "ketu.svg",
+      "source": "img/planets/ketu.webp",
+      "source_sha256": "773b7fe91e6479c6923060ea2f996dfadea769b7caa9587e4370961ca06a0c1a",
+      "casing_bbox": [
+        7.0,
+        5.3,
+        93.0,
+        94.7
+      ]
+    },
+    {
+      "body": "Uranus",
+      "file": "uranus.svg",
+      "source": "img/planets/uranus.webp",
+      "source_sha256": "2c4c0ad0bf3935d867741119ae9acd25cfad1032fec8b308d6bab6ba3156a484",
+      "casing_bbox": [
+        24.8,
+        9.0,
+        75.2,
+        91.0
+      ]
+    },
+    {
+      "body": "Neptune",
+      "file": "neptune.svg",
+      "source": "img/planets/neptune.webp",
+      "source_sha256": "1ee5d14ea3e87645786c89ab428903a7256ece616f029dea435b53835b7cd785",
+      "casing_bbox": [
+        23.2,
+        10.9,
+        76.8,
+        89.1
+      ]
+    },
+    {
+      "body": "Pluto",
+      "file": "pluto.svg",
+      "source": "img/planets/pluto.webp",
+      "source_sha256": "2897d61e7bc8e8f469ad4b632afddd4f4af7813d3523945595c74ad002e99443",
+      "casing_bbox": [
+        25.2,
+        16.0,
+        74.8,
+        84.1
+      ]
+    }
+  ]
+}

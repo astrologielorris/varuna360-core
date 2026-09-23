@@ -34,12 +34,11 @@ import sys
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout,
 )
 
-from ui.qt_theme import hex_to_rgb_str
+from ui.qt_theme import hex_to_rgb_str, scaled_area_px
 from ui.themed_style import ThemedStyleMixin
 
 # Semantic status colours (Rule 20 exemption — see module docstring).
@@ -158,19 +157,15 @@ class SessionHealthBanner(ThemedStyleMixin, QFrame):
         outer.setContentsMargins(14, 12, 14, 12)
         outer.setSpacing(8)
 
+        # O-6: font sizing lives in each label's QSS (set in _apply_theme, the
+        # authoritative style path replayed on every theme switch). setFont is
+        # inert under qt-material's global stylesheet, so it is not used here.
         self.headline = QLabel()
-        headline_font = QFont()
-        headline_font.setPointSize(11)
-        headline_font.setBold(True)
-        self.headline.setFont(headline_font)
         self.headline.setWordWrap(True)
         outer.addWidget(self.headline)
 
         self.body = QLabel()
         self.body.setWordWrap(True)
-        body_font = QFont()
-        body_font.setPointSize(9)
-        self.body.setFont(body_font)
         outer.addWidget(self.body)
 
         # Monospace detail block: folder, error, time. Selectable, because the
@@ -180,10 +175,6 @@ class SessionHealthBanner(ThemedStyleMixin, QFrame):
         self.detail.setTextInteractionFlags(
             Qt.TextInteractionFlag.TextSelectableByMouse
         )
-        detail_font = QFont("monospace")
-        detail_font.setStyleHint(QFont.StyleHint.Monospace)
-        detail_font.setPointSize(8)
-        self.detail.setFont(detail_font)
         outer.addWidget(self.detail)
 
         row = QHBoxLayout()
@@ -374,11 +365,28 @@ class SessionHealthBanner(ThemedStyleMixin, QFrame):
             f"  border-radius: 4px;"
             f"}}"
         )
+        # O-6: font-size is composed into each label's QSS here — this method is
+        # the authoritative style path (called at build AND on every theme
+        # switch), so a plain setFont would be inert and a construction-only QSS
+        # would be wiped by the theme-switch replay.
         self.headline.setStyleSheet(
-            f"color: {accent}; background: transparent; border: none;"
+            f"color: {accent}; background: transparent; border: none; "
+            f"font-size: {scaled_area_px('panel_titles')}px; font-weight: bold;"
         )
-        for label in (self.body, self.detail):
-            label.setStyleSheet("background: transparent; border: none;")
+        self.body.setStyleSheet(
+            "background: transparent; border: none; "
+            f"font-size: {scaled_area_px('info_text')}px;"
+        )
+        self.detail.setStyleSheet(
+            "background: transparent; border: none; font-family: monospace; "
+            f"font-size: {scaled_area_px('status')}px;"
+        )
+        # Persistent surface: the banner is not rebuilt on a font-setting change,
+        # so the button font-size is re-composed here (this method runs at build
+        # AND on every theme/font refresh), not once at construction.
+        _btn_css = f"font-size: {scaled_area_px('action_buttons')}px;"
+        for _b in (self.log_button, self.folder_button, self.report_button):
+            _b.setStyleSheet(_btn_css)
 
     def refresh_theme(self):
         """Theme-switch hook (SPEC-THM-001)."""

@@ -79,7 +79,7 @@ def _get_planet_object(chart, name: str):
     if name == "Ascendant":
         cusps = rashi.cusps()
         try:
-            return cusps[1]
+            return cusps.ascendant()
         except (KeyError, IndexError):
             return None
     planets = rashi.planets()
@@ -182,7 +182,7 @@ def ascendant_probe(jd, lat, lon, mode, ayanamsa):
     from libaditya.objects.location import Location
     from libaditya.objects.cusps import Cusps
 
-    circle, sysflg, sign_names = mode_to_circle_sysflg(mode)
+    circle, sysflg, sign_names = mode_to_circle_sysflg(mode, ayanamsa)
     ctx = EphContext(
         timeJD=JulianDay(jd, utcoffset=0.0),
         location=Location(lat=lat, long=lon, alt=0, utcoffset=0.0),
@@ -281,21 +281,24 @@ def planet_sign_probe(jd, lat, lon, mode, ayanamsa, planet_name):
     from libaditya.objects.location import Location
     from libaditya.objects.longitude import Longitude
 
-    circle, sysflg, sign_names = mode_to_circle_sysflg(mode)
+    circle, sysflg, sign_names = mode_to_circle_sysflg(mode, ayanamsa)
 
     is_ketu = (planet_name == "Ketu")
     swe_id = swe.MEAN_NODE if is_ketu else _resolve_probe_planet_id(swe, planet_name)
 
     # Sidereal: replay the exact set_sid_mode preamble chart_factory planets run
     # (planets.py init_coords) so the ayanamsa correction matches the Chart.
-    if sysflg == const.SID:
+    vedanga = sysflg == const.SID and ayanamsa in (99, 100)
+    if sysflg == const.SID and not vedanga:
         eff_ayanamsa = 36 if ayanamsa == 98 else ayanamsa
         swe.set_sid_mode(eff_ayanamsa)
         if eff_ayanamsa == 97:
             utils.set_swe_true_sidereal_ayanamsa()
 
-    res = swe.calc_ut(jd, swe_id, sysflg | swe.FLG_SPEED)[0]
-    longitude_raw = res[0]
+    calc_flags = (const.TROP if vedanga else sysflg) | swe.FLG_SPEED
+    res = swe.calc_ut(jd, swe_id, calc_flags)[0]
+    longitude_raw = ((res[0] + utils.vedanga_ecliptic_aval(jd)) % 360
+                     if vedanga else res[0])
     speed_raw = res[3]
     if is_ketu:
         # Ketu = Rahu's exact 180-degree mirror (KETU_PSEUDO_ID pattern); its

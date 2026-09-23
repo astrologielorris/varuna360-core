@@ -11,7 +11,28 @@ def apply_persisted_ui_state(gui, settings):
     view = settings.get("chart.view_type", "south_indian")
     if view not in VIEW_INDEX:
         view = "south_indian"                      # AC9: invalid -> safe default
-    gui._switch_to_chart_index(VIEW_INDEX[view])
+    # G9b (td-v6nqc): Human Design can be hidden (the Lite build / the
+    # ui.hide_human_design setting). A persisted chart.view_type="human_design"
+    # must NOT boot to a rendered-but-buttonless HD page — show the first F2 ring
+    # view (south_indian) instead. Do NOT rewrite chart.view_type: the persist is
+    # already suppressed below, and the ChartDisplaySection anti-clobber guard
+    # keeps the stored human_design intact, so unhiding HD restores it as the
+    # default. F2_RING_VIEWS[0] is the ring's first view, derived from the same
+    # INV-14 map (never a hardcoded literal).
+    if view == "human_design" and settings.get("ui.hide_human_design", False):
+        from state.chart_state import F2_RING_VIEWS
+        view = F2_RING_VIEWS[0]
+    # td-iopy (D2): restore applies the view ONCE. SUPPRESS the persist (no point
+    # rewriting the value we just read from disk) but ALLOW the broadcast — that
+    # broadcast is exactly what syncs the aux panels (Transit/Eclipse) to the
+    # restored view at boot, so a wheel-persisted view no longer leaves Transit
+    # on South at first paint. persist and broadcast are orthogonal flags.
+    _prev_suppress = getattr(gui, "_suppress_view_persist", False)
+    gui._suppress_view_persist = True
+    try:
+        gui._switch_to_chart_index(VIEW_INDEX[view])
+    finally:
+        gui._suppress_view_persist = _prev_suppress
 
     # --- wheel-only settings, applied DIRECTLY to the always-constructed wheel ---
     # Apply UNCONDITIONALLY: the setters only store state on gui.wheel_view.
@@ -34,6 +55,8 @@ def apply_persisted_ui_state(gui, settings):
         gui.wheel_view.set_house_display_mode(want_house_display)
     gui.wheel_view.show_element_pies = want_pies
     want_trim_deg = settings.get("chart.show_trimsamsha_degrees", False)
+    from apps.widgets.retinue_display import broadcast_south_indian
+    broadcast_south_indian(rings=want_retinue, ruler=want_trim_deg)
     gui.wheel_view.show_trimsamsha_degrees = want_trim_deg
     if hasattr(gui, "retinue_rings_action"):
         gui.retinue_rings_action.setChecked(bool(want_retinue))

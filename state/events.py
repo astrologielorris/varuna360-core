@@ -29,6 +29,14 @@ class SetTimeAdjustMode:
 
 
 @dataclass
+class SetHumanDesignMode:
+    """User toggled Human Design mode (-88 deg Sun shift). Layer-primitive:
+    the flag lives here; the GUI's _toggle_human_design orchestrates the
+    dasha-chain reset + recompute after this fires (god-object Stage 2)."""
+    enabled: bool = False
+
+
+@dataclass
 class SetChartViewStyle:
     """User switched chart view (south_indian/north_indian/wheel)."""
     style: str = "south_indian"

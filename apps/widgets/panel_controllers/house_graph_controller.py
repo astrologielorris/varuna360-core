@@ -256,7 +256,9 @@ class _HouseBarWidget(QWidget):
                 px = self._load_planet_icon(planet_name, icon_size)
                 if px and not px.isNull():
                     icon_y = int(y + (row_h - px.height()) / 2)
-                    painter.drawPixmap(int(gx), icon_y, px)
+                    from apps.widgets.planet_icon_style import paint_svg
+                    if not paint_svg(painter, QRectF(gx, icon_y, px.width(), px.height()), planet_name):
+                        painter.drawPixmap(int(gx), icon_y, px)
                     gx += px.width() + 3
                 else:
                     fallback_font = QFont()

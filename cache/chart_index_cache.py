@@ -7,6 +7,9 @@ import os
 import json
 import glob
 from datetime import datetime
+from core.ayanamsa_offset import (birth_ayanamsa_offset,
+                                  birth_sidereal_ascendant_index,
+                                  birth_projected_planet_index)
 from core.chtk_reader import CHTKReader
 from core.chart_factory import build_chart_from_params
 from managers.birth_data_manager import BirthDataManager
@@ -16,7 +19,9 @@ import re
 # the sign in the user's current zodiac mode instead of relabeling a fixed system.
 # v4: DST flag -1 auto-resolution (td-5w3c) moved positions for the 22 flag -1
 # charts; their files are byte-unchanged so mtime checks cannot catch it.
-CACHE_VERSION = 4
+# v5: canonical birth JD for per-birth sidereal filtering and display.
+# v6: birthplace for the engine-specific sidereal Ascendant projection.
+CACHE_VERSION = 6
 
 # Filterable bodies: entry key (lowercase) -> libaditya planet name.
 FILTER_BODIES = {
@@ -40,6 +45,32 @@ def sign_index_in_mode(longitude, mode='aditya', ayanamsa_offset=0.0):
     if mode == 'sidereal':
         return get_sign_index_sidereal(longitude, ayanamsa_offset)
     return get_sign_index_tropical(longitude)  # tropical_classic
+
+
+
+def entry_sign_index(entry, planet_key, mode='aditya', ayanamsa_id=None,
+                     ayanamsa_offset=0.0):
+    """Resolve a sign; None means an old cache needs rebuilding.
+
+    Explicit offsets remain supported for older API callers. The GUI supplies
+    an ID, so the active chart's offset never leaks into another birth.
+    """
+    lon = entry.get(f'{planet_key}_lon')
+    if lon is None:
+        return query_sign_index(entry.get(planet_key, '')) if mode == 'aditya' else None
+    if mode == 'sidereal' and ayanamsa_id is not None:
+        jd = entry.get('birth_jd')
+        if jd is None:
+            return None
+        if planet_key == 'ascendant':
+            lat, birth_lon = entry.get('birth_lat'), entry.get('birth_lon')
+            if lat is None or birth_lon is None:
+                return None
+            return birth_sidereal_ascendant_index(jd, lat, birth_lon, ayanamsa_id)
+        if ayanamsa_id in (18, 19, 20, 34) and planet_key in FILTER_BODIES:
+            return birth_projected_planet_index(jd, ayanamsa_id, FILTER_BODIES[planet_key])
+        ayanamsa_offset = birth_ayanamsa_offset(jd, ayanamsa_id)
+    return sign_index_in_mode(lon, mode, ayanamsa_offset)
 
 
 def query_sign_index(sign_name):
@@ -82,6 +113,7 @@ class ChartIndexCache:
         self.cache_file = cache_file
         self.index = {}  # {filepath: {name, ascendant, sun, moon, mars, ..., city, country, ...}}
         self.chtk_reader = CHTKReader()
+        self._cache_signature = None
         self._load_cache()
 
     def _load_cache(self):
@@ -104,6 +136,7 @@ class ChartIndexCache:
                         print(f"[CACHE] Migration failed from {old_path}: {e}")
                     break
 
+        signature = self._disk_signature()
         if os.path.exists(self.cache_file):
             try:
                 with open(self.cache_file, 'r', encoding='utf-8') as f:
@@ -111,6 +144,25 @@ class ChartIndexCache:
             except (json.JSONDecodeError, IOError) as e:
                 print(f"[WARNING] Could not load cache: {e}")
                 self.index = {}
+        self._cache_signature = signature
+
+    def _disk_signature(self):
+        try:
+            stat = os.stat(self.cache_file)
+            return (stat.st_ino, stat.st_size, stat.st_mtime_ns)
+        except FileNotFoundError:
+            return None
+
+    def reload_if_changed(self):
+        """Observe incremental writes from another cache without re-reading on every keypress."""
+        signature = self._disk_signature()
+        if signature == self._cache_signature:
+            return
+        if signature is None:
+            self.index = {}
+            self._cache_signature = None
+        else:
+            self._load_cache()
 
     def _save_cache(self):
         """Save cache to disk atomically (BUG-16 SPEC-IMPORT-002).
@@ -132,6 +184,7 @@ class ChartIndexCache:
             with open(tmp, 'w', encoding='utf-8') as f:
                 json.dump(self.index, f, indent=2, ensure_ascii=False)
             os.replace(tmp, self.cache_file)
+            self._cache_signature = self._disk_signature()
         except (IOError, OSError) as e:
             print(f"[ERROR] Could not save cache: {e} "
                   f"(temp {tmp} retained, reused next save)")
@@ -353,6 +406,9 @@ class ChartIndexCache:
                 'pluto': pluto,
                 'city': chtk_data.get('city', ''),
                 'country': chtk_data.get('country', ''),
+                'birth_jd': jd,
+                'birth_lat': lat,
+                'birth_lon': lon,
                 'birth_date': birth_date,
                 'birth_time': birth_time,
                 'file_modified': self._get_file_modified_time(filepath),
@@ -494,7 +550,7 @@ class ChartIndexCache:
         return list(self.index.values())
 
     def search(self, query='', sort_by='name', group_by=None, reverse=False,
-               mode='aditya', ayanamsa_offset=0.0):
+               mode='aditya', ayanamsa_offset=0.0, ayanamsa_id=None):
         """
         Search and filter the index.
 
@@ -507,6 +563,7 @@ class ChartIndexCache:
         Returns:
             list: Filtered and sorted entries (or grouped dict if group_by is set)
         """
+        self.reload_if_changed()
         entries = list(self.index.values())
 
         # Filter by query
@@ -566,18 +623,16 @@ class ChartIndexCache:
                         # CURRENT zodiac mode from its stored tropical longitude,
                         # and compare to the query's ordinal sign index. This makes
                         # search agree with the chart display in every mode.
-                        lon = e.get(f'{planet_key}_lon')
                         target_idx = query_sign_index(sign_name)
-                        if lon is not None and target_idx is not None:
-                            if sign_index_in_mode(lon, mode, ayanamsa_offset) != target_idx:
+                        actual_idx = entry_sign_index(
+                            e, planet_key, mode, ayanamsa_id, ayanamsa_offset)
+                        if target_idx is not None:
+                            if actual_idx != target_idx:
                                 planet_match = False
                                 break
-                        else:
-                            # Legacy fallback (pre-v3 entry or unresolved name):
-                            # exact match on the stored Aditya Circle name.
-                            if e.get(planet_key, '') != sign_name:
-                                planet_match = False
-                                break
+                        elif mode != 'aditya' or e.get(planet_key, '') != sign_name:
+                            planet_match = False
+                            break
 
                 if text_match and planet_match:
                     filtered_entries.append(e)
@@ -590,12 +645,9 @@ class ChartIndexCache:
             'Tvasta', 'Vishnu', 'Amzu', 'Bhaga', 'Pusha', 'Parjanya'
         ]
 
-        def aditya_sort_key(sign_name):
-            """Return sort index for Aditya sign (0-11), or 99 for unknown."""
-            try:
-                return ADITYA_ORDER.index(sign_name)
-            except ValueError:
-                return 99  # Unknown signs sort last
+        def active_sign_sort(entry, body):
+            idx = entry_sign_index(entry, body, mode, ayanamsa_id, ayanamsa_offset)
+            return (99 if idx is None else idx, entry.get('name', '').lower())
 
         # Sort
         sort_keys = {
@@ -603,9 +655,9 @@ class ChartIndexCache:
             'file_modified': lambda e: e.get('file_modified', '') or '',
             'country': lambda e: (e.get('country', '').lower(), e.get('name', '').lower()),
             'birth_date': lambda e: (e.get('birth_date', '') or '', e.get('birth_time', '') or '', e.get('name', '').lower()),
-            'ascendant': lambda e: (aditya_sort_key(e.get('ascendant', '')), e.get('name', '').lower()),
-            'sun': lambda e: (aditya_sort_key(e.get('sun', '')), e.get('name', '').lower()),
-            'moon': lambda e: (aditya_sort_key(e.get('moon', '')), e.get('name', '').lower()),
+            'ascendant': lambda e: active_sign_sort(e, 'ascendant'),
+            'sun': lambda e: active_sign_sort(e, 'sun'),
+            'moon': lambda e: active_sign_sort(e, 'moon'),
             'city': lambda e: (e.get('city', '').lower(), e.get('name', '').lower()),
         }
         sort_key = sort_keys.get(sort_by, sort_keys['name'])
@@ -615,7 +667,11 @@ class ChartIndexCache:
         if group_by:
             grouped = {}
             for entry in entries:
-                group_value = entry.get(group_by, 'Unknown')
+                if group_by in FILTER_BODIES:
+                    idx = entry_sign_index(entry, group_by, mode, ayanamsa_id, ayanamsa_offset)
+                    group_value = ADITYA_ORDER[idx] if idx is not None else 'Rebuild index'
+                else:
+                    group_value = entry.get(group_by, 'Unknown')
                 if group_value not in grouped:
                     grouped[group_value] = []
                 grouped[group_value].append(entry)

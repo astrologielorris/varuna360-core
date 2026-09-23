@@ -28,7 +28,9 @@ from PySide6.QtGui import QPixmap, QCursor
 from ui.qt_theme import (
     scaled_area_size, get_theme_colors,
     get_primary_button_style, get_secondary_button_style,
+    scaled_area_px,
 )
+from ui.popup_fonts import tier_point_px, tier_px, popup_title_px
 
 try:
     from utils.debug import debug_print
@@ -671,7 +673,7 @@ class CreateProfileDialog(QDialog):
 
         # Profile name
         name_label = QLabel("Profile Name:")
-        name_label.setStyleSheet(f"font-size: {scaled_area_size('buttons')}pt;")
+        name_label.setStyleSheet(f"font-size: {tier_point_px('info_text', 10)}px;")
         layout.addWidget(name_label)
 
         self.name_input = QLineEdit()
@@ -682,7 +684,7 @@ class CreateProfileDialog(QDialog):
 
         # Avatar selection
         avatar_label = QLabel("Select Avatar:")
-        avatar_label.setStyleSheet(f"font-size: {scaled_area_size('buttons')}pt; margin-top: 10px;")
+        avatar_label.setStyleSheet(f"font-size: {tier_point_px('info_text', 10)}px; margin-top: 10px;")
         layout.addWidget(avatar_label)
 
         # Avatar grid (scrollable)
@@ -790,7 +792,7 @@ class ManageProfilesDialog(QDialog):
         # Title
         title = QLabel("Your Profiles")
         title.setStyleSheet(
-            f"font-size: {scaled_area_size('panel_titles')}pt;"
+            f"font-size: {tier_point_px('info_text', 14)}px;"
             f" font-weight: bold; color: {theme['secondary_text']};"
         )
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)

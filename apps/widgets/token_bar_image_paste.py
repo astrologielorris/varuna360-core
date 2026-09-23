@@ -9,8 +9,8 @@ base-class swap plus mounting the sparkle toggle and constructing this
 controller.
 
 Nothing here imports the paid edition: the extractor arrives as a plain callable
-from ``ChartGUI.ai_image_extractor()`` (which returns ``None`` outside the paid
-edition), so this widget ships in every edition. On a single paste it fills the
+from ``ChartGUI.ai_image_extractor()``, so this widget ships in every edition.
+On a single paste it fills the
 bar with exactly the FIRST detected chart (multi-chart is a separate task,
 td-9rse); the branch point is ``_on_done``.
 """
@@ -76,7 +76,7 @@ class TokenBarImagePaste(QObject):
             toggle: the sparkle AiToggleButton (enabled/disabled by capability),
                 or None.
             extractor_provider: a zero-arg callable returning the image
-                extractor callable, or None outside the paid edition. Probed
+                extractor callable, or None when unavailable. Probed
                 LAZILY at paste time (bound ``ChartGUI.ai_image_extractor``), so
                 a Lite/Pro decision is always current.
             notify: optional callable(str) for a non-blocking inline notice;
@@ -109,7 +109,7 @@ class TokenBarImagePaste(QObject):
 
     def _apply_capability(self, extractor=_UNSET):
         """Enable the toggle only when an extractor is available; otherwise
-        disable it and mark it Pro-only. Re-run on each paste so a capability
+        disable it and point to AI settings. Re-run on each paste so a capability
         that appears later (Pro loaded after boot) unlocks the toggle."""
         if self._toggle is None:
             return
@@ -120,7 +120,7 @@ class TokenBarImagePaste(QObject):
             self._toggle.setToolTip(self._toggle_default_tip)
         else:
             self._toggle.setEnabled(False)
-            self._toggle.setToolTip("Chart image reading is a Pro-only feature")
+            self._toggle.setToolTip("Configure a vision provider in AI settings")
 
     # -- paste --------------------------------------------------------------
 
@@ -128,7 +128,7 @@ class TokenBarImagePaste(QObject):
         extractor = self._extractor()
         self._apply_capability(extractor)   # refresh toggle state on each paste
         if extractor is None:
-            self._show("Chart image reading is a Pro-only feature")
+            self._show("Configure a vision provider in AI settings")
             return
         if self._toggle is not None and not self._toggle.isChecked():
             self._show("AI reading is off. Click the sparkle button to enable it.")

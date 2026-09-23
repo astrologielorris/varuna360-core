@@ -26,12 +26,12 @@ import webbrowser
 from pathlib import Path
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QDialog, QHBoxLayout, QLabel, QPushButton, QVBoxLayout,
 )
 
-from ui.qt_theme import scaled_area_size
+from ui.qt_theme import scaled_area_px
+from ui.popup_fonts import tier_px, popup_title_px
 
 from core.pro_marketing import (
     PRO_UPGRADE_URL, WELCOME_BODY, WELCOME_TITLE,
@@ -96,11 +96,14 @@ class WelcomeDialog(QDialog):
         layout.setContentsMargins(32, 28, 32, 24)
 
         # ── Title ──
+        # QSS font-size, NOT setFont: qt-material's universal `* {font-size:13px}`
+        # rule overrides setFont, so the old setPointSize(scaled_area_size(...))
+        # was inert — title + body both froze at 13px and ignored the Font Sizes
+        # setting (F-D3). Own-QSS wins; the dialog is transient so it reads the
+        # current size at construction.
         title = QLabel(WELCOME_TITLE)
-        title_font = QFont()
-        title_font.setPointSize(scaled_area_size('panel_titles'))
-        title_font.setBold(True)
-        title.setFont(title_font)
+        title.setStyleSheet(
+            f"font-size: {popup_title_px(14)}px; font-weight: bold;")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(title)
 
@@ -108,16 +111,18 @@ class WelcomeDialog(QDialog):
         body = QLabel(WELCOME_BODY)
         body.setWordWrap(True)
         body.setAlignment(Qt.AlignmentFlag.AlignLeft)
-        body_font = QFont()
-        body_font.setPointSize(scaled_area_size('info_text'))
-        body.setFont(body_font)
+        body.setStyleSheet(f"font-size: {scaled_area_px('info_text')}px;")
         layout.addWidget(body)
 
         # ── Buttons ──
         button_row = QHBoxLayout()
         button_row.setSpacing(8)
+        # G7: own-QSS font-size so the buttons follow the 'buttons' area too
+        # (setFont is inert under qt-material's universal 13px rule).
+        _btn_qss = f"font-size: {tier_px('action_buttons', 10)}px;"
 
         subscribe_btn = QPushButton("Subscribe at 360heartsinthesky.com")
+        subscribe_btn.setStyleSheet(_btn_qss)
         subscribe_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         subscribe_btn.clicked.connect(self._on_subscribe_clicked)
         button_row.addWidget(subscribe_btn)
@@ -125,6 +130,7 @@ class WelcomeDialog(QDialog):
         button_row.addStretch(1)
 
         continue_btn = QPushButton("Continue")
+        continue_btn.setStyleSheet(_btn_qss)
         continue_btn.setDefault(True)
         continue_btn.setAutoDefault(True)
         continue_btn.setCursor(Qt.CursorShape.PointingHandCursor)

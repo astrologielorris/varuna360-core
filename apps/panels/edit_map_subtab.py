@@ -34,13 +34,12 @@ from PySide6.QtCore import Signal, Slot, Qt
 from ui.qt_theme import (
     BG,
     SURFACE,
-    TEXT_PRIMARY,
-    TEXT_SECONDARY,
     BORDER,
     STATUS,
     get_theme_colors,
     get_theme_accent,
     scaled_area_px,
+    dim_text,
 )
 from ui.themed_style import ThemedStyleMixin
 
@@ -467,92 +466,54 @@ class EditMapSubTab(ThemedStyleMixin, QWidget):
         self.has_map = False
         self.map_widget = None
 
-        fallback_frame = QFrame()
-        fallback_frame.setStyleSheet(f"""
-            QFrame {{
-                background-color: {BG};
-                border: none;
-            }}
-        """)
-        fallback_layout = QVBoxLayout(fallback_frame)
+        # td-ea5f: every widget on this fallback surface is registered with
+        # ThemedStyleMixin so a LIVE theme switch re-applies it (was styled once
+        # from FROZEN module constants -> half-themed panel after a switch, and
+        # the theme_audit's grey frame + accent-button findings). The style_fns
+        # reuse _map_bar_colors(), so dark theme still renders the exact frozen
+        # constants and only light theme gains proper secondary* colours.
+        self._fallback_frame = self._register_themed(QFrame(), self._fallback_frame_style)
+        fallback_layout = QVBoxLayout(self._fallback_frame)
         fallback_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         # Warning message
-        warning = QLabel(
-            "📍 Map View Unavailable\n\n"
-            "The offline map tile cache was not found.\n"
-            "You can still enter coordinates manually below."
+        self._fallback_warning = self._register_themed(
+            QLabel(
+                "📍 Map View Unavailable\n\n"
+                "The offline map tile cache was not found.\n"
+                "You can still enter coordinates manually below."
+            ),
+            self._fallback_warning_style,
         )
-        warning.setStyleSheet(f"""
-            color: {TEXT_SECONDARY};
-            font-size: {scaled_area_px('info_text')}px;
-            padding: 40px;
-        """)
-        warning.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        fallback_layout.addWidget(warning)
+        self._fallback_warning.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        fallback_layout.addWidget(self._fallback_warning)
 
         # Manual coordinate entry
-        manual_frame = QFrame()
-        manual_frame.setStyleSheet(f"""
-            QFrame {{
-                background-color: {SURFACE};
-                border: 1px solid {BORDER};
-                border-radius: 8px;
-                padding: 20px;
-            }}
-        """)
-        manual_layout = QGridLayout(manual_frame)
+        self._manual_frame = self._register_themed(QFrame(), self._manual_frame_style)
+        manual_layout = QGridLayout(self._manual_frame)
         manual_layout.setSpacing(10)
 
         manual_layout.addWidget(QLabel("Latitude:"), 0, 0)
         self.manual_lat = QLineEdit()
         self.manual_lat.setPlaceholderText("e.g., 48.983333")
-        self.manual_lat.setStyleSheet(f"""
-            QLineEdit {{
-                background-color: {BG};
-                color: {TEXT_PRIMARY};
-                border: 1px solid {BORDER};
-                border-radius: 4px;
-                padding: 8px;
-            }}
-        """)
+        self._register_themed(self.manual_lat, self._manual_input_style)
         manual_layout.addWidget(self.manual_lat, 0, 1)
 
         manual_layout.addWidget(QLabel("Longitude:"), 1, 0)
         self.manual_lon = QLineEdit()
         self.manual_lon.setPlaceholderText("e.g., 2.266667")
-        self.manual_lon.setStyleSheet(f"""
-            QLineEdit {{
-                background-color: {BG};
-                color: {TEXT_PRIMARY};
-                border: 1px solid {BORDER};
-                border-radius: 4px;
-                padding: 8px;
-            }}
-        """)
+        self._register_themed(self.manual_lon, self._manual_input_style)
         manual_layout.addWidget(self.manual_lon, 1, 1)
 
-        set_btn = QPushButton("Set Coordinates")
-        set_btn.clicked.connect(self._on_manual_coordinates)
-        accent = get_theme_accent()
-        set_btn.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {accent['base']};
-                color: white;
-                padding: 10px 20px;
-                border: none;
-                border-radius: 4px;
-            }}
-            QPushButton:hover {{
-                background-color: {accent['hover']};
-            }}
-        """)
-        manual_layout.addWidget(set_btn, 2, 0, 1, 2)
+        self.set_btn = QPushButton("Set Coordinates")
+        self.set_btn.clicked.connect(self._on_manual_coordinates)
+        self._register_themed(self.set_btn, self._set_btn_style)
+        manual_layout.addWidget(self.set_btn, 2, 0, 1, 2)
 
-        fallback_layout.addWidget(manual_frame)
+        fallback_layout.addWidget(self._manual_frame)
         fallback_layout.addStretch()
 
-        parent_layout.addWidget(fallback_frame, stretch=1)
+        parent_layout.addWidget(self._fallback_frame, stretch=1)
 
     def add_addon(self, addon):
         """Register and attach a `MapAddon` (SPEC-MAP-004 §4.3).
@@ -1450,7 +1411,7 @@ class EditMapSubTab(ThemedStyleMixin, QWidget):
         return f"""
             QPushButton {{
                 background-color: {theme['primary']};
-                color: white;
+                color: {theme['primary_text']};
                 border: none;
                 border-radius: 6px;
                 padding: 10px 24px;
@@ -1462,6 +1423,74 @@ class EditMapSubTab(ThemedStyleMixin, QWidget):
             }}
             QPushButton:pressed {{
                 background-color: {theme['primary_dark']};
+            }}
+        """
+
+    def _fallback_frame_style(self):
+        # td-ea5f: outer fallback surface — BG role (dark keeps BG,
+        # light -> secondary_dark), matching the manual inputs' inset shade.
+        c = self._map_bar_colors()
+        return f"""
+            QFrame {{
+                background-color: {c['input_bg']};
+                border: none;
+            }}
+        """
+
+    def _fallback_warning_style(self):
+        # td-ea5f: dim informational text. dim_text() restores the old
+        # TEXT_SECONDARY (#AAAAAA) dim hierarchy on the live 8-key palette —
+        # the single live foreground (secondary_text) would otherwise render
+        # the warning at full brightness (Codex review of td-ea5f).
+        c = self._map_bar_colors()
+        return (
+            f"color: {dim_text(c['input_text'])};"
+            f" font-size: {scaled_area_px('info_text')}px;"
+            f" padding: 40px;"
+        )
+
+    def _manual_frame_style(self):
+        # td-ea5f: manual-entry panel — SURFACE/BORDER role (dark keeps the
+        # frozen constants, light -> secondary/secondary_light).
+        c = self._map_bar_colors()
+        return f"""
+            QFrame {{
+                background-color: {c['bar_bg']};
+                border: 1px solid {c['bar_border']};
+                border-radius: 8px;
+                padding: 20px;
+            }}
+        """
+
+    def _manual_input_style(self):
+        # td-ea5f: coordinate inputs — same BG/BORDER roles as _search_entry_style.
+        c = self._map_bar_colors()
+        return f"""
+            QLineEdit {{
+                background-color: {c['input_bg']};
+                color: {c['input_text']};
+                border: 1px solid {c['bar_border']};
+                border-radius: 4px;
+                padding: 8px;
+            }}
+        """
+
+    def _set_btn_style(self):
+        # td-ea5f: was get_theme_accent() captured ONCE at construction and never
+        # re-applied — recompute the accent live so a theme switch re-themes it.
+        accent = get_theme_accent()
+        theme = get_theme_colors()
+        return f"""
+            QPushButton {{
+                background-color: {accent['base']};
+                color: {theme['primary_text']};
+                padding: 10px 20px;
+                border: none;
+                border-radius: 4px;
+                font-size: {scaled_area_px('buttons')}px;
+            }}
+            QPushButton:hover {{
+                background-color: {accent['hover']};
             }}
         """
 
@@ -1485,11 +1514,11 @@ class EditMapSubTab(ThemedStyleMixin, QWidget):
             }}
             QPushButton:hover {{
                 background-color: {theme['primary_light']};
-                color: white;
+                color: {theme['primary_text']};
             }}
             QPushButton:checked {{
                 background-color: {theme['primary']};
-                color: white;
+                color: {theme['primary_text']};
                 font-weight: bold;
             }}
         """
@@ -1517,7 +1546,7 @@ class EditMapSubTab(ThemedStyleMixin, QWidget):
         return f"""
             QPushButton {{
                 background-color: {theme['primary']};
-                color: white;
+                color: {theme['primary_text']};
                 border: none;
                 border-radius: 4px;
                 padding: 8px 20px;
@@ -1548,11 +1577,28 @@ class EditMapSubTab(ThemedStyleMixin, QWidget):
         re-renders every resident tile through the dark palette transform and
         re-reads its background brush from the theme.
 
-        NOTE (justified residual): the FALLBACK path in _create_map_widget styles
+        HISTORY (td-ea5f, reversed 2026-08-28): this docstring used to record a
+        "justified residual" -- the FALLBACK path in _create_map_widget styled
         its manual-entry frames from FROZEN module constants (BG/SURFACE/BORDER/
-        TEXT_*). It renders only when the offline map is unavailable -- the tile DB
-        is absent OR OfflineMapWidget construction raises (both rare: the tile
-        cache is bundled and construction normally succeeds).
+        TEXT_*) and was deliberately left un-re-themed, on the reasoning that the
+        fallback renders only when the offline map is unavailable (tile DB absent
+        or OfflineMapWidget construction raises) and that is rare because the tile
+        cache is bundled. That was reasonable when written: nothing could observe
+        the fallback's live-switch behaviour deterministically. The Stage-3
+        theme_audit then rendered the fallback on EVERY offscreen run (no tiles
+        offscreen) and caught it as real drift -- a grey frozen-frame band plus an
+        accent Set-Coordinates band that stayed the old theme after a live switch
+        (findings on pred_00_Eclipse_Country / tab_04_Predictive_Tools (shared),
+        pred_06_Lunar_New_Year, tab_01_New_Edit). New instrument, new evidence,
+        decision reversed at the Stage-3 exit gate: the fallback widgets are now
+        registered via _register_themed (_fallback_frame_style / _manual_frame_
+        style / _manual_input_style / _set_btn_style, all reusing _map_bar_colors
+        so DARK theme still renders the exact frozen constants and only LIGHT
+        theme gains proper secondary* colours). "Rare in production" was never a
+        reason to ship a half-themed panel: a tile-less/offline user already has
+        degraded UX and should not also get frozen wrong-theme colours. The frozen
+        module constants themselves are untouched (other consumers keep them);
+        only their USE in the fallback path was replaced.
         """
         self._replay_themed()
         # SPEC-MAP-004 §4.3 INV-8: every ATTACHED add-on re-themes too. The

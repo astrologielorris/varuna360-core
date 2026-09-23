@@ -138,11 +138,13 @@ class DashaHighlightDelegate(QStyledItemDelegate):
 
         painter.save()
         row = index.row()
+        is_current = row in self.highlight_rows
 
-        if row in self.highlight_rows:
+        if is_current:
             # Current period — theme primary (blue)
             painter.fillRect(option.rect, QBrush(QColor(theme["primary"])))
             option.palette.setColor(QPalette.ColorRole.Text, QColor(theme["primary_text"]))
+            option.palette.setColor(QPalette.ColorRole.HighlightedText, QColor(theme["primary_text"]))
         elif self.selected_row is not None and row == self.selected_row:
             # User click-selection — green
             painter.fillRect(option.rect, QBrush(QColor(desat_hex(ACCENTS["green"]["base"]))))
@@ -170,6 +172,15 @@ class DashaHighlightDelegate(QStyledItemDelegate):
 
         painter.restore()
         super().paint(painter, option, index)
+        if is_current:
+            # Paint last: qt-material QSS otherwise replaces the palette roles.
+            painter.save()
+            painter.fillRect(option.rect, QBrush(QColor(theme["primary"])))
+            painter.setPen(QColor(theme["primary_text"]))
+            painter.drawText(option.rect.adjusted(8, 0, -4, 0),
+                             QtCore_Qt.AlignmentFlag.AlignLeft | QtCore_Qt.AlignmentFlag.AlignVCenter,
+                             str(index.data(QtCore_Qt.ItemDataRole.DisplayRole) or ""))
+            painter.restore()
 
     def update_highlights(self, highlight_rows):
         """Update which rows should be highlighted with primary color"""
@@ -505,8 +516,13 @@ class RetinueColorDelegate(QStyledItemDelegate):
     Aditya/Naga side or being type (Gandharva/Rakshasa/Rishi/Yaksha/Apsara).
     """
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, wrap=False):
         super().__init__(parent)
+        # wrap=True: word-wrap long cells instead of clipping them mid-word.
+        # Only for Stretch-sized rows (fullscreen popups); the main Hora /
+        # Trimsamsa tables have fixed-height rows where a second line would
+        # be clipped vertically instead, so they keep single-line drawing.
+        self._wrap = wrap
 
     def paint(self, painter, option, index):
         theme = get_theme_colors()
@@ -538,6 +554,9 @@ class RetinueColorDelegate(QStyledItemDelegate):
             if alignment is None:
                 alignment = int(QtCore_Qt.AlignmentFlag.AlignLeft | QtCore_Qt.AlignmentFlag.AlignVCenter)
             text_rect = option.rect.adjusted(6, 0, -4, 0)
-            painter.drawText(text_rect, int(alignment), str(text))
+            flags = int(alignment)
+            if self._wrap:
+                flags |= int(QtCore_Qt.TextFlag.TextWordWrap)
+            painter.drawText(text_rect, flags, str(text))
 
         painter.restore()

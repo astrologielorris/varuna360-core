@@ -126,6 +126,7 @@ from managers.license_manager import (
     clear_token_cache,
     verify_license_token_offline,
     _get_cache_dir,
+    JWT_LEEWAY_S,
     LICENSE_PUBLIC_KEY,
     LICENSE_ISSUER,
     LicenseState,
@@ -158,6 +159,7 @@ def _verify_claims_ignoring_expiry(token: str) -> dict:
         token, LICENSE_PUBLIC_KEY,
         algorithms=["RS256"], issuer=LICENSE_ISSUER,
         options={"verify_exp": False},
+        leeway=JWT_LEEWAY_S,
     )
 
 
@@ -858,8 +860,13 @@ def _persist_activation(license_key: str, license_token: str,
         )
     try:
         state = _state_from_token(license_token)
-    except LicenseError:
-        logger.warning("Server returned a token that failed offline verification")
+    except LicenseError as e:
+        # Log the verifier's reason (exception class text like "not yet valid
+        # (iat)" / entitlement mismatch), NEVER the token itself: without this
+        # the 2026-08-21 Windows clock-skew failure was undiagnosable from the
+        # client log.
+        logger.warning(
+            "Server returned a token that failed offline verification: %s", e)
         raise LicenseError(
             "The server returned an invalid activation token. Please try "
             "again later."

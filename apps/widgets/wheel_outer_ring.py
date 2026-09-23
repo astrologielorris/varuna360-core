@@ -32,6 +32,8 @@ Z-order contract (4.1), from back to front:
   ring planet labels   z = base_z + 1.5 (via _draw_planet_label, which uses z=9;
                         icons intentionally sit above labels, as in the natal band)
 """
+from apps.widgets.additional_bodies import display_names
+from apps.widgets.additional_body_glyphs import make_planet_item
 
 from PySide6.QtWidgets import QGraphicsTextItem, QGraphicsPixmapItem
 from PySide6.QtGui import QColor
@@ -287,7 +289,7 @@ def _draw_ring_planets(view, planets_data, ring_inner, base_z,
     # Assemble planet dicts (degrees + sign_index for placement, deg_in_sign + name
     # for the natal label path). Ascendant is drawn separately.
     planets_list = []
-    for name in planet_names:
+    for name in display_names(planet_names):
         if name not in planets_data:
             continue
         deg = planets_data[name].get("decimal_degrees", 0)
@@ -343,7 +345,7 @@ def _draw_ring_planets(view, planets_data, ring_inner, base_z,
         planet_size = planet_sizes.get(planet["name"], 120)
         pixmap = view.load_planet_image(planet["name"], size=planet_size)
         if pixmap:
-            icon = QGraphicsPixmapItem(pixmap)
+            icon = make_planet_item(QGraphicsPixmapItem, planet["name"], pixmap)
             icon.setPos(x - planet_size / 2, y - planet_size / 2)
             icon.setZValue(base_z + 1.0)
             icon.setToolTip(

@@ -542,18 +542,18 @@ class CHTKWriter:
                 dt = datetime(year, month, day, hour, minute, second, tzinfo=tz)
                 if dt.tzname() != 'LMT':
                     dst_offset = dt.dst()
-                    if dst_offset and time_change_flag:
+                    if dst_offset and time_change_flag in (1, 2):
                         dst_secs = int(dst_offset.total_seconds())
-                        offset_h -= int(dst_secs / 3600)
+                        offset_h -= dst_secs / 3600
 
                 total_secs = int(round(offset_h * 3600))
-                # CHTK sign convention: invert (CHTK -01:00 = UTC+1).
-                chtk_total = -total_secs
-                chtk_sign = '+' if chtk_total >= 0 else '-'
-                offset_hours, _rem = divmod(abs(chtk_total), 3600)
-                offset_minutes = _rem // 60
-                offset_seconds = _rem % 60
-                timezone = f"{chtk_sign}{offset_hours:02d}:{offset_minutes:02d}:{offset_seconds:02d}"
+                # CHTK sign convention: invert (CHTK -01:00 = UTC+1), then
+                # format through THE one signed-seconds -> '+HH:MM:SS' helper
+                # (td-7q5s.4). Proven byte-identical to the former inline divmod
+                # over 215,397 offsets: both work in integer-seconds space, so
+                # there is no signed-zero '-00:00:00' flip to worry about here.
+                from core.time_utils import format_offset_seconds
+                timezone = format_offset_seconds(-total_secs)
             except Exception as e:
                 print(f"[CHTK] Timezone conversion failed for '{timezone}': {e}")
                 timezone = '+00:00:00'
@@ -633,30 +633,15 @@ class CHTKWriter:
         return '\n'.join(lines)
 
     def decimal_to_dms(self, decimal, is_longitude=False):
-        """
-        Convert decimal degrees to DMS format.
-        """
-        decimal = float(decimal)
-        is_positive = decimal >= 0
-        abs_decimal = abs(decimal)
+        """Convert decimal degrees to CHTK DMS format.
 
-        degrees = int(abs_decimal)
-        minutes_decimal = (abs_decimal - degrees) * 60
-        minutes = int(minutes_decimal)
-        seconds = int(round((minutes_decimal - minutes) * 60))
-        if seconds >= 60:
-            seconds -= 60
-            minutes += 1
-        if minutes >= 60:
-            minutes -= 60
-            degrees += 1
-
-        if is_longitude:
-            direction = 'E' if is_positive else 'W'
-            return f"{degrees:03d}{direction}{minutes:02d}'{seconds:02d}"
-        else:
-            direction = 'N' if is_positive else 'S'
-            return f"{degrees:02d}{direction}{minutes:02d}'{seconds:02d}"
+        Thin shim over THE canonical core.chtk_writer.decimal_to_dms
+        (td-7q5s.4). Kept as a method carrying the historical is_longitude flag
+        so this file's call sites stay byte-for-byte unchanged; is_longitude is
+        the inverse of the canonical helper's is_latitude. Proven identical to
+        the former inline body over 1,028,598 grid checks."""
+        from core.chtk_writer import decimal_to_dms
+        return decimal_to_dms(float(decimal), is_latitude=not is_longitude)
 
     def save_chtk_file(self, birth_data, name=None, output_path=None):
         """

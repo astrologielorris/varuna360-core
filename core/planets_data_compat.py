@@ -108,8 +108,8 @@ def chart_to_planets_data(chart, year, month, day, hour, minute,
             "julian_day": float(chart.context.timeJD.jd),
         }
 
-        # Ascendant (Cusp 1)
-        asc = rashi.cusps()[1]
+        # Ascendant is an angle; whole-sign cusp 1 is only a house boundary.
+        asc = rashi.cusps().ascendant()
         asc_lon = asc.ecliptic_longitude()
         results["Ascendant"] = _make_body_dict(asc_lon)
 
@@ -133,8 +133,7 @@ def chart_to_planets_data(chart, year, month, day, hour, minute,
 
         ketu = planets["Ketu"]
         ketu_lon = ketu.ecliptic_longitude()
-        results["Ketu"] = _make_body_dict(ketu_lon, speed=-rahu_speed)
-        results["Ketu"]["is_retrograde"] = rahu_speed < 0
+        results["Ketu"] = _make_body_dict(ketu_lon, speed=ketu.longitude_speed())
 
         # Houses (cusps from chart's house system)
         house_names = [

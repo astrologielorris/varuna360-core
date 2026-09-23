@@ -8,6 +8,7 @@ Opens from Help > Manual (F1). Non-modal, singleton, resizable.
 Uses QTextBrowser for HTML rendering with theme-injected CSS.
 Pattern reused from planet_dialog.py (TOC + QTextBrowser splitter).
 """
+import re
 from pathlib import Path
 
 from PySide6.QtWidgets import (
@@ -17,9 +18,31 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt
 
-from ui.qt_theme import get_theme_colors, get_secondary_button_style, scaled_area_font
+from ui.qt_theme import (
+    get_theme_colors, scaled_area_px,
+    scaled_area_factor,
+)
+from ui.popup_fonts import (tier_px, in_dialog_button_style, popup_group_px, live_refresh,
+                             live_style, fit_text_width)
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
+
+_MANUAL_FONT_SIZE_RE = re.compile(r"font-size:\s*(\d+)px")
+
+
+def _scale_manual_font_sizes(html: str, scale: float) -> str:
+    """Multiply every CSS px font-size in the manual by ``scale``, preserving the
+    manual's internal ratios.
+
+    The manual's typographic scale (h1 22 / h2 18 / h3 14 / table 12 /
+    kbd-caption 11) is descriptive content inside a pop-up, so the caller passes
+    the Info text factor (SPEC-FONT-001 §3.2, td-168ze): one knob for the whole
+    document, ratios held, identical to the old Display-Scale result at the
+    default Info text size.
+    """
+    def _repl(m):
+        return f"font-size: {max(6, round(int(m.group(1)) * scale))}px"
+    return _MANUAL_FONT_SIZE_RE.sub(_repl, html)
 
 # Section definitions: (anchor_id, display_title)
 MANUAL_SECTIONS = [
@@ -62,7 +85,28 @@ class HelpDialog(QDialog):
         self.setMinimumSize(600, 400)
         self._setup_ui()
         self._load_manual()
+        # The manual's own size tiers follow Info text, so an open Help window
+        # re-renders on a Fonts Apply (SPEC-FONT-001 §3.2), keeping its place.
+        live_refresh(self, self._reload_manual_keep_scroll)
 
+
+    def _fit_toolbar(self):
+        """Keep the toolbar whole at any Buttons size (td-168ze sweep: at 24
+        Back / Forward / Home were cut to 'BAC' / 'RWARI' / 'HON'). The fixed
+        widths stay floors, so defaults keep their look; the dialog widens only
+        when the whole row needs more than its current width."""
+        for btn, legacy in ((self.back_btn, 85), (self.forward_btn, 100),
+                            (self.home_btn, 85)):
+            btn.ensurePolished()
+            btn.setFixedWidth(max(legacy, btn.sizeHint().width()))
+        self.search_input.setFixedWidth(fit_text_width(
+            self.search_input.placeholderText(), 200, button=False))
+        self._toolbar.invalidate()
+        m = self.layout().contentsMargins()
+        need = self._toolbar.sizeHint().width() + m.left() + m.right()
+        target = max(950, need)
+        self.setMinimumWidth(target)
+        self.resize(target, self.height())
     def _setup_ui(self):
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(8, 8, 8, 8)
@@ -74,40 +118,41 @@ class HelpDialog(QDialog):
 
         self.back_btn = QPushButton("\u25C0 Back")
         self.back_btn.setFixedWidth(85)
-        self.back_btn.setStyleSheet(get_secondary_button_style())
+        live_style(self, self.back_btn, lambda: in_dialog_button_style())
         self.back_btn.clicked.connect(self._on_back)
         toolbar.addWidget(self.back_btn)
 
         self.forward_btn = QPushButton("Forward \u25B6")
         self.forward_btn.setFixedWidth(100)
-        self.forward_btn.setStyleSheet(get_secondary_button_style())
+        live_style(self, self.forward_btn, lambda: in_dialog_button_style())
         self.forward_btn.clicked.connect(self._on_forward)
         toolbar.addWidget(self.forward_btn)
 
         self.home_btn = QPushButton("\u2302 Home")
         self.home_btn.setFixedWidth(85)
-        self.home_btn.setStyleSheet(get_secondary_button_style())
+        live_style(self, self.home_btn, lambda: in_dialog_button_style())
         self.home_btn.clicked.connect(self._on_home)
         toolbar.addWidget(self.home_btn)
 
         toolbar.addSpacing(15)
 
         search_label = QLabel("Search:")
-        search_label.setFont(scaled_area_font('info_text'))
-        search_label.setStyleSheet(f"color: {self.theme['secondary_text']};")
+        # O-6: font-size in QSS, not setFont (qt-material overrides setFont).
+        live_style(self, search_label, lambda: f"color: {self.theme['secondary_text']}; "
+            f"font-size: {scaled_area_px('info_text')}px;")
         toolbar.addWidget(search_label)
 
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText("Type to search...")
         self.search_input.setFixedWidth(200)
-        self.search_input.setFont(scaled_area_font('info_text'))
-        self.search_input.setStyleSheet(f"""
+        live_style(self, self.search_input, lambda: f"""
             QLineEdit {{
                 background-color: {self.theme['secondary']};
                 color: {self.theme['secondary_text']};
                 border: 1px solid {self.theme['primary']};
                 border-radius: 4px;
                 padding: 4px 8px;
+                font-size: {tier_px('buttons', 11)}px;
             }}
         """)
         self.search_input.returnPressed.connect(self._on_search)
@@ -122,7 +167,7 @@ class HelpDialog(QDialog):
         # manual" describes the mechanism and answers a question nobody asked;
         # somebody stuck on a panel is looking for a way to ask a question.
         self.export_btn = QPushButton("\U0001F4E6 Answer my question with AI")
-        self.export_btn.setStyleSheet(get_secondary_button_style())
+        live_style(self, self.export_btn, lambda: in_dialog_button_style())
         self.export_btn.setToolTip(
             "Stuck? Let an AI answer for you.\n"
             "\n"
@@ -141,6 +186,10 @@ class HelpDialog(QDialog):
         toolbar.addWidget(self.export_btn)
 
         main_layout.addLayout(toolbar)
+        self._toolbar = toolbar
+        # Registered after the toolbar styles, so on a live Fonts Apply it runs
+        # once they carry the new size.
+        live_refresh(self, self._fit_toolbar, now=True)
 
         # === SPLITTER: TOC (left) + Content (right) ===
         splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -153,19 +202,19 @@ class HelpDialog(QDialog):
         toc_layout.setSpacing(5)
 
         toc_header = QLabel("Contents")
-        toc_header.setFont(scaled_area_font('panel_titles', bold=True))
-        toc_header.setStyleSheet(f"color: {self.theme['primary']};")
+        live_style(self, toc_header, lambda: f"color: {self.theme['primary']}; "
+            f"font-size: {popup_group_px(14)}px; font-weight: bold;")
         toc_layout.addWidget(toc_header)
 
         self.toc_list = QListWidget()
-        self.toc_list.setFont(scaled_area_font('info_text'))
-        self.toc_list.setStyleSheet(f"""
+        live_style(self, self.toc_list, lambda: f"""
             QListWidget {{
                 background-color: {self.theme['secondary']};
                 color: {self.theme['secondary_text']};
                 border: 1px solid {self.theme['primary']};
                 border-radius: 6px;
                 padding: 5px;
+                font-size: {tier_px('sidebar', 11)}px;
             }}
             QListWidget::item {{
                 padding: 6px 8px;
@@ -198,14 +247,14 @@ class HelpDialog(QDialog):
         self.content_browser = QTextBrowser()
         self.content_browser.setOpenExternalLinks(False)
         self.content_browser.anchorClicked.connect(self._on_link_clicked)
-        self.content_browser.setFont(scaled_area_font('info_text'))
-        self.content_browser.setStyleSheet(f"""
+        live_style(self, self.content_browser, lambda: f"""
             QTextBrowser {{
                 background-color: {self.theme['secondary']};
                 color: {self.theme['secondary_text']};
                 border: 1px solid {self.theme['primary']};
                 border-radius: 8px;
                 padding: 15px;
+                font-size: {scaled_area_px('info_text')}px;
                 selection-background-color: {self.theme['primary']};
             }}
         """)
@@ -232,6 +281,10 @@ class HelpDialog(QDialog):
 
         html = html_path.read_text(encoding="utf-8")
 
+        # Scale the manual's CSS px font-sizes by the Info text factor (which
+        # already carries Display Scale). Ratios preserved.
+        html = _scale_manual_font_sizes(html, scaled_area_factor('info_text'))
+
         # Inject theme colors into CSS placeholders
         html = html.replace("{{text}}", self.theme["secondary_text"])
         html = html.replace("{{bg}}", self.theme["secondary"])
@@ -244,6 +297,12 @@ class HelpDialog(QDialog):
         # Set search paths so <img src="images/..."> resolves correctly
         self.content_browser.setSearchPaths([str(html_path.parent)])
         self.content_browser.setHtml(html)
+
+    def _reload_manual_keep_scroll(self):
+        bar = self.content_browser.verticalScrollBar()
+        ratio = bar.value() / bar.maximum() if bar.maximum() else 0.0
+        self._load_manual()
+        bar.setValue(round(ratio * bar.maximum()))
 
     def _on_toc_clicked(self, item):
         """Scroll content browser to the clicked TOC section.

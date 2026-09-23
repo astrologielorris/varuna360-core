@@ -31,6 +31,7 @@ from ui.qt_theme import (
     get_group_box_style, get_scroll_style,
     get_primary_button_style, get_secondary_button_style,
 )
+from ui.popup_fonts import tier_px, fit_fixed_button, popup_group_px
 
 from core.ayanamsa_data import AYANAMSA_OPTIONS, CATEGORY_ORDER, get_ayanamsa_name
 
@@ -54,7 +55,7 @@ class AyanamsaDialog(QDialog):
     """
 
     def __init__(self, parent=None, current_ayanamsa=98,
-                 current_chart_zodiac="tropical"):
+                 current_chart_zodiac="tropical", *, dasha_only=False):
         super().__init__(parent)
         self.setWindowTitle("Select Ayanamsa")
         self.setMinimumWidth(720)
@@ -68,7 +69,8 @@ class AyanamsaDialog(QDialog):
         text_color   = theme["primary_text"] if _light else theme.get("primary_text", "#FFFFFF")
         text_muted   = theme["secondary_text"]
         radio_style  = self._radio_style(theme, _light)
-        gbox_style   = get_group_box_style()
+        gbox_style   = (get_group_box_style()   # group titles: pop-up group size (§3.2)
+                        + f"QGroupBox {{ font-size: {popup_group_px(13)}px; }}")
 
         # Main layout
         main_layout = QVBoxLayout(self)
@@ -100,6 +102,9 @@ class AyanamsaDialog(QDialog):
             zodiac_layout.addWidget(rb)
         zodiac_layout.addStretch()
         main_layout.addWidget(zodiac_box)
+        zodiac_box.setVisible(not dasha_only)
+        if dasha_only:
+            self.setWindowTitle("Select Dasha Ayanamsa")
 
         # ── Scrollable area for ayanamsa options ─────────────────────────────
         scroll = QScrollArea()
@@ -171,6 +176,10 @@ class AyanamsaDialog(QDialog):
         cancel_btn.setStyleSheet(get_secondary_button_style())
         cancel_btn.clicked.connect(self.reject)
         btn_layout.addWidget(cancel_btn)
+        # The fixed sizes are floors: at Action buttons 24 'Cancel' was cut
+        # (td-168ze sweep).
+        fit_fixed_button(ok_btn, scaled_px(88), scaled_px(34))
+        fit_fixed_button(cancel_btn, scaled_px(88), scaled_px(34))
 
         main_layout.addLayout(btn_layout)
 
@@ -187,7 +196,7 @@ class AyanamsaDialog(QDialog):
         return f"""
             QRadioButton {{
                 color: {text};
-                font-size: {scaled_area_px('info_text')}px;
+                font-size: {tier_px('buttons', 11)}px;
                 spacing: 6px;
                 padding: 2px 4px;
             }}

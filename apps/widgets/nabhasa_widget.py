@@ -22,6 +22,7 @@ controller frames the chart and calls the adapter), so this widget never reads G
 state. Colours come from ui/qt_theme.py; NO raw hex. Imports NOTHING from pro/
 (H11): the strength bar is duplicated here and the doctrine text lives inline.
 """
+import weakref
 
 from PySide6.QtCore import Qt, Signal, QRectF
 from PySide6.QtGui import QPainter, QColor, QLinearGradient, QBrush
@@ -33,7 +34,10 @@ from PySide6.QtWidgets import (
 from ui.themed_style import ThemedStyleMixin
 from ui.qt_theme import (
     get_theme_colors, pari_sem, dim_text, scaled_px, elevation_surface_style,
+    scaled_tier_size,
+    scaled_area_px,
 )
+from ui.popup_fonts import popup_title_px, live_refresh, live_rebuild
 from AI_tools.AI_main_function.nabhasa_descriptions import (
     describe_nabhasa_yoga, DOC_TITLE, DOC_SECTIONS, PMP_ESCALATION,
 )
@@ -722,6 +726,7 @@ class NabhasaWidget(ThemedStyleMixin, QWidget):
             self._combo_diagram = None
         theme = get_theme_colors()
         dlg = QDialog(self)          # parented to the widget, never a card (H6)
+        dlg.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
         dlg.setWindowTitle("Yoga combination")
         dlg.setModal(False)
         dlg.setStyleSheet(f"QDialog {{ background: {theme['secondary_dark']}; }}")
@@ -749,8 +754,15 @@ class NabhasaWidget(ThemedStyleMixin, QWidget):
         dlg.resize(scaled_px(380), scaled_px(240))
         self._combo_dialog = dlg     # retained so it is not GC'd (H6)
         self._combo_diagram = diagram  # kept so refresh_theme() can re-skin it live
+        dlg_ref = weakref.ref(dlg)
+        def _clear_combo(*_args):
+            if self._combo_dialog is dlg_ref():
+                self._combo_dialog = None
+                self._combo_diagram = None
+        dlg.destroyed.connect(_clear_combo)
         self._combo_sig = self._result_signature()  # close it if the chart changes
         dlg.show()
+        live_refresh(dlg, lambda: self._combo_diagram is not None and self._combo_diagram.refresh_theme())
 
     # ---- (i) tutorial popup ----------------------------------------------
     def _open_tutorial(self):
@@ -759,6 +771,7 @@ class NabhasaWidget(ThemedStyleMixin, QWidget):
             self._doc_dialog = None
         theme = get_theme_colors()
         dlg = QDialog(self)
+        dlg.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
         dlg.setWindowTitle(DOC_TITLE)
         dlg.setModal(False)
         dlg.setMinimumWidth(scaled_px(460))
@@ -770,7 +783,7 @@ class NabhasaWidget(ThemedStyleMixin, QWidget):
         lay.setSpacing(scaled_px(6))
         title = QLabel(DOC_TITLE)
         title.setStyleSheet(
-            f"color: {pari_sem('maha')['hi']}; font-weight: 800; font-size: {scaled_px(16)}px;")
+            f"color: {pari_sem('maha')['hi']}; font-weight: 800; font-size: {popup_title_px(16)}px;")
         title.setWordWrap(True)
         lay.addWidget(title)
 
@@ -787,11 +800,11 @@ class NabhasaWidget(ThemedStyleMixin, QWidget):
             k = QLabel(kicker)
             k.setStyleSheet(
                 f"color: {dim_text(theme['secondary_text'], 0.75)}; font-weight: 700; "
-                f"font-size: {scaled_px(9)}px; letter-spacing: 1.5px; margin-top: {scaled_px(6)}px;")
+                f"font-size: {scaled_tier_size(9, 'info_text')}px; letter-spacing: 1.5px; margin-top: {scaled_px(6)}px;")
             clay.addWidget(k)
             b = QLabel(body)
             b.setWordWrap(True)
-            b.setStyleSheet(f"color: {theme['secondary_text']}; font-size: {scaled_px(11)}px;")
+            b.setStyleSheet(f"color: {theme['secondary_text']}; font-size: {scaled_area_px('info_text')}px;")
             clay.addWidget(b)
         clay.addStretch(1)
         scroll.setWidget(content)
@@ -802,7 +815,7 @@ class NabhasaWidget(ThemedStyleMixin, QWidget):
         close.setStyleSheet(
             f"QPushButton {{ color: {theme['secondary_text']}; "
             f"border: 1px solid {_rgba(theme['secondary_light'], 0.6)}; border-radius: {scaled_px(6)}px; "
-            f"padding: {scaled_px(4)}px {scaled_px(14)}px; }}"
+            f"font-size: {scaled_area_px('action_buttons')}px; padding: {scaled_px(4)}px {scaled_px(14)}px; }}"
             f"QPushButton:hover {{ background: {_rgba(theme['primary'], 0.2)}; }}")
         close.clicked.connect(dlg.close)
         row = QHBoxLayout()
@@ -810,7 +823,12 @@ class NabhasaWidget(ThemedStyleMixin, QWidget):
         row.addWidget(close)
         lay.addLayout(row)
         self._doc_dialog = dlg
+        dlg_ref = weakref.ref(dlg)
+        dlg.destroyed.connect(
+            lambda *_a: setattr(self, "_doc_dialog", None)
+            if self._doc_dialog is dlg_ref() else None)
         dlg.show()
+        live_rebuild(dlg, lambda: (self._open_tutorial(), self._doc_dialog)[1])   # SPEC-FONT-001 §3.2
 
 
 # --- module helpers --------------------------------------------------------

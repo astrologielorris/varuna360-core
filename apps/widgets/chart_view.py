@@ -10,6 +10,11 @@ Contains:
 - HoverZoneItem, ClickablePlanetItem, ClickableZodiacItem - Interactive graphics items
 - SouthIndianView - Main chart rendering widget (renamed for future view types)
 """
+from apps.widgets.additional_bodies import display_names, enabled_names, groups_with_notice
+from apps.widgets.planet_icon_loader import load_planet_icon
+from apps.widgets.additional_body_glyphs import make_planet_item
+from apps.widgets.planet_icon_style import appearance_signature
+from apps.widgets.classic_south_sign import add_classic_sign_art, JoshGlyphItem
 import sys
 import json
 from pathlib import Path
@@ -48,6 +53,7 @@ from ui.qt_theme import (
     desat_image,
     sat_key,
     desat_hex,
+    scaled_tier_size,
 )
 
 # Import settings manager for chart display customization
@@ -536,7 +542,7 @@ class SouthIndianView(QGraphicsView):
         side = min(vp.width(), vp.height())
         if side < 100:
             return 0.45  # viewport not laid out yet — safe fallback
-        return max(self.min_zoom, min(self.max_zoom, side / self.chart_size * 0.92))
+        return max(0.01, min(self.max_zoom, side / self.chart_size * 0.92))
 
     def _apply_fit_zoom(self):
         """Deferred auto-fit — runs after Qt event loop processes layout (viewport size valid)."""
@@ -724,10 +730,10 @@ class SouthIndianView(QGraphicsView):
                     item.signal_emitter.clicked.emit(item.planet_name, item.planet_info)
                     event.accept()
                     return
-                elif isinstance(item, ClickableZodiacItem):
+                elif isinstance(item, (ClickableZodiacItem, JoshGlyphItem)):
                     self._is_dragging = False
                     self.viewport().setCursor(Qt.CursorShape.ArrowCursor)
-                    item.signal_emitter.clicked.emit(item.zodiac_index, item.current_variation)
+                    self.sign_click_signal.clicked.emit(item.zodiac_index, item.current_variation)
                     event.accept()
                     return
         super().mouseDoubleClickEvent(event)
@@ -738,7 +744,7 @@ class SouthIndianView(QGraphicsView):
 
         if not self._is_dragging:
             found_clickable = any(
-                isinstance(item, (ClickablePlanetItem, ClickableZodiacItem))
+                isinstance(item, (ClickablePlanetItem, ClickableZodiacItem, JoshGlyphItem))
                 for item in self.items(event.pos())
             )
             if found_clickable:
@@ -751,7 +757,7 @@ class SouthIndianView(QGraphicsView):
         if event.button() == Qt.MouseButton.LeftButton:
             self._is_dragging = False
             found_clickable = any(
-                isinstance(item, (ClickablePlanetItem, ClickableZodiacItem))
+                isinstance(item, (ClickablePlanetItem, ClickableZodiacItem, JoshGlyphItem))
                 for item in self.items(event.pos())
             )
             if not found_clickable:
@@ -1309,50 +1315,9 @@ class SouthIndianView(QGraphicsView):
         return shadow
 
     def _create_element_shadow_effect(self, zodiac_idx):
-        """Create element-colored shadow for a sign icon based on zodiac index.
-
-        Fire signs (Dhata=0, Indra=4, Amzu=8) get red shadow
-        Earth signs (Aryama=1, Vivasvan=5, Bhaga=9) get brown shadow
-        Air signs (Mitra=2, Tvasta=6, Pusha=10) get green shadow
-        Water signs (Varuna=3, Vishnu=7, Parjanya=11) get blue shadow
-
-        Element shadows have their own blur/offset/opacity settings.
-        """
-        element_settings = self.display_settings.get("element_shadows", {})
-
-        # If element shadows not enabled, return regular shadow
-        if not element_settings.get("enabled", False):
-            return self._create_shadow_effect()
-
-        # Determine element from zodiac index
-        element_map = {
-            0: "fire", 1: "earth", 2: "air", 3: "water",
-            4: "fire", 5: "earth", 6: "air", 7: "water",
-            8: "fire", 9: "earth", 10: "air", 11: "water"
-        }
-        element = element_map.get(zodiac_idx, "fire")
-
-        # Get element color
-        default_colors = {
-            'fire': '#FF4444', 'earth': '#8B4513',
-            'air': '#44FF44', 'water': '#4444FF'
-        }
-        color_hex = element_settings.get(element, default_colors[element])
-
-        # Use element shadow's own settings for blur/offset/opacity
-        blur = element_settings.get("blur_radius", 12)
-        off_x = element_settings.get("offset_x", 4)
-        off_y = element_settings.get("offset_y", 4)
-        alpha = element_settings.get("opacity", 120)
-
-        shadow_color = QColor(color_hex)
-        shadow_color.setAlpha(alpha)
-
-        shadow = QGraphicsDropShadowEffect()
-        shadow.setBlurRadius(blur)
-        shadow.setOffset(off_x, off_y)
-        shadow.setColor(shadow_color)
-        return shadow
+        """Create the shared sign-art shadow for the artistic South view."""
+        from apps.widgets.sign_shadow import create_sign_shadow
+        return create_sign_shadow(zodiac_idx)
 
     def draw_chart_with_icons(self):
         """Draw grid with zodiac icons
@@ -1373,6 +1338,7 @@ class SouthIndianView(QGraphicsView):
         sign_icon_settings = self.display_settings.get("sign_icon", {})
         icon_offset_x = sign_icon_settings.get("offset_x", 20)
         icon_offset_y = sign_icon_settings.get("offset_y", 20)
+        sign_display = get_settings().get('display.sign_display', 'zodiac')
 
         for (row, col), zodiac_idx in self.ZODIAC_POSITIONS.items():
             # Cell boundaries
@@ -1384,30 +1350,16 @@ class SouthIndianView(QGraphicsView):
             # Get current variation for this sign
             current_variation = self.get_selected_variation(zodiac_idx)
 
-            # Load zodiac icon (192px for 512px cells)
-            pixmap = self.load_zodiac_icon(zodiac_idx, size=192)
-            if pixmap:
-                # Use ClickableZodiacItem for variation selection
-                icon_item = ClickableZodiacItem(
-                    pixmap, zodiac_idx, current_variation, self.sign_click_signal
-                )
-                # Position at top-right corner (customizable via settings)
-                icon_x = x2 - icon_offset_x - pixmap.width()
-                icon_y = y1 + icon_offset_y
-                icon_item.setPos(icon_x, icon_y)
-
-                # Apply shadow effect (element-colored if enabled, else regular shadow)
-                # Rule #18: del after setGraphicsEffect to avoid Qt/Python ownership crash
-                shadow_effect = self._create_element_shadow_effect(zodiac_idx)
-                if shadow_effect:
-                    icon_item.setGraphicsEffect(shadow_effect)
-                    del shadow_effect  # Release Python reference - Qt owns it now
-
-                self.scene.addItem(icon_item)
-                # Qt scene owns this item - no Python reference needed
+            add_classic_sign_art(
+                self.scene, sign_display, zodiac_idx, current_variation,
+                self.sign_click_signal, x2, y1, icon_offset_x, icon_offset_y,
+                self.display_settings.get("text_colors", {}).get("sign_label", "#DAA520"),
+                self.load_zodiac_icon, ClickableZodiacItem,
+                self._create_element_shadow_effect)
 
             # Add Aditya name at top-left
-            self.add_zodiac_label(row, col, zodiac_idx)
+            if sign_display != 'josh_only':
+                self.add_zodiac_label(row, col, zodiac_idx)
 
             # === Draw house number in bottom-left corner (if enabled) ===
             house_settings = self.display_settings.get('house_number', {})
@@ -1430,74 +1382,7 @@ class SouthIndianView(QGraphicsView):
             self._create_hover_zones()
 
     def load_planet_image(self, planet_name, size=48):
-        """Load planet image using Qt best practices for quality
-
-        IMPORTANT: Do NOT use HiDPI scaling here because fitInView() is used.
-        fitInView() applies a view transform that re-scales everything.
-        If we also use setDevicePixelRatio(), the image gets scaled TWICE
-        which causes pixelation (double interpolation).
-
-        Instead: Load at LOGICAL size and let fitInView() +
-        SmoothPixmapTransform handle the final scaling smoothly.
-
-        Supports variations: sun.png, sun2.png, sun3.png, etc.
-        """
-        # Get selected variation for this planet
-        variation = self.get_planet_variation(planet_name)
-
-        # Cache key includes variation + saturation (SPEC-SAT-001 WI-4;
-        # sat_key is '' at 100 so keys stay byte-identical to today)
-        cache_key = f"{planet_name}_v{variation}_{size}{sat_key()}"
-
-        if cache_key in self.planet_icons:
-            return self.planet_icons[cache_key]
-
-        icon_filename = self.PLANET_ICON_NAMES.get(planet_name, planet_name.lower())
-
-        # Try variation-specific file first (e.g., sun2.png for variation 2)
-        if variation > 1:
-            icon_path = PROJECT_ROOT / f"img/planets/{icon_filename}{variation}.webp"
-        else:
-            # Variation 1 = default (no suffix)
-            icon_path = PROJECT_ROOT / f"img/planets/{icon_filename}.webp"
-
-        # Fallback to default if variation doesn't exist
-        if not icon_path.exists():
-            icon_path = PROJECT_ROOT / f"img/planets/{icon_filename}.webp"
-
-        if not icon_path.exists():
-            print(f"Warning: Planet icon not found: {icon_path}")
-            self.planet_icons[cache_key] = None
-            return None
-
-        try:
-            # Step 1: Load with QImage (best for I/O operations)
-            qimage = QImage(str(icon_path))
-            if qimage.isNull():
-                print(f"Warning: Failed to load image: {icon_path}")
-                self.planet_icons[cache_key] = None
-                return None
-
-            # Step 2: Scale to LOGICAL size (no HiDPI - fitInView handles scaling)
-            qimage = qimage.scaled(
-                size, size,
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation
-            )
-
-            # Step 2b: Desaturate AFTER scale (SPEC-SAT-001 WI-4; no-op at 100)
-            qimage = desat_image(qimage)
-
-            # Step 3: Convert to QPixmap - NO setDevicePixelRatio!
-            # fitInView + SmoothPixmapTransform will handle display scaling
-            pixmap = QPixmap.fromImage(qimage)
-
-            self.planet_icons[cache_key] = pixmap
-            return pixmap
-        except Exception as e:
-            print(f"Error loading planet image {planet_name}: {e}")
-            self.planet_icons[cache_key] = None
-            return None
+        return load_planet_icon(planet_name, size, self.get_planet_variation(planet_name))
 
     def update_from_chart(self, chart, varga_code=None, use_western_names=False,
                           aditya_mode=None, **_kw):
@@ -2457,9 +2342,14 @@ class SouthIndianView(QGraphicsView):
             text_item.setDefaultTextColor(text_color)
 
             # Font settings
+            # G2b (Release 5 font audit): the classic SI view + center minis drew
+            # labels from the Chart Display per-element sizes with no chart_labels/
+            # scale factor. Wrap each in scaled_tier_size(base,'chart_labels') so
+            # presets + Display Scale reach them; factor is 1.0 at defaults =
+            # byte-identical parity. Matches the vector SI fix (G2).
             font_size = asc_deg_settings.get('font_size', 20)
             font_weight = asc_deg_settings.get('font_weight', 'normal')
-            font = QFont(FONT_CHART, font_size)
+            font = QFont(FONT_CHART, scaled_tier_size(font_size, 'chart_labels'))
             if font_weight == 'bold':
                 font.setWeight(QFont.Weight.Bold)
             text_item.setFont(font)
@@ -2486,6 +2376,14 @@ class SouthIndianView(QGraphicsView):
         self.ascendant_override = sign_index
         if self._chart:
             self.draw_full_chart()
+
+    def set_compass_mode(self, on):
+        """SPEC-SIC-004: accept and ignore. The Earth-fixed compass is a
+        vector-view feature; the classic image-backed South Indian view has no
+        compass frame. This one-line method keeps the host fan-out (INV-12)
+        symmetric so the flag is not lost when the style is switched to classic
+        and back. Returns False (never shown here)."""
+        return False
 
     def _get_effective_ascendant_sign_index(self) -> int:
         """Get the Ascendant sign index (0-11). Supports F4 override."""
@@ -2654,7 +2552,7 @@ class SouthIndianView(QGraphicsView):
             font = QFont(FONT_CHART)
         else:
             font = QFont(font_family)
-        font.setPixelSize(font_size)
+        font.setPixelSize(scaled_tier_size(font_size, 'chart_labels'))  # G2b: follow chart_labels
 
         font_weight_str = style_settings.get('font_weight', 'normal')
         if font_weight_str == 'bold':
@@ -2702,11 +2600,11 @@ class SouthIndianView(QGraphicsView):
         bg_padding = style_settings.get('background_padding', 4)
         bg_radius = style_settings.get('background_radius', 0)
 
-        # Create font
+        # Create font (G2b: follow chart_labels + scale)
         if font_family == 'default':
-            font = QFont(FONT_CHART, font_size)
+            font = QFont(FONT_CHART, scaled_tier_size(font_size, 'chart_labels'))
         else:
-            font = QFont(font_family, font_size)
+            font = QFont(font_family, scaled_tier_size(font_size, 'chart_labels'))
 
         if font_weight == 'bold':
             font.setWeight(QFont.Weight.Bold)
@@ -2836,7 +2734,7 @@ class SouthIndianView(QGraphicsView):
             return {}
         planets_by_sign = {}
         outer_planets = {"Uranus", "Neptune", "Pluto"}
-        for planet_name in self.PLANET_NAMES:
+        for planet_name in display_names(self.PLANET_NAMES):
             if not self.show_outer_planets and planet_name in outer_planets:
                 continue
             try:
@@ -2847,7 +2745,7 @@ class SouthIndianView(QGraphicsView):
             if sign_idx not in planets_by_sign:
                 planets_by_sign[sign_idx] = []
             planets_by_sign[sign_idx].append((planet_name, planet))
-        return planets_by_sign
+        return groups_with_notice(planets_by_sign, self.scene, self._planets)
 
     def _planet_deg_min(self, planet):
         """Extract (degrees, minutes) within sign from a Planet object."""
@@ -2958,7 +2856,7 @@ class SouthIndianView(QGraphicsView):
             pixmap = self.load_planet_image(planet_name, size=planet_size)
             if pixmap:
                 click_dict = self._planet_to_click_dict(planet_name, planet)
-                planet_item = ClickablePlanetItem(
+                planet_item = make_planet_item(ClickablePlanetItem, planet_name,
                     pixmap, planet_name, click_dict, self.planet_click_signal
                 )
                 planet_item.setOffset(-pixmap.width() / 2, -pixmap.height() / 2)
@@ -3053,36 +2951,31 @@ class SouthIndianView(QGraphicsView):
                                         self.sign_language)
         name_text = QGraphicsTextItem(sign_name)
         name_text.setDefaultTextColor(self.grid_color)
-        name_text.setFont(QFont(FONT_CHART, int(14 * scale), QFont.Weight.Bold))
+        name_text.setFont(QFont(FONT_CHART, scaled_tier_size(int(14 * scale), 'chart_labels'), QFont.Weight.Bold))
         name_text.setPos(center_x1 + 10, center_y1 + 10)
         name_text.setZValue(51)
         name_text.setData(Qt.ItemDataRole.UserRole, "center_preview")  # Tag for removal
         self.scene.addItem(name_text)
 
-        # Zodiac icon at top-right (matching original: 256px for 2K resolution)
-        icon_size = 512  # Full size for 2048 scene (center preview)
-        zodiac_pixmap = self.load_zodiac_icon(zodiac_idx, size=icon_size)
-        if zodiac_pixmap:
-            icon_item = QGraphicsPixmapItem(zodiac_pixmap)
-            icon_x = center_x2 - 10 - zodiac_pixmap.width()
-            icon_y = center_y1 + 10
-            icon_item.setPos(icon_x, icon_y)
+        # Sign art at top-right, 512px for the 2048 scene. Same seam as the cells,
+        # so display.sign_display (zodiac / josh / names) is honoured here too.
+        icon_item = add_classic_sign_art(
+            self.scene, get_settings().get('display.sign_display', 'zodiac'),
+            zodiac_idx, self.get_selected_variation(zodiac_idx), self.sign_click_signal,
+            center_x2, center_y1, 10, 10,
+            self.display_settings.get("text_colors", {}).get("sign_label", "#DAA520"),
+            self.load_zodiac_icon, lambda pixmap, *_: QGraphicsPixmapItem(pixmap),
+            self._create_element_shadow_effect, size=512)
+        if icon_item is not None:
             icon_item.setZValue(51)
             icon_item.setData(Qt.ItemDataRole.UserRole, "center_preview")  # Tag for removal
-
-            # Element-colored shadow (same as regular cells)
-            shadow_effect = self._create_element_shadow_effect(zodiac_idx)
-            if shadow_effect:
-                icon_item.setGraphicsEffect(shadow_effect)
-                del shadow_effect  # Rule #18: Qt owns it now
-
-            self.scene.addItem(icon_item)
+            icon_item.unsetCursor()  # preview art is not clickable
 
         # Sign number at top center
         sign_number = zodiac_idx + 1
         num_text = QGraphicsTextItem(str(sign_number))
         num_text.setDefaultTextColor(self.text_color)
-        num_text.setFont(QFont(FONT_CHART, int(16 * scale), QFont.Weight.Bold))
+        num_text.setFont(QFont(FONT_CHART, scaled_tier_size(int(16 * scale), 'chart_labels'), QFont.Weight.Bold))
         num_width = num_text.boundingRect().width()
         num_text.setPos(center_mid_x - num_width / 2, center_y1 + 10)
         num_text.setZValue(51)
@@ -3131,7 +3024,7 @@ class SouthIndianView(QGraphicsView):
 
                     planet_pixmap = self.load_planet_image(planet_name, size=planet_size)
                     if planet_pixmap:
-                        planet_item = QGraphicsPixmapItem(planet_pixmap)
+                        planet_item = make_planet_item(QGraphicsPixmapItem, planet_name, planet_pixmap)
                         planet_item.setPos(x_pos - planet_pixmap.width() / 2,
                                            y_pos - planet_pixmap.height() / 2)
                         planet_item.setZValue(51)
@@ -3147,7 +3040,7 @@ class SouthIndianView(QGraphicsView):
                     name_text = QGraphicsTextItem(planet_name[:3])
                     # SPEC-THM-001 G01: live theme color (was QColor(TEXT_PRIMARY))
                     name_text.setDefaultTextColor(QColor(get_theme_colors()["secondary_text"]))
-                    name_text.setFont(QFont(FONT_CHART, int(11 * scale), QFont.Weight.Bold))
+                    name_text.setFont(QFont(FONT_CHART, scaled_tier_size(int(11 * scale), 'chart_labels'), QFont.Weight.Bold))
                     name_width = name_text.boundingRect().width()
                     name_text.setPos(x_pos - name_width / 2, y_pos + planet_size / 2 + 5)
                     name_text.setZValue(51)
@@ -3158,7 +3051,7 @@ class SouthIndianView(QGraphicsView):
                     degree_text = QGraphicsTextItem(f"{deg}° {mins}'")
                     # SPEC-THM-001 G01b: live theme color (was QColor(TEXT_SECONDARY))
                     degree_text.setDefaultTextColor(QColor(get_theme_colors()["secondary_text"]))
-                    degree_text.setFont(QFont(FONT_CHART, int(10 * scale)))
+                    degree_text.setFont(QFont(FONT_CHART, scaled_tier_size(int(10 * scale), 'chart_labels')))
                     deg_width = degree_text.boundingRect().width()
                     degree_text.setPos(x_pos - deg_width / 2, y_pos + planet_size / 2 + 28)
                     degree_text.setZValue(51)
@@ -3322,8 +3215,15 @@ class SouthIndianView(QGraphicsView):
         # _show_center_si_mini) so a zodiac-mode switch invalidates the mini
         # by key. The dead notify_zodiac_changed() hook that used to claim
         # this job (but had zero callers) is deleted.
-        signature = (id(self._chart), varga_code, lagna_zodiac_idx,
-                     bool(self.use_western_names), self.aditya_mode)
+        # td-iaqm.5 CP7d: display.sign_display selects the mini NI's inner sign
+        # ring (names/zodiac/josh) and is read at draw (north_indian_view.py),
+        # so it MUST be a cache-signature term — otherwise a live flip on the
+        # same chart is a cache hit and the stale ring is re-placed (both CP7d
+        # reviewers). appearance_signature() is planet-icon-only and omits it.
+        signature = (enabled_names(), appearance_signature(),
+                     id(self._chart), varga_code, lagna_zodiac_idx,
+                     bool(self.use_western_names), self.aditya_mode,
+                     get_settings().get('display.sign_display', 'zodiac'))
         picture = self._center_ni_cache.get(signature)
         if picture is None:
             if self._mini_north_indian_view is None:
@@ -3419,11 +3319,13 @@ class SouthIndianView(QGraphicsView):
         # variations DO have events, and invalidate there as well, because
         # a dict is not hashable and comparing it every draw is the wrong
         # trade.
-        signature = (id(chart), varga_code, is_dark, self.aditya_mode,
+        signature = (enabled_names(), appearance_signature(), id(chart), varga_code, is_dark, self.aditya_mode,
                      bool(self.use_western_names),
                      getattr(self, "sign_language", "en"),
                      bool(getattr(self, "show_outer_planets", True)),
-                     bool(getattr(self, "show_planet_names", False)))
+                     bool(getattr(self, "show_planet_names", False)),
+                     # td-iaqm.5 CP7d: sign_display selects the mini's sign ring, read at draw.
+                     get_settings().get('display.sign_display', 'zodiac'))
         picture = self._center_si_cache.get(signature)
         if picture is None:
             miniview = self._mini_transit_si_view

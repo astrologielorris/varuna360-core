@@ -13,7 +13,17 @@ from core.fs_safety import windows_safe_filename
 
 
 def decimal_to_dms(decimal: float, is_latitude: bool = True) -> str:
-    """Convert decimal degrees to CHTK DMS format (e.g. '27N57\\'00' or '082W27\\'36')."""
+    """THE canonical decimal-degrees -> CHTK DMS helper (td-7q5s.4).
+
+    e.g. '27N57\\'00' or '082W27\\'36'. Rounds the arc-second (int(round(...)))
+    and carries a rounded :60 up into the minute/degree; this matches
+    docs/CHTK_FORMAT_SPECIFICATION.md. Every CHTK writer routes here:
+    core.chtk_reader.CHTKWriter.decimal_to_dms (via the historical is_longitude
+    flag == not is_latitude) and the pro/AI_tools/chart_generation creators.
+    Proven byte-identical to those five former copies over 1,028,598 grid
+    checks before consolidation. The Edit-Info panel's _decimal_to_dms is
+    deliberately NOT routed here: it truncates instead of rounds, so routing it
+    would change edit-save bytes (tracked separately, not a dedup)."""
     is_positive = decimal >= 0
     abs_decimal = abs(decimal)
 

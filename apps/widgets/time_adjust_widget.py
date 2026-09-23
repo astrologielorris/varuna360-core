@@ -860,13 +860,18 @@ class TimeAdjustWidget(QWidget):
         if hasattr(self.gui, '_update_title'):
             self.gui._update_title()
 
-        if hasattr(self.gui, '_toggle_time_adjust'):
-            self.gui._toggle_time_adjust()
+        self._finish_time_adjust()
 
         if saved:
             self.gui.statusBar().showMessage("Birth time saved", 3000)
         else:
             self.gui.statusBar().showMessage("No chart selected to save", 3000)
+
+    def _finish_time_adjust(self):
+        """Close the host's adjustment UI after saving."""
+        if hasattr(self.gui, '_toggle_time_adjust'):
+            self.gui._toggle_time_adjust()
+
 
 def create_time_adjust_overlay(gui):
     """

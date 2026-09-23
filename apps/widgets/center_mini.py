@@ -87,13 +87,14 @@ class CenterMiniItem(QGraphicsItem):
     """
 
     def __init__(self, picture, size, veil=False, label=None,
-                 label_color=None):
+                 label_color=None, background=None):
         super().__init__()
         self._picture = picture
         self._rect = QRectF(0, 0, size, size)
         self._veil = veil
         self._label = label
         self._label_color = label_color
+        self._background = background
         _ensure_pixmap_cache_headroom()
         self.setCacheMode(QGraphicsItem.CacheMode.DeviceCoordinateCache)
 
@@ -107,6 +108,8 @@ class CenterMiniItem(QGraphicsItem):
         if (exposed is not None and exposed.isValid()
                 and not exposed.contains(self._rect)):
             painter.setClipRect(exposed)
+        if self._background is not None:
+            self._background(painter, self._rect)
         if isinstance(self._picture, QPixmap):
             painter.drawPixmap(self._rect, self._picture,
                                QRectF(self._picture.rect()))

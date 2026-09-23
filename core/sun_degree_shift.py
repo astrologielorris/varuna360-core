@@ -25,7 +25,7 @@ PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from libaditya import swe
-from core.planets_calculator import get_calendar_flag, get_calendar_flag_from_jd
+from core.planets_calculator import get_calendar_flag_from_jd
 
 # Sign names for display
 ADITYA_NAMES = ['Dhata', 'Aryama', 'Mitra', 'Varuna', 'Indra', 'Vivasvan',
@@ -151,16 +151,12 @@ def load_chart_with_jd(chtk_path, mode="aditya"):
     lat = bd['latitude']
     lon = bd['longitude']
 
-    # SPEC-IMPORT-001 §5.3 ("jd wins"): a .toml carries an authoritative,
-    # sub-second julian_day. Re-deriving JD from the integer civil fields would
-    # truncate that precision, so prefer the stored value (mirrors chart_manager).
-    _stored_jd = bd.get('julian_day')
-    if _stored_jd is not None:
-        birth_jd = float(_stored_jd)
-    else:
-        hour_decimal = bd['utc_hour'] + bd['utc_minute'] / 60.0 + bd['utc_second'] / 3600.0
-        birth_jd = swe.julday(bd['utc_year'], bd['utc_month'], bd['utc_day'], hour_decimal,
-                              get_calendar_flag(bd['utc_year'], bd['utc_month'], bd['utc_day']))
+    # SPEC-IMPORT-001 §5.3 ("jd wins"): honor a .toml's authoritative sub-second
+    # julian_day, else compute from UTC civil via the calendar-aware
+    # time_utils.julday. Single birth-data -> JD home (td-7q5s.3 C1), shared with
+    # chart_manager so the paths cannot drift.
+    from core.chart_factory import jd_from_birth_data
+    birth_jd = jd_from_birth_data(bd)
 
     utcoffset = bd.get('utc_offset_hours', 0.0)
     chart = build_chart_from_params(jd=birth_jd, lat=lat, lon=lon, mode=mode,

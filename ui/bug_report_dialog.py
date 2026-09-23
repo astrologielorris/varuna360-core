@@ -14,14 +14,15 @@ degraded would be its own small joke.
 from pathlib import Path
 
 from PySide6.QtCore import QThread, Signal, Qt
-from PySide6.QtGui import QFont, QGuiApplication
+from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import (
     QDialog, QDialogButtonBox, QFileDialog, QHBoxLayout, QLabel, QLineEdit,
     QPlainTextEdit, QPushButton, QVBoxLayout,
 )
 
 from core import bug_report
-from ui.qt_theme import get_theme_colors
+from ui.qt_theme import get_theme_colors, scaled_area_px
+from ui.popup_fonts import tier_px
 
 
 class _SendWorker(QThread):
@@ -68,57 +69,76 @@ class BugReportDialog(QDialog):
             "can see exactly what will be sent below."
         )
         intro.setWordWrap(True)
-        intro.setStyleSheet(f"color: {theme['secondary_text']};")
+        # G7: own-QSS font-size (setFont is inert under qt-material's universal
+        # 13px rule) so the dialog's sibling text follows the info_text area too.
+        intro.setStyleSheet(
+            f"color: {theme['secondary_text']}; font-size: {scaled_area_px('info_text')}px;")
         layout.addWidget(intro)
 
-        layout.addWidget(QLabel("What happened?"))
+        note_label = QLabel("What happened?")
+        note_label.setStyleSheet(f"font-size: {scaled_area_px('info_text')}px;")
+        layout.addWidget(note_label)
         self.note_edit = QPlainTextEdit()
         self.note_edit.setPlaceholderText(
             "For example: it happened after I switched profiles, or while "
             "Dropbox was syncing."
         )
-        self.note_edit.setMaximumHeight(110)
+        self.note_edit.setStyleSheet(f"QPlainTextEdit {{ font-size: {scaled_area_px('info_text')}px; }}")  # typed prose (§3.2)
+        self.note_edit.setMaximumHeight(max(110, 6 * scaled_area_px('info_text')))
         self.note_edit.textChanged.connect(self._refresh_preview)
         layout.addWidget(self.note_edit)
 
         email_row = QHBoxLayout()
-        email_row.addWidget(QLabel("Your email (optional):"))
+        email_label = QLabel("Your email (optional):")
+        email_label.setStyleSheet(f"font-size: {scaled_area_px('info_text')}px;")
+        email_row.addWidget(email_label)
         self.email_edit = QLineEdit()
+        self.email_edit.setStyleSheet(f"font-size: {tier_px('buttons', 11)}px;")
         self.email_edit.setPlaceholderText("only if you want a reply")
         self.email_edit.textChanged.connect(self._refresh_preview)
         email_row.addWidget(self.email_edit)
         layout.addLayout(email_row)
 
         preview_label = QLabel("Exactly what will be sent:")
-        preview_font = QFont()
-        preview_font.setBold(True)
-        preview_label.setFont(preview_font)
+        # QSS font-size, NOT setFont: qt-material's universal `* {font-size:13px}`
+        # rule overrides setFont, so a QFont size is inert and the label froze at
+        # 13px regardless of the user's Font Sizes setting (F-D1). Own-QSS wins,
+        # so the caption follows the info_text area.
+        preview_label.setStyleSheet(
+            f"font-size: {scaled_area_px('info_text')}px; font-weight: bold;")
         layout.addWidget(preview_label)
 
         self.preview = QPlainTextEdit()
         self.preview.setReadOnly(True)
-        mono = QFont("monospace")
-        mono.setStyleHint(QFont.StyleHint.Monospace)
-        mono.setPointSize(8)
-        self.preview.setFont(mono)
+        # Monospace code preview, sized via QSS for the same reason (setFont was
+        # inert; the old setPointSize(8) never took effect). Follows info_text.
+        self.preview.setStyleSheet(
+            "QPlainTextEdit { font-family: monospace; "
+            f"font-size: {scaled_area_px('info_text')}px; }}")
         layout.addWidget(self.preview, stretch=1)
 
         self.status = QLabel("")
         self.status.setWordWrap(True)
+        self.status.setStyleSheet(f"font-size: {scaled_area_px('info_text')}px;")
         layout.addWidget(self.status)
 
         buttons = QHBoxLayout()
+        _btn_qss = f"font-size: {tier_px('action_buttons', 10)}px;"
         self.copy_button = QPushButton("Copy")
         self.copy_button.setToolTip("Copy the report to the clipboard")
+        self.copy_button.setStyleSheet(_btn_qss)
         self.copy_button.clicked.connect(self._copy)
         buttons.addWidget(self.copy_button)
 
         self.save_button = QPushButton("Save to file…")
+        self.save_button.setStyleSheet(_btn_qss)
         self.save_button.clicked.connect(self._save)
         buttons.addWidget(self.save_button)
         buttons.addStretch()
 
         self.box = QDialogButtonBox()
+        # G7: box-level QSS reaches every child button (incl. any standard one).
+        self.box.setStyleSheet(f"QPushButton {{ {_btn_qss} }}")
         self.send_button = self.box.addButton(
             "Send", QDialogButtonBox.ButtonRole.AcceptRole
         )
@@ -216,7 +236,11 @@ class BugReportDialog(QDialog):
             color = "#D9534F"
         else:
             color = theme["secondary_text"]
-        self.status.setStyleSheet(f"color: {color};")
+        # Keep the info_text font-size: setStyleSheet REPLACES the sheet, so a
+        # bare `color:` would wipe the construction font-size and re-freeze the
+        # label at the universal qt-material 13px on the first status update (G7).
+        self.status.setStyleSheet(
+            f"color: {color}; font-size: {scaled_area_px('info_text')}px;")
         self.status.setText(message)
 
     def closeEvent(self, event):

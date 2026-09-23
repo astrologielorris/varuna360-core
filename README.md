@@ -185,29 +185,37 @@ To report a security vulnerability, see [`SECURITY.md`](SECURITY.md).
 <!-- Generated at sync time from VERSION + CHANGELOG.md. Edits here are
      overwritten on the next sync; edit CHANGELOG.md instead. -->
 
-## Current release: 4.5.0 (2026-08-20)
+## Current release: 5.0.0 (2026-09-23)
 
-The desktop app changes how it is unlocked: a license key, like the mobile app,
-with a free trial so you can try everything first.
+Version 5.0 is the long term support release of Core. It adds Zodiacal
+Releasing, a Human Design BodyGraph, a new action bar and a much more
+adjustable display.
 
 ### Added
 
-- **License keys, like the mobile app.** The desktop app is now unlocked with a
-  license key you copy from your 360heartsinthesky.com account and paste into
-  the app, instead of signing in. Paste it once from the new License menu; the
-  app verifies it and keeps working offline between checks.
-- **A 7 day free trial.** A fresh install runs with every feature for seven
-  days with no key, so you can try the app before you subscribe. The License
-  menu and the activation window show how many trial days are left, the same
-  countdown the mobile app shows. After the seven days it asks for a license
-  key.
-- **A License menu** with "Enter License Key" and "View Plans", replacing the
-  old account sign in. View Plans shows the current plans and which one unlocks
-  the desktop app.
-- **One click browser activation.** Instead of copying the key by hand, click
-  "Activate with my browser": your browser opens your 360heartsinthesky.com
-  account, you approve once, and the app activates itself. The manual key
-  field stays right below it for offline machines and anyone who prefers it.
+- **Zodiacal Releasing.** A new dasha mode with Fortune, Spirit and the
+  Hellenistic lots as releasers, Loosing of the Bond, start time and age for
+  every period, and its own Settings tab.
+- **Human Design BodyGraph.** A new chart page with the BodyGraph, the
+  Personality and Design columns, the channel list and the incarnation cross,
+  with zoom, panning and hover on every gate.
+- **A new action bar.** Chart buttons regrouped in one bar with the three
+  zodiac choices always visible and a title that shows whose chart is open.
+  The classic bar stays available in Settings.
+- **Surya Lagna and Chandra Lagna.** Read any chart from the Sun or the Moon
+  as Ascendant with one click.
+- **Sign display choice.** Show signs by name, by zodiac picture or by Josh
+  Harper's Aditya glyphs, the same way on every chart style.
+- **Ten optional bodies and points** from the Swiss Ephemeris, with their own
+  symbols, switched on in Settings.
+- **The Nakshatra wheel** as a chart view in Core.
+- **Chart from an image.** Paste a screenshot of birth data and an AI model
+  of your choice reads it into a new chart.
+- **Theme palette editor** to change the colors of any theme, plus new planet
+  icon families with per planet colors and adjustable sign shadows.
+- **Simpler font sizes.** Every text area of the app can be sized from one
+  Settings page, and pop-up windows follow the Info text size.
+- **Date format setting** for all dates shown in the app.
 
 Questions and bug reports: astrologielorris@gmail.com
 

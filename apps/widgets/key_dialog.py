@@ -32,13 +32,15 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QFrame, QWidget,
 )
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QEvent
 
 from ui.qt_theme import (
     BG, SURFACE, BORDER, TEXT_PRIMARY, TEXT_SECONDARY, GOLD, STATUS,
     get_primary_button_style,
-    scaled_area_font, scaled_area_px,
+    scaled_area_px,
+    scaled_tier_size,
 )
+from ui.popup_fonts import tier_px, popup_title_px, popup_group_px
 from managers.license_manager import LicenseState
 
 
@@ -171,7 +173,15 @@ class KeyDialog(QDialog):
                 and not getattr(license_state, "is_trial", False)):
             self._existing_license = license_state
 
-        self.setFixedSize(420, 630 if self._existing_license else 560)
+        # Width is a design constant; height is NOT. The old fixed heights
+        # (560/630) were tuned on Linux font metrics: Windows renders the same
+        # rows taller, the layout could not grow, and the compressed rows
+        # painted the "or enter your key manually" label half under the
+        # browser button (Lorris's Windows 4.5.0 test, 2026-08-21). Height now
+        # follows the layout's real size hint (_fit_height, re-run on every
+        # LayoutRequest), which also absorbs the existing-license section and
+        # the sections that show and hide at runtime.
+        self.setFixedWidth(420)
 
         self.setStyleSheet(f"""
             QDialog {{
@@ -183,6 +193,50 @@ class KeyDialog(QDialog):
         """)
 
         self._build_ui(message)
+        self._fit_width()
+        self._fit_height()
+
+    def _fit_width(self):
+        """Widen past the 420 design width only when the one-line subscribe row
+        would not fit (Info text / Buttons raised to 24 cut its link, td-168ze).
+        At default sizes the row fits and the width stays 420."""
+        row = getattr(self, "_subscribe_row", None)
+        if row is None:
+            return
+        for i in range(row.count()):
+            w = row.itemAt(i).widget()
+            if w is not None:
+                w.ensurePolished()
+        row.invalidate()
+        # The row sits in nested layouts / container widgets: add every side
+        # margin between it and the dialog edge.
+        need = row.sizeHint().width()
+        node = row
+        while node is not None and node is not self:
+            if hasattr(node, "contentsMargins"):
+                m = node.contentsMargins()
+                need += m.left() + m.right()
+            node = node.parent()
+        self.setFixedWidth(max(420, need))
+
+    def _fit_height(self):
+        """Pin the dialog height to the layout's current size hint.
+
+        Keeps the dialog non-resizable while always TALL ENOUGH for the
+        platform's real font metrics; a hard-coded height clips rows wherever
+        fonts render taller than on the machine the constant was tuned on.
+        """
+        self.layout().activate()
+        self.setFixedHeight(self.sizeHint().height())
+
+    def event(self, ev):
+        # Content changed (a section shown/hidden, an error label appeared,
+        # the success view swapped in): re-fit the height. setFixedHeight is
+        # a no-op when the value is unchanged, so this settles immediately.
+        if ev.type() == QEvent.Type.LayoutRequest:
+            self._fit_width()
+            self._fit_height()
+        return super().event(ev)
 
     # ── construction ────────────────────────────────────────────────────
 
@@ -202,8 +256,10 @@ class KeyDialog(QDialog):
         layout.setContentsMargins(40, 30, 40, 30)
 
         title = QLabel("Varuna360")
-        title.setFont(scaled_area_font('panel_titles', bold=True))
-        title.setStyleSheet(f"color: {GOLD};")
+        # O-6: font-size in QSS, not setFont (qt-material overrides setFont).
+        title.setStyleSheet(
+            f"color: {GOLD}; "
+            f"font-size: {popup_title_px(14)}px; font-weight: bold;")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(title)
 
@@ -211,7 +267,7 @@ class KeyDialog(QDialog):
             "Your license is active" if self._existing_license
             else "Activate on this computer"
         )
-        subtitle.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: {scaled_area_px('status')}px;")
+        subtitle.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: {tier_px('info_text', 9)}px;")
         subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(subtitle)
 
@@ -226,7 +282,7 @@ class KeyDialog(QDialog):
             trial_label = QLabel(f"Free trial: {self._trial_days_left} {unit} left")
             trial_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             trial_label.setStyleSheet(
-                f"color: {GOLD}; font-size: {scaled_area_px('buttons')}px; "
+                f"color: {GOLD}; font-size: {tier_px('status', 10)}px; "
                 f"font-weight: bold; padding: 8px; "
                 f"background-color: rgba(212, 175, 55, 0.12); border-radius: 4px;"
             )
@@ -237,7 +293,7 @@ class KeyDialog(QDialog):
             msg_label = QLabel(message)
             msg_label.setWordWrap(True)
             msg_label.setStyleSheet(
-                f"color: #E57373; font-size: {scaled_area_px('status')}px; padding: 8px; "
+                f"color: #E57373; font-size: {tier_px('info_text', 9)}px; padding: 8px; "
                 f"background-color: rgba(229, 115, 115, 0.1); "
                 f"border-radius: 4px;"
             )
@@ -271,7 +327,7 @@ class KeyDialog(QDialog):
         or_label = QLabel("or enter your key manually")
         or_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         or_label.setStyleSheet(
-            f"color: {TEXT_SECONDARY}; font-size: {scaled_area_px('status')}px;"
+            f"color: {TEXT_SECONDARY}; font-size: {tier_px('info_text', 9)}px;"
         )
         bs_layout.addWidget(or_label)
 
@@ -294,7 +350,7 @@ class KeyDialog(QDialog):
         key_label = QLabel(
             "Enter a different key" if self._existing_license else "License key"
         )
-        key_label.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: {scaled_area_px('buttons')}px;")
+        key_label.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: {tier_px('info_text', 10)}px;")
         layout.addWidget(key_label)
 
         self.key_input = QLineEdit()
@@ -326,7 +382,7 @@ class KeyDialog(QDialog):
 
         self.error_label = QLabel("")
         self.error_label.setWordWrap(True)
-        self.error_label.setStyleSheet(f"color: #E57373; font-size: {scaled_area_px('status')}px;")
+        self.error_label.setStyleSheet(f"color: #E57373; font-size: {tier_px('info_text', 9)}px;")
         self.error_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.error_label.hide()
         layout.addWidget(self.error_label)
@@ -340,7 +396,7 @@ class KeyDialog(QDialog):
             continue_btn.setFlat(True)
             continue_btn.setCursor(Qt.CursorShape.PointingHandCursor)
             continue_btn.setStyleSheet(
-                f"color: {TEXT_SECONDARY}; font-size: {scaled_area_px('status')}px; border: none; "
+                f"color: {TEXT_SECONDARY}; font-size: {tier_px('buttons', 9)}px; border: none; "
                 f"text-decoration: underline;"
             )
             continue_btn.clicked.connect(self.reject)
@@ -356,14 +412,14 @@ class KeyDialog(QDialog):
         no_key_label = QLabel(
             "Manage your subscription" if self._existing_license else "No key yet?"
         )
-        no_key_label.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: {scaled_area_px('status')}px;")
+        no_key_label.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: {tier_px('info_text', 9)}px;")
         subscribe_layout.addWidget(no_key_label)
 
         subscribe_btn = QPushButton("Subscribe at 360heartsinthesky.com")
         subscribe_btn.setFlat(True)
         subscribe_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         subscribe_btn.setStyleSheet(
-            f"color: {GOLD}; font-size: {scaled_area_px('status')}px; border: none; "
+            f"color: {GOLD}; font-size: {tier_px('buttons', 9)}px; border: none; "
             f"text-decoration: underline; font-weight: bold;"
         )
         subscribe_btn.clicked.connect(lambda: webbrowser.open(SUBSCRIBE_URL))
@@ -371,6 +427,7 @@ class KeyDialog(QDialog):
         subscribe_layout.addStretch()
 
         layout.addLayout(subscribe_layout)
+        self._subscribe_row = subscribe_layout
 
     def _build_status_card(self, state) -> QWidget:
         """Compact green "License active" card for an already-licensed session."""
@@ -386,7 +443,7 @@ class KeyDialog(QDialog):
 
         check = QLabel("✓")
         check.setStyleSheet(
-            f"color: {SUCCESS}; font-size: {scaled_area_px('panel_titles')}px; "
+            f"color: {SUCCESS}; font-size: {popup_title_px(10)}px; "
             f"font-weight: bold; border: none; background: transparent;"
         )
         row.addWidget(check, alignment=Qt.AlignmentFlag.AlignTop)
@@ -396,7 +453,7 @@ class KeyDialog(QDialog):
 
         headline = QLabel("License active")
         headline.setStyleSheet(
-            f"color: {SUCCESS}; font-size: {scaled_area_px('buttons')}px; "
+            f"color: {SUCCESS}; font-size: {popup_group_px(10)}px; "
             f"font-weight: bold; border: none; background: transparent;"
         )
         text_col.addWidget(headline)
@@ -434,10 +491,14 @@ class KeyDialog(QDialog):
 
         badge = QLabel("✓")
         badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        badge.setFixedSize(72, 72)
+        # The symbol is a tier of info_text (40 at default, SPEC-FONT-001 §3.2);
+        # its round plate grows with it so a large Info text never clips it.
+        badge_px = scaled_tier_size(40, 'info_text')
+        plate = max(72, badge_px + 32)
+        badge.setFixedSize(plate, plate)
         badge.setStyleSheet(
-            f"color: {SUCCESS}; font-size: 40px; font-weight: bold; "
-            f"border: 3px solid {SUCCESS}; border-radius: 36px; "
+            f"color: {SUCCESS}; font-size: {badge_px}px; font-weight: bold; "
+            f"border: 3px solid {SUCCESS}; border-radius: {plate // 2}px; "
             f"background-color: rgba(76, 175, 80, 0.12);"
         )
         layout.addWidget(badge, alignment=Qt.AlignmentFlag.AlignCenter)
@@ -445,16 +506,17 @@ class KeyDialog(QDialog):
         layout.addSpacing(6)
 
         headline = QLabel("License activated")
-        headline.setFont(scaled_area_font('panel_titles', bold=True))
         headline.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        headline.setStyleSheet(f"color: {SUCCESS};")
+        headline.setStyleSheet(
+            f"color: {SUCCESS}; "
+            f"font-size: {popup_title_px(14)}px; font-weight: bold;")
         layout.addWidget(headline)
 
         blurb = QLabel("Thank you. Varuna360 is unlocked on this computer.")
         blurb.setWordWrap(True)
         blurb.setAlignment(Qt.AlignmentFlag.AlignCenter)
         blurb.setStyleSheet(
-            f"color: {TEXT_SECONDARY}; font-size: {scaled_area_px('status')}px;"
+            f"color: {TEXT_SECONDARY}; font-size: {tier_px('info_text', 9)}px;"
         )
         layout.addWidget(blurb)
 
@@ -485,12 +547,12 @@ class KeyDialog(QDialog):
             line = QHBoxLayout()
             lab = QLabel(label_text)
             lab.setStyleSheet(
-                f"color: {TEXT_SECONDARY}; font-size: {scaled_area_px('status')}px; "
+                f"color: {TEXT_SECONDARY}; font-size: {tier_px('tables', 9)}px; "
                 f"border: none; background: transparent;"
             )
             val = QLabel(value_text)
             val.setStyleSheet(
-                f"color: {TEXT_PRIMARY}; font-size: {scaled_area_px('status')}px; "
+                f"color: {TEXT_PRIMARY}; font-size: {tier_px('tables', 9)}px; "
                 f"font-weight: bold; border: none; background: transparent;"
             )
             val.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
@@ -510,7 +572,7 @@ class KeyDialog(QDialog):
         note.setWordWrap(True)
         note.setAlignment(Qt.AlignmentFlag.AlignCenter)
         note.setStyleSheet(
-            f"color: {TEXT_SECONDARY}; font-size: {scaled_area_px('status')}px;"
+            f"color: {TEXT_SECONDARY}; font-size: {tier_px('info_text', 9)}px;"
         )
         layout.addWidget(note)
 
@@ -533,7 +595,7 @@ class KeyDialog(QDialog):
                 border: 1px solid {BORDER};
                 border-radius: 4px;
                 padding: 10px 12px;
-                font-size: {scaled_area_px('tables')}px;
+                font-size: {tier_px('buttons', 11)}px;
             }}
             QLineEdit:focus {{
                 border-color: {GOLD};

@@ -23,8 +23,9 @@ from .context import EphContext
 from libaditya import constants as const
 
 class Cusp(Longitude):
-    def __init__(self, longitude, amsha, speed, number, context=EphContext()):
+    def __init__(self, longitude, amsha, speed, number, context=EphContext(), *, angle_index=None):
         self.context = context
+        self.angle_index = angle_index
         self.hsys = self.context.hsys.encode()
         self.location = self.context.location
         self.timeJD = self.context.timeJD
@@ -142,6 +143,11 @@ class Cusps:
         """
         return self.cusps[n-1]
 
+    def ascendant(self):
+        """The actual rising angle, independently of the first house boundary."""
+        return Cusp(self.ascmc[0], 1, self.ascmcspeed[0], 1,
+                    context=self.context, angle_index=0)
+
     def armc(self):
         """
         right ascension of the midheaven
@@ -157,7 +163,7 @@ class Cusps:
             longitude = longitude.amsha_longitude()
         dists = {}
         for cusp in self:
-            dist = abs(cusp.amsha_longitude() - longitude)
+            dist = abs((cusp.amsha_longitude() - longitude + 180.0) % 360.0 - 180.0)
             dists[cusp.number()] = dist
         dists = {k: v for k, v in sorted(dists.items(), key=lambda item: item[1])}
         return list(dists)[0]

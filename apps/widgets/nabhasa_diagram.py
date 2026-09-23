@@ -22,7 +22,8 @@ from PySide6.QtCore import Qt, QRectF, QPointF
 from PySide6.QtGui import QPainter, QColor, QPolygonF, QPen, QBrush, QFont
 from PySide6.QtWidgets import QWidget, QLabel, QVBoxLayout, QHBoxLayout
 
-from ui.qt_theme import get_theme_colors, pari_sem, scaled_px, is_light_theme
+from ui.qt_theme import get_theme_colors, pari_sem, scaled_px, is_light_theme, scaled_tier_size, scaled_area_px
+from ui.popup_fonts import popup_title_px
 
 # Map a yoga's auspiciousness class to a pari_sem accent key (theme-reactive).
 SEM_FOR_AUSPICIOUSNESS = {
@@ -155,7 +156,7 @@ class NabhasaHouseDiagram(QWidget):
         rect = self._square_rect()
 
         font = QFont()
-        font.setPixelSize(max(7, scaled_px(9)))
+        font.setPixelSize(max(7, scaled_tier_size(9, "chart_labels")))   # painted diagram text (SPEC-FONT-001 §3.2)
         p.setFont(font)
         text_col = QColor(theme["primary_text"])
 
@@ -273,8 +274,8 @@ class DualNabhasaDiagram(QWidget):
 
     def refresh_theme(self):
         theme = get_theme_colors()
-        title_px = max(10, scaled_px(12))
-        cap_px = max(8, scaled_px(9))
+        title_px = popup_title_px(16)          # the pop-up title (yoga name)
+        cap_px = scaled_area_px("status")    # caption
         self._title.setStyleSheet(
             f"color:{theme['primary_text']}; font-weight:bold; "
             f"font-size:{title_px}px;")
