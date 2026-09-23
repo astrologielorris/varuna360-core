@@ -24,6 +24,40 @@ Format rules, because a script parses this file:
 
 ---
 
+## 5.0.0 (2026-09-23)
+
+Version 5.0 is the long term support release of Core. It adds Zodiacal
+Releasing, a Human Design BodyGraph, a new action bar and a much more
+adjustable display.
+
+### Added
+
+- **Zodiacal Releasing.** A new dasha mode with Fortune, Spirit and the
+  Hellenistic lots as releasers, Loosing of the Bond, start time and age for
+  every period, and its own Settings tab.
+- **Human Design BodyGraph.** A new chart page with the BodyGraph, the
+  Personality and Design columns, the channel list and the incarnation cross,
+  with zoom, panning and hover on every gate.
+- **A new action bar.** Chart buttons regrouped in one bar with the three
+  zodiac choices always visible and a title that shows whose chart is open.
+  The classic bar stays available in Settings.
+- **Surya Lagna and Chandra Lagna.** Read any chart from the Sun or the Moon
+  as Ascendant with one click.
+- **Sign display choice.** Show signs by name, by zodiac picture or by Josh
+  Harper's Aditya glyphs, the same way on every chart style.
+- **Ten optional bodies and points** from the Swiss Ephemeris, with their own
+  symbols, switched on in Settings.
+- **The Nakshatra wheel** as a chart view in Core.
+- **Chart from an image.** Paste a screenshot of birth data and an AI model
+  of your choice reads it into a new chart.
+- **Theme palette editor** to change the colors of any theme, plus new planet
+  icon families with per planet colors and adjustable sign shadows.
+- **Simpler font sizes.** Every text area of the app can be sized from one
+  Settings page, and pop-up windows follow the Info text size.
+- **Date format setting** for all dates shown in the app.
+
+Questions and bug reports: astrologielorris@gmail.com
+
 ## 4.5.0 (2026-08-20)
 
 The desktop app changes how it is unlocked: a license key, like the mobile app,

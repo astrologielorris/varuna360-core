@@ -547,10 +547,12 @@ class BodyAspectDualWidget(QWidget):
     def _on_aspect_system_changed(self, key, value):
         """on_changed callback for chart.rashi_aspect_system.
 
-        Fires on three paths: (a) direct set("chart.rashi_aspect_system", val),
-        (b) reset_to_defaults(None) → ("*", None), (c) reset_to_defaults("chart")
-        → ("chart", {...}).  For (b)/(c) the value is None or the entire section
-        dict — resolve to the actual current setting value so the arrows update.
+        Fires on: (a) direct set("chart.rashi_aspect_system", val), and (b)
+        reset_to_defaults(None) → ("*", None).  (Chart Display's Reset no longer
+        calls reset_to_defaults("chart") — it resets owned keys individually since
+        G8 — so the old ("chart", {...}) section-dict path is dead, but the
+        None/section-dict handling below is kept defensively.)  For the reset path
+        the value is None — resolve to the actual current setting so arrows update.
         The broad "chart" prefix registration also fires on unrelated chart.*
         changes (view_type, outer_planets, etc.) — skip those.
         When the panel is HIDDEN, mark _si_dirty so the new system is drawn on the

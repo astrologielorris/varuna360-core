@@ -18,6 +18,32 @@ Key Differences from Graha Sphuta Drishti:
 Reference: Ernst Wilhelm's Tajika aspect/orb tables.
 """
 
+import weakref
+
+# ============================================================================
+# SHARED MEMO (td-w3kp)
+# ============================================================================
+#
+# calculate_all_tajika_aspects is a PURE function of its (chart, include_minor)
+# arguments — it reads only the chart's planet ecliptic longitudes and jd, never
+# aditya_mode or the ayanamsa (verified: the function body touches neither). The
+# three natal Tajika panel controllers (matrix, relationships, yogas) each call
+# it independently on the same active_chart, so one chart change triggered three
+# identical full recomputes (a fourth via the yogas pass). This memo collapses
+# those to ONE compute per chart object.
+#
+# Keyed by chart OBJECT IDENTITY: libaditya Chart uses the default identity
+# __eq__/__hash__ (no value equality is defined on it), so a WeakKeyDictionary
+# keys by identity — two DISTINCT Chart objects never cross-hit even with
+# identical longitudes, and a rebuilt chart is a fresh miss. This matters because
+# chart_factory.rebuild_chart / build_chart_from_params always construct a NEW
+# Chart (dc_replace + Chart(new_ctx), never in-place mutation), so a mode /
+# ayanamsa / house-system change produces a new object → the memo cannot serve
+# stale data. Weak keys mean entries evaporate when the chart is garbage-collected
+# (correction to BUG_HUNT §B, whose proposed (chart, mode, ayanamsa) key is
+# correct but redundant here — object identity already encodes all three).
+_TAJIKA_ASPECT_MEMO = weakref.WeakKeyDictionary()
+
 # ============================================================================
 # CONSTANTS
 # ============================================================================
@@ -427,7 +453,22 @@ def calculate_all_tajika_aspects(chart,
             "matrix": {(body1, body2): record, ...},
             "speeds": {planet_name: float, ...}  (deg/day, negative=retrograde)
         }
+
+    Result is memoized per (chart object, include_minor) — see _TAJIKA_ASPECT_MEMO.
+    The three Tajika controllers share the single computed dict; they treat it
+    read-only (fill_matrix/fill_relations read via .get, detect_all_tajika_yogas
+    does not mutate its tajika_data argument), so the shared object is safe.
     """
+    # Shared memo lookup (td-w3kp): return the cached result for this exact chart
+    # object if present. A non-weakref-able chart (defensive) skips the memo.
+    memo_bucket = None
+    try:
+        memo_bucket = _TAJIKA_ASPECT_MEMO.get(chart)
+        if memo_bucket is not None and include_minor in memo_bucket:
+            return memo_bucket[include_minor]
+    except TypeError:
+        memo_bucket = None  # chart not weakref-able — compute without caching
+
     # Extract positions
     from core.chart_helpers import get_planet_decimal_degrees, has_planet
     positions = {}
@@ -521,11 +562,23 @@ def calculate_all_tajika_aspects(chart,
     # Sort by virupas descending
     aspects_within_orb.sort(key=lambda x: -x["virupas"])
 
-    return {
+    result = {
         "aspects_within_orb": aspects_within_orb,
         "matrix": matrix,
         "speeds": speeds,
     }
+
+    # Store in the shared memo (td-w3kp). Defensive against a non-weakref-able
+    # chart: if it cannot be a WeakKeyDictionary key, return uncached.
+    if memo_bucket is None:
+        try:
+            memo_bucket = {}
+            _TAJIKA_ASPECT_MEMO[chart] = memo_bucket
+        except TypeError:
+            memo_bucket = None
+    if memo_bucket is not None:
+        memo_bucket[include_minor] = result
+    return result
 
 
 def calculate_transit_aspects(natal_chart, transit_chart,

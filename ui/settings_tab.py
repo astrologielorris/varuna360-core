@@ -20,8 +20,8 @@ from PySide6.QtWidgets import (
     QPushButton, QLineEdit, QFileDialog, QMessageBox,
     QListWidget, QStackedWidget, QTableWidget,
     QTableWidgetItem, QHeaderView, QAbstractItemView,
-    QComboBox, QCheckBox, QFormLayout, QToolButton, QSpinBox,
-    QRadioButton, QButtonGroup,
+    QComboBox, QCheckBox, QFormLayout, QToolButton, QSpinBox, QSlider,
+    QRadioButton, QButtonGroup, QLayout, QDialog,
 )
 from PySide6.QtCore import Signal, Qt, QTimer
 from PySide6.QtGui import QFont, QColor, QValidator
@@ -33,6 +33,7 @@ from ui.qt_theme import (
     desat_hex,
 )
 from managers.settings_manager import get_settings
+from apps.widgets.sign_shadow import clamp_sign_shadow_size
 
 INFO_PANEL_WIDTH = 380
 
@@ -48,6 +49,84 @@ _HOUSE_SYSTEMS = [
 
 # Theme catalog lives in ui/themes.py (core-level, SPEC-LITE-FOUND-001 s4.7)
 from ui.themes import AVAILABLE_THEMES
+from ui.theme_palette import ThemePaletteDialog, theme_preview_colors
+from ui.area_preview_thumb import AreaPreviewThumb
+
+
+import re as _re_c038
+
+
+# G9a: tooltip shown on the South-Indian theme/finish rows while they are disabled
+# on a non-South-Indian view. The wording is the orchestrator's and not yet
+# written, so it stays a placeholder and _si_scope_tooltip_pending() gates it: a
+# placeholder must never reach a screen (the "[COPY PENDING]" incident, 2026-08-30).
+# The moment real copy replaces the marker the tooltip lights up on its own.
+_SI_SCOPE_TOOLTIP = "[COPY PENDING]"
+
+
+def _si_scope_tooltip_pending() -> bool:
+    return "[COPY PENDING]" in _SI_SCOPE_TOOLTIP
+
+
+def _tag_font(widget, area):
+    """Record the font AREA a migrated widget's QSS was composed from, so a live
+    font-size change can be replayed onto it (td-c038 settings live-replay).
+
+    These Settings sub-tabs are PERSISTENT (not rebuilt on a font-setting change);
+    their construction QSS bakes `font-size:{scaled_area_px(area)}px` as a STATIC
+    string, and their refresh_theme re-did colours only. Tagging + _replay_fonts()
+    lets refresh_theme re-compose the font-size in place. Returns the widget so it
+    can wrap a construction expression inline."""
+    widget.setProperty("_c038_font_area", area)
+    return widget
+
+
+def _replay_fonts(root):
+    """Re-compose the font-size of every _tag_font-tagged descendant from the live
+    setting, preserving whatever else is in the widget's current stylesheet (the
+    colour a theme re-apply just set, or the static construction colour). A pure
+    font-size rewrite — strictly non-regressive for colour."""
+    from PySide6.QtWidgets import QWidget
+    for w in root.findChildren(QWidget):
+        area = w.property("_c038_font_area")
+        if not area:
+            continue
+        px = scaled_area_px(area)
+        css = w.styleSheet()
+        if _re_c038.search(r"font-size:\s*\d+px", css):
+            css = _re_c038.sub(r"font-size:\s*\d+px", f"font-size: {px}px", css)
+        elif "{" in css:
+            # type-selector stylesheet (QGroupBox{...} etc.): insert into 1st block
+            css = _re_c038.sub(r"\{", "{ font-size: %dpx;" % px, css, count=1)
+        else:
+            css = (css + f" font-size: {px}px;").strip()
+        w.setStyleSheet(css)
+
+
+def _form_label(text: str) -> QLabel:
+    """A QFormLayout row label that honours the font settings.
+
+    QFormLayout auto-creates a plain QLabel for a string label; being QSS-styled
+    by qt-material it freezes at 13px (the O-6 trap). Building it explicitly with
+    font-size in its own QSS lets it track the 'buttons' area like the other
+    control-row labels on these pages.
+    """
+    lbl = QLabel(text)
+    lbl.setStyleSheet(f"font-size: {scaled_area_px('buttons')}px;")
+    return _tag_font(lbl, 'buttons')
+
+
+def _group_header(form, text: str) -> QLabel:
+    """A bold group header row inside a settings QFormLayout, same style as the
+    existing "Default sub-tabs (Chart tab)" header (G9b 3C grouping). Tracks the
+    'panel_titles' font area rather than freezing at the qt-material 13px."""
+    header = QLabel(text)
+    header.setStyleSheet(
+        f"font-weight: bold; margin-top: 8px; "
+        f"font-size: {scaled_area_px('panel_titles')}px;")
+    _tag_font(header, 'panel_titles')
+    form.addRow("", header)
+    return header
 
 
 class ThemeCard(QFrame):
@@ -56,6 +135,7 @@ class ThemeCard(QFrame):
     Emits clicked signal with theme filename when selected.
     """
     clicked = Signal(str)
+    edit_clicked = Signal(str)
 
     def __init__(self, theme_file: str, theme_name: str, is_dark: bool, colors: list, parent=None):
         super().__init__(parent)
@@ -77,32 +157,56 @@ class ThemeCard(QFrame):
         layout.setSpacing(8)
 
         self.name_label = QLabel(self.theme_name)
+        _tag_font(self.name_label, 'buttons')  # td-c038 live-replay
         self.name_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        font = scaled_area_font('buttons', bold=True)
-        self.name_label.setFont(font)
+        # O-6: font-size lives in QSS (applied in _update_style); setFont is inert.
         layout.addWidget(self.name_label)
 
         swatch_layout = QHBoxLayout()
         swatch_layout.setSpacing(6)
         swatch_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
+        # td-l8b2: swatch frames stored so _update_style can RE-DESATURATE them
+        # on a theme/saturation refresh. desat_hex() reads the live global
+        # _UI_SATURATION (SPEC-SAT-001), so a style baked once at construction
+        # goes stale on a live switch (the tab_08 theme_audit drift).
+        self._swatch_frames = []
         for color in self.colors:
             swatch = QFrame()
             swatch.setFixedSize(28, 28)
+            swatch_layout.addWidget(swatch)
+            self._swatch_frames.append(swatch)
+
+        layout.addLayout(swatch_layout)
+
+        footer = QHBoxLayout()
+        footer.setSpacing(4)
+        mode_label = QLabel("Dark" if self.is_dark else "Light")
+        _tag_font(mode_label, 'status')  # td-c038 live-replay
+        mode_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        theme = get_theme_colors()
+        mode_label.setStyleSheet(f"font-size: {scaled_area_px('status')}px; color: {theme['secondary_text']};")
+        footer.addWidget(mode_label, stretch=1)
+        self.edit_button = QToolButton()
+        self.edit_button.setText("Edit")
+        self.edit_button.setToolTip(f"Edit {self.theme_name} colors")
+        self.edit_button.clicked.connect(lambda: self.edit_clicked.emit(self.theme_file))
+        footer.addWidget(self.edit_button)
+        layout.addLayout(footer)
+        self.setFixedHeight(132)
+
+    def _apply_swatch_styles(self):
+        # td-l8b2: re-run desat_hex on each preview swatch from its SOURCE colour.
+        # Reached on every _update_style() (theme refresh + set_selected), so a
+        # live theme/saturation change re-desaturates the previews instead of
+        # leaving them frozen at construction-time saturation.
+        colors = theme_preview_colors(self.theme_file, self.colors)
+        for swatch, color in zip(getattr(self, "_swatch_frames", []), colors):
             swatch.setStyleSheet(f"""
                 background-color: {desat_hex(color)};
                 border-radius: 4px;
                 border: 1px solid rgba(255,255,255,0.2);
             """)
-            swatch_layout.addWidget(swatch)
-
-        layout.addLayout(swatch_layout)
-
-        mode_label = QLabel("Dark" if self.is_dark else "Light")
-        mode_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        theme = get_theme_colors()
-        mode_label.setStyleSheet(f"font-size: {scaled_area_px('status')}px; color: {theme['secondary_text']};")
-        layout.addWidget(mode_label)
 
     def _update_style(self):
         theme = get_theme_colors()
@@ -123,7 +227,10 @@ class ThemeCard(QFrame):
                 border: 2px solid {theme['primary']};
             }}
         """)
-        self.name_label.setStyleSheet(f"color: {theme['secondary_text']}; background: transparent;")
+        self.name_label.setStyleSheet(
+            f"color: {theme['secondary_text']}; background: transparent; "
+            f"font-size: {scaled_area_px('buttons')}px; font-weight: bold;")
+        self._apply_swatch_styles()
 
     def set_selected(self, selected: bool):
         self.is_selected = selected
@@ -134,10 +241,56 @@ class ThemeCard(QFrame):
         super().mousePressEvent(event)
 
 
+def build_action_bar_v2_row(form, settings):
+    """SPEC-BAR-001 D-15: the 'Use classic action bar' opt-in row + its
+    description, appended to ``form``. Returns the QCheckBox — CHECKED means the
+    classic legacy bar (``ui.action_bar_v2`` False); unchecked means the new
+    default bar. Persist with ``save_action_bar_v2_row(cb, settings)``.
+
+    ONE definition, imported by both Core (AppearanceTab) and Pro
+    (_GeneralSection) so the option is never duplicated. Restart-gated: the bar
+    is constructed once at startup, so there is no live apply.
+    """
+    cb = QCheckBox()
+    cb.setChecked(not settings.get_action_bar_v2())        # checked == classic
+    form.addRow(_form_label("Use classic action bar:"), cb)
+    desc = QLabel(
+        "The new bar is the default. The classic bar is kept for compatibility "
+        "and for those who prefer it, but it has fewer options (for example, "
+        "hiding Human Design is not available there) and does not adapt as well "
+        "at some screen resolutions. Takes effect after you restart the app."
+    )
+    desc.setWordWrap(True)
+    # O-6: font-size in QSS (shared by Core AppearanceTab + Pro _GeneralSection).
+    desc.setStyleSheet(
+        f"color: {get_theme_colors()['secondary_text']}; font-style: italic; "
+        f"font-size: {scaled_area_px('status')}px;")
+    _tag_font(desc, 'status')
+    form.addRow("", desc)
+    return cb
+
+
+def save_action_bar_v2_row(cb, settings) -> bool:
+    """Persist the 'Use classic action bar' opt-in — CHECKED means classic, so
+    ``ui.action_bar_v2`` is the inverse. ONE definition of the inversion,
+    shared by Core and Pro. Returns the accessor's success bool."""
+    return settings.set_action_bar_v2(not cb.isChecked())
+
+
 class AppearanceTab(QWidget):
     """Theme selection with visual cards and sign language toggle."""
     theme_changed = Signal(str)
     sign_language_changed = Signal(str)
+
+    # G9c (td-scc4x): the Nakshatra Compatibility sub-panel has its OWN Apply
+    # (_on_compat_apply) and now its OWN Reset (_on_compat_reset) — an owned-key
+    # allowlist of exactly the keys that Apply writes, one set() per key. All three
+    # have DEFAULT_SETTINGS entries, so no co-located defaults are needed.
+    OWNED_COMPAT_KEYS = frozenset({
+        "nakshatra_compat.stree_deergha_scale",
+        "nakshatra_compat.mahendra_include_19th",
+        "nakshatra_compat.total_threshold",
+    })
 
     def __init__(self, current_theme: str = None, parent=None):
         super().__init__(parent)
@@ -149,7 +302,15 @@ class AppearanceTab(QWidget):
         theme = get_theme_colors()
         self.setStyleSheet(f"AppearanceTab {{ background-color: {theme['secondary_dark']}; }}")
 
-        layout = QVBoxLayout(self)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        self.scroll_area = QScrollArea(self)
+        self.scroll_area.setWidgetResizable(True)
+        content = QWidget()
+        layout = QVBoxLayout(content)
+        layout.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
+        self.scroll_area.setWidget(content)
+        outer.addWidget(self.scroll_area)
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(20)
 
@@ -163,19 +324,27 @@ class AppearanceTab(QWidget):
 
     def _create_theme_section(self) -> QGroupBox:
         group = QGroupBox("Application Theme")
-        group.setFont(scaled_area_font('panel_titles', bold=True))
+        # O-6: QGroupBox title font-size in QSS (setFont is inert).
+        group.setStyleSheet(
+            f"QGroupBox {{ font-size: {scaled_area_px('panel_titles')}px; font-weight: bold; }}")
+        _tag_font(group, 'panel_titles')
 
         group_layout = QVBoxLayout(group)
         group_layout.setSpacing(15)
 
-        desc = QLabel("Select a theme to change the application appearance. Changes apply immediately.")
+        desc = QLabel("Select a theme, then use Apply below to change the application appearance.")
         desc.setWordWrap(True)
-        desc.setFont(scaled_area_font('info_text'))
+        # O-6: font-size in QSS.
+        desc.setStyleSheet(f"font-size: {scaled_area_px('info_text')}px;")
+        _tag_font(desc, 'info_text')
         group_layout.addWidget(desc)
 
         # Dark themes
         dark_label = QLabel("Dark Themes")
-        dark_label.setFont(scaled_area_font('panel_titles', bold=True))
+        # O-6: font-size + weight in QSS.
+        dark_label.setStyleSheet(
+            f"font-size: {scaled_area_px('panel_titles')}px; font-weight: bold;")
+        _tag_font(dark_label, 'panel_titles')
         group_layout.addWidget(dark_label)
 
         dark_grid = QGridLayout()
@@ -186,6 +355,7 @@ class AppearanceTab(QWidget):
             if is_dark:
                 card = ThemeCard(theme_file, theme_name, is_dark, colors)
                 card.clicked.connect(self._on_theme_selected)
+                card.edit_clicked.connect(self._on_theme_edit)
                 if theme_file == self.current_theme:
                     card.set_selected(True)
                 self.theme_cards[theme_file] = card
@@ -199,7 +369,10 @@ class AppearanceTab(QWidget):
 
         # Light themes
         light_label = QLabel("Light Themes")
-        light_label.setFont(scaled_area_font('panel_titles', bold=True))
+        # O-6: font-size + weight in QSS.
+        light_label.setStyleSheet(
+            f"font-size: {scaled_area_px('panel_titles')}px; font-weight: bold;")
+        _tag_font(light_label, 'panel_titles')
         group_layout.addWidget(light_label)
 
         light_grid = QGridLayout()
@@ -210,6 +383,7 @@ class AppearanceTab(QWidget):
             if not is_dark:
                 card = ThemeCard(theme_file, theme_name, is_dark, colors)
                 card.clicked.connect(self._on_theme_selected)
+                card.edit_clicked.connect(self._on_theme_edit)
                 if theme_file == self.current_theme:
                     card.set_selected(True)
                 self.theme_cards[theme_file] = card
@@ -224,7 +398,10 @@ class AppearanceTab(QWidget):
 
     def _create_language_section(self) -> QGroupBox:
         group = QGroupBox("Other Settings")
-        group.setFont(scaled_area_font('panel_titles', bold=True))
+        # O-6: QGroupBox title font-size in QSS.
+        group.setStyleSheet(
+            f"QGroupBox {{ font-size: {scaled_area_px('panel_titles')}px; font-weight: bold; }}")
+        _tag_font(group, 'panel_titles')
 
         group_layout = QVBoxLayout(group)
         group_layout.setSpacing(12)
@@ -254,31 +431,77 @@ class AppearanceTab(QWidget):
             self.lang_combo.setCurrentIndex(idx)
 
         self.lang_combo.currentIndexChanged.connect(self._on_language_changed)
-        form.addRow("Language:", self.lang_combo)
+        form.addRow(_form_label("Language:"), self.lang_combo)
 
         lang_warning = QLabel(
             "Changes zodiac sign names and planet names on chart views. "
             "Full UI translation will be supported in a later update."
         )
         lang_warning.setWordWrap(True)
-        lang_warning.setFont(scaled_area_font('status'))
-        lang_warning.setStyleSheet(f"color: {get_theme_colors()['secondary_text']}; font-style: italic;")
+        # O-6: font-size in QSS.
+        lang_warning.setStyleSheet(
+            f"color: {get_theme_colors()['secondary_text']}; font-style: italic; "
+            f"font-size: {scaled_area_px('status')}px;")
+        _tag_font(lang_warning, 'status')
         form.addRow("", lang_warning)
 
         # Remember window geometry
         self.remember_geo_cb = QCheckBox()
         self.remember_geo_cb.setChecked(s.get("windows.remember_geometry", True))
-        form.addRow("Remember window geometry:", self.remember_geo_cb)
+        form.addRow(_form_label("Remember window geometry:"), self.remember_geo_cb)
 
         # Auto-restore session
         self.auto_restore_cb = QCheckBox()
         self.auto_restore_cb.setChecked(s.get("defaults.auto_restore_session", True))
-        form.addRow("Auto-restore session:", self.auto_restore_cb)
+        form.addRow(_form_label("Auto-restore session:"), self.auto_restore_cb)
 
         # Restore last tab
         self.restore_tab_cb = QCheckBox()
         self.restore_tab_cb.setChecked(s.get("ui.restore_last_tab", True))
-        form.addRow("Restore last tab:", self.restore_tab_cb)
+        form.addRow(_form_label("Restore last tab:"), self.restore_tab_cb)
+
+        # SPEC-BAR-001 D-5 (Dm3-27): hides the HD button and puts SIDEREAL in
+        # the zodiac tray. Chrome, not calculation — so it lives here, not in
+        # the Zodiac tab. Typed read (Dm3-26): non-bool on disk -> False.
+        self.hide_hd_cb = QCheckBox()
+        self.hide_hd_cb.setChecked(s.get_hide_human_design())
+        form.addRow(_form_label("Hide Human Design button:"), self.hide_hd_cb)
+        hide_hd_desc = QLabel(
+            "Removes the Human Design button from the chart bar and shows "
+            "the Sidereal zodiac system in its place. Human Design stays "
+            "available from View > Toggle Human Design (Alt+H)."
+        )
+        hide_hd_desc.setWordWrap(True)
+        # O-6: font-size in QSS.
+        hide_hd_desc.setStyleSheet(
+            f"color: {get_theme_colors()['secondary_text']}; font-style: italic; "
+            f"font-size: {scaled_area_px('status')}px;")
+        _tag_font(hide_hd_desc, 'status')
+        form.addRow("", hide_hd_desc)
+
+        # SPEC-BAR-001 M4 (Dm4-48/49): the mockup's prefers-reduced-motion
+        # reading. Stops ONLY the bar's breathing "live" dot (pinned at 85%);
+        # the short hover/state fades keep running — the mockup's media query
+        # overrides exactly one rule, and so do we.
+        self.reduce_motion_cb = QCheckBox()
+        self.reduce_motion_cb.setChecked(s.get_reduce_motion())
+        form.addRow(_form_label("Reduce motion:"), self.reduce_motion_cb)
+        reduce_motion_desc = QLabel(
+            "Stops the breathing \"live\" indicator on the chart bar's NOW "
+            "button. Short fades on hover and state changes are kept."
+        )
+        reduce_motion_desc.setWordWrap(True)
+        # O-6: font-size in QSS.
+        reduce_motion_desc.setStyleSheet(
+            f"color: {get_theme_colors()['secondary_text']}; font-style: italic; "
+            f"font-size: {scaled_area_px('status')}px;")
+        _tag_font(reduce_motion_desc, 'status')
+        form.addRow("", reduce_motion_desc)
+
+        # SPEC-BAR-001 D-15: classic-bar opt-in. ONE definition
+        # (build_action_bar_v2_row) shared with Pro so the option is never
+        # duplicated — Pro imports the same row builder. Checked == classic.
+        self.classic_bar_cb = build_action_bar_v2_row(form, s)
 
         group_layout.addLayout(form)
 
@@ -288,6 +511,7 @@ class AppearanceTab(QWidget):
         self._other_apply_btn = QPushButton("Apply")
         self._other_apply_btn.setFixedWidth(100)
         self._other_apply_btn.setStyleSheet(get_primary_button_style())
+        _tag_font(self._other_apply_btn, 'action_buttons')
         self._other_apply_btn.clicked.connect(self._on_other_apply)
         btn_row.addWidget(self._other_apply_btn)
         group_layout.addLayout(btn_row)
@@ -302,7 +526,9 @@ class AppearanceTab(QWidget):
         are resolved empirically and are NOT toggles.
         """
         group = QGroupBox("Nakshatra Compatibility rules")
-        group.setFont(scaled_area_font('panel_titles', bold=True))
+        # O-6: QGroupBox title font-size in QSS.
+        group.setStyleSheet(
+            f"QGroupBox {{ font-size: {scaled_area_px('panel_titles')}px; font-weight: bold; }}")
         group_layout = QVBoxLayout(group)
         group_layout.setSpacing(12)
 
@@ -311,7 +537,8 @@ class AppearanceTab(QWidget):
             "Defaults reproduce Kala / Ernst Wilhelm."
         )
         desc.setWordWrap(True)
-        desc.setFont(scaled_area_font('info_text'))
+        # O-6: font-size in QSS.
+        desc.setStyleSheet(f"font-size: {scaled_area_px('info_text')}px;")
         group_layout.addWidget(desc)
 
         s = get_settings()
@@ -325,7 +552,7 @@ class AppearanceTab(QWidget):
         self._select_combo_data(self.compat_stree_combo,
                                 s.get("nakshatra_compat.stree_deergha_scale", "14_9"))
         self.compat_stree_combo.setMaximumWidth(260)
-        form.addRow("Stree Deergha threshold:", self.compat_stree_combo)
+        form.addRow(_form_label("Stree Deergha threshold:"), self.compat_stree_combo)
 
         self.compat_mahendra_combo = QComboBox()
         self.compat_mahendra_combo.addItem("Include 19th  (Kala)", True)
@@ -333,7 +560,7 @@ class AppearanceTab(QWidget):
         self._select_combo_data(self.compat_mahendra_combo,
                                 s.get("nakshatra_compat.mahendra_include_19th", True))
         self.compat_mahendra_combo.setMaximumWidth(260)
-        form.addRow("Mahendra offsets:", self.compat_mahendra_combo)
+        form.addRow(_form_label("Mahendra offsets:"), self.compat_mahendra_combo)
 
         self.compat_total_combo = QComboBox()
         self.compat_total_combo.addItem("17 avg / 20 ideal  (Ernst / Kala)", "17_20")
@@ -341,12 +568,17 @@ class AppearanceTab(QWidget):
         self._select_combo_data(self.compat_total_combo,
                                 s.get("nakshatra_compat.total_threshold", "17_20"))
         self.compat_total_combo.setMaximumWidth(260)
-        form.addRow("Total-points thresholds:", self.compat_total_combo)
+        form.addRow(_form_label("Total-points thresholds:"), self.compat_total_combo)
 
         group_layout.addLayout(form)
 
         btn_row = QHBoxLayout()
         btn_row.addStretch()
+        self._compat_reset_btn = QPushButton("Reset to Default")
+        self._compat_reset_btn.setFixedWidth(150)
+        self._compat_reset_btn.setStyleSheet(get_secondary_button_style())
+        self._compat_reset_btn.clicked.connect(self._on_compat_reset)
+        btn_row.addWidget(self._compat_reset_btn)
         self._compat_apply_btn = QPushButton("Apply")
         self._compat_apply_btn.setFixedWidth(100)
         self._compat_apply_btn.setStyleSheet(get_primary_button_style())
@@ -368,6 +600,27 @@ class AppearanceTab(QWidget):
         s.set("nakshatra_compat.mahendra_include_19th", self.compat_mahendra_combo.currentData())
         s.set("nakshatra_compat.total_threshold", self.compat_total_combo.currentData())
 
+    def _on_compat_reset(self):
+        # G9c: reset ONLY the keys this sub-panel writes (owned-key allowlist), one
+        # set() per key from DEFAULT_SETTINGS. Never reset_to_defaults("nakshatra_compat")
+        # — same "reset what you host" rule as the other sections; keeps this
+        # one-to-one with _on_compat_apply (pinned by test).
+        from copy import deepcopy
+        from managers.settings_manager import get_settings, DEFAULT_SETTINGS
+        s = get_settings()
+        for key in self.OWNED_COMPAT_KEYS:
+            node = DEFAULT_SETTINGS
+            for part in key.split("."):
+                node = node[part]
+            s.set(key, deepcopy(node))
+        # re-select the combos to the restored values
+        self._select_combo_data(
+            self.compat_stree_combo, s.get("nakshatra_compat.stree_deergha_scale", "14_9"))
+        self._select_combo_data(
+            self.compat_mahendra_combo, s.get("nakshatra_compat.mahendra_include_19th", True))
+        self._select_combo_data(
+            self.compat_total_combo, s.get("nakshatra_compat.total_threshold", "17_20"))
+
     def _on_language_changed(self):
         new_lang = self.lang_combo.currentData()
         get_settings().set("zodiac.sign_language", new_lang)
@@ -375,15 +628,62 @@ class AppearanceTab(QWidget):
 
     def _on_other_apply(self):
         s = get_settings()
+        from ui.theme_palette import commit_theme_overrides
+        commit_theme_overrides()
         s.set("windows.remember_geometry", self.remember_geo_cb.isChecked())
         s.set("defaults.auto_restore_session", self.auto_restore_cb.isChecked())
         s.set("ui.restore_last_tab", self.restore_tab_cb.isChecked())
+        # SPEC-BAR-001 Dm3-27/35: typed write; a failed disk save is surfaced
+        # HERE (the bar still applies live via on_changed, but the preference
+        # would silently not survive a restart).
+        if not s.set_hide_human_design(self.hide_hd_cb.isChecked()):
+            _win = self.window()
+            if hasattr(_win, 'statusBar'):
+                _win.statusBar().showMessage(
+                    "Settings file could not be saved — the Human Design "
+                    "button preference will not survive a restart.", 8000)
+        # Dm4-49: reduced motion applies LIVE. The env var wins (Dm4-44:
+        # captures pin POSE through it), so never override an explicit env.
+        reduced = self.reduce_motion_cb.isChecked()
+        if not s.set_reduce_motion(reduced):
+            _win = self.window()
+            if hasattr(_win, 'statusBar'):
+                _win.statusBar().showMessage(
+                    "Settings file could not be saved — the Reduce motion "
+                    "preference will not survive a restart.", 8000)
+        # SPEC-BAR-001 D-15: restart-gated flag — persist only, no live apply
+        # (the bar is constructed once at startup). Checked == classic bar.
+        if not save_action_bar_v2_row(self.classic_bar_cb, s):
+            _win = self.window()
+            if hasattr(_win, 'statusBar'):
+                _win.statusBar().showMessage(
+                    "Settings file could not be saved — the action bar "
+                    "preference will not survive a restart.", 8000)
+        import os as _os
+        if "V360_BAR_MOTION" not in _os.environ:
+            try:
+                from apps.widgets.action_bar import motion as _motion
+                _motion.set_mode(_motion.Mode.REDUCED if reduced
+                                 else _motion.Mode.LIVE)
+                _bar = getattr(self.window(), 'chart_title_widget', None)
+                if _bar is not None and hasattr(_bar, 'snap_motion'):
+                    _bar.snap_motion()
+            except Exception:
+                pass
+        self.theme_changed.emit(self.current_theme)
 
     def _on_theme_selected(self, theme_file: str):
         for tf, card in self.theme_cards.items():
             card.set_selected(tf == theme_file)
         self.current_theme = theme_file
-        self.theme_changed.emit(theme_file)
+
+    def _on_theme_edit(self, theme_file: str):
+        card = self.theme_cards[theme_file]
+        dialog = ThemePaletteDialog(theme_file, card.theme_name,
+                                    lambda _theme: card._update_style(), self)
+        dialog.exec()
+        for item in self.theme_cards.values():
+            item._update_style()
 
     def get_current_theme(self) -> str:
         return self.current_theme
@@ -399,6 +699,9 @@ class AppearanceTab(QWidget):
         self.setStyleSheet(f"AppearanceTab {{ background-color: {theme['secondary_dark']}; }}")
         for card in self.theme_cards.values():
             card._update_style()
+        # td-c038: re-compose migrated font-sizes from the live setting (this
+        # persistent tab bakes static font-size QSS at construction).
+        _replay_fonts(self)
 
 
 class DefaultFoldersTab(QWidget):
@@ -428,7 +731,10 @@ class DefaultFoldersTab(QWidget):
         layout.setSpacing(20)
 
         title = QLabel("Default Folders")
-        title.setFont(scaled_area_font('panel_titles', bold=True))
+        # O-6: font-size + weight in QSS.
+        title.setStyleSheet(
+            f"font-size: {scaled_area_px('panel_titles')}px; font-weight: bold;")
+        _tag_font(title, 'panel_titles')
         layout.addWidget(title)
 
         # Session save health (SPEC-SES-001 §4.4). Sits above the folder rows
@@ -474,12 +780,17 @@ class DefaultFoldersTab(QWidget):
             "When you load charts, the app will search these folders by default."
         )
         desc.setWordWrap(True)
-        desc.setFont(scaled_area_font('info_text'))
+        # O-6: font-size in QSS.
+        desc.setStyleSheet(f"font-size: {scaled_area_px('info_text')}px;")
+        _tag_font(desc, 'info_text')
         layout.addWidget(desc)
 
         # Chart folders group
         group = QGroupBox("Chart Folders")
-        group.setFont(scaled_area_font('panel_titles', bold=True))
+        # O-6: QGroupBox title font-size in QSS.
+        group.setStyleSheet(
+            f"QGroupBox {{ font-size: {scaled_area_px('panel_titles')}px; font-weight: bold; }}")
+        _tag_font(group, 'panel_titles')
         group_layout = QVBoxLayout(group)
         group_layout.setSpacing(15)
 
@@ -500,15 +811,20 @@ class DefaultFoldersTab(QWidget):
         # Kala Software group
         import sys
         kala_group = QGroupBox("Kala Software")
-        kala_group.setFont(scaled_area_font('panel_titles', bold=True))
+        # O-6: QGroupBox title font-size in QSS.
+        kala_group.setStyleSheet(
+            f"QGroupBox {{ font-size: {scaled_area_px('panel_titles')}px; font-weight: bold; }}")
+        _tag_font(kala_group, 'panel_titles')
         kala_layout = QVBoxLayout(kala_group)
         kala_layout.setSpacing(15)
 
         kala_hint = "Path to Kala.exe on your system." if sys.platform == 'win32' else \
                     "Path to Kala.exe — will be launched through Wine on Linux/macOS."
         kala_desc = QLabel(kala_hint)
-        kala_desc.setFont(scaled_area_font('status'))
-        kala_desc.setStyleSheet("color: #aaa;")
+        # O-6: font-size in QSS.
+        kala_desc.setStyleSheet(
+            f"color: #aaa; font-size: {scaled_area_px('status')}px;")
+        _tag_font(kala_desc, 'status')
         kala_layout.addWidget(kala_desc)
 
         kala_exe_path = s.get("paths.kala_path", "")
@@ -533,7 +849,10 @@ class DefaultFoldersTab(QWidget):
             f"background-color: {theme['secondary']}; "
             f"color: {theme['secondary_text']}; "
             f"border: 1px solid {theme['secondary_dark']}; "
-            f"border-radius: 3px; padding: 4px;"
+            f"border-radius: 3px; padding: 4px; "
+            # O-6: the path fields are QSS-styled QLineEdits with no font-size,
+            # so they froze at the qt-material default; size them from info_text.
+            f"font-size: {scaled_area_px('info_text')}px;"
         )
 
     def _create_folder_row(self, folder_key: str, folder_label: str, folder_path: str) -> QWidget:
@@ -544,7 +863,9 @@ class DefaultFoldersTab(QWidget):
 
         label = QLabel(f"{folder_label}:")
         label.setFixedWidth(120)
-        label.setFont(scaled_area_font('buttons'))
+        # O-6: font-size in QSS.
+        label.setStyleSheet(f"font-size: {scaled_area_px('buttons')}px;")
+        _tag_font(label, 'buttons')
         row_layout.addWidget(label)
 
         path_entry = QLineEdit(folder_path)
@@ -575,7 +896,9 @@ class DefaultFoldersTab(QWidget):
 
         label = QLabel(f"{file_label}:")
         label.setFixedWidth(120)
-        label.setFont(scaled_area_font('buttons'))
+        # O-6: font-size in QSS.
+        label.setStyleSheet(f"font-size: {scaled_area_px('buttons')}px;")
+        _tag_font(label, 'buttons')
         row_layout.addWidget(label)
 
         path_entry = QLineEdit(file_path)
@@ -662,6 +985,15 @@ class DefaultFoldersTab(QWidget):
                 btn.setStyleSheet(get_primary_button_style())
             else:
                 btn.setStyleSheet(get_secondary_button_style())
+        # td-c038: cascade the warning banners' own refresh (they are persistent
+        # children with their own font-replay, but nothing invoked it — so a live
+        # font change never reached them until now).
+        for _b in (getattr(self, "session_health_banner", None),
+                   getattr(self, "chart_write_banner", None)):
+            if _b is not None and hasattr(_b, "refresh_theme"):
+                _b.refresh_theme()
+        # td-c038: re-compose migrated font-sizes from the live setting.
+        _replay_fonts(self)
 
 
 # =============================================================================
@@ -697,7 +1029,10 @@ class DisplayScaleTab(QWidget):
 
         # Title
         title = QLabel("Display Scale")
-        title.setFont(scaled_area_font('panel_titles', bold=True))
+        # O-6: font-size + weight in QSS.
+        title.setStyleSheet(
+            f"font-size: {scaled_area_px('panel_titles')}px; font-weight: bold;")
+        _tag_font(title, 'panel_titles')
         layout.addWidget(title)
 
         desc = QLabel(
@@ -706,13 +1041,18 @@ class DisplayScaleTab(QWidget):
             "The chart wheel has its own independent zoom."
         )
         desc.setWordWrap(True)
-        desc.setFont(scaled_area_font('info_text'))
+        # O-6: font-size in QSS.
+        desc.setStyleSheet(f"font-size: {scaled_area_px('info_text')}px;")
+        _tag_font(desc, 'info_text')
         layout.addWidget(desc)
 
         # Scale group
         self.scale_group = QGroupBox("Display Scale")
-        self.scale_group.setStyleSheet(get_group_box_style())
-        self.scale_group.setFont(scaled_area_font('panel_titles', bold=True))
+        # O-6: QGroupBox title font-size appended to the shared group style
+        # (which sets weight/colour but no size); setFont is inert.
+        self.scale_group.setStyleSheet(
+            get_group_box_style()
+            + f" QGroupBox {{ font-size: {scaled_area_px('panel_titles')}px; }}")
         group_layout = QVBoxLayout(self.scale_group)
         group_layout.setSpacing(15)
 
@@ -722,6 +1062,9 @@ class DisplayScaleTab(QWidget):
 
         slider_label = QLabel("Scale:")
         slider_label.setFixedWidth(50)
+        # O-6: QSS-less QLabel froze at the qt-material default; size from buttons.
+        slider_label.setStyleSheet(f"font-size: {scaled_area_px('buttons')}px;")
+        _tag_font(slider_label, 'buttons')
         slider_row.addWidget(slider_label)
 
         from PySide6.QtWidgets import QSlider
@@ -738,7 +1081,10 @@ class DisplayScaleTab(QWidget):
         self.scale_value_label = QLabel("100%")
         self.scale_value_label.setFixedWidth(50)
         self.scale_value_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.scale_value_label.setFont(scaled_area_font('buttons', bold=True))
+        # O-6: font-size + weight in QSS.
+        self.scale_value_label.setStyleSheet(
+            f"font-size: {scaled_area_px('buttons')}px; font-weight: bold;")
+        _tag_font(self.scale_value_label, 'buttons')
         slider_row.addWidget(self.scale_value_label)
 
         group_layout.addLayout(slider_row)
@@ -749,8 +1095,9 @@ class DisplayScaleTab(QWidget):
             "panel uses the new scale."
         )
         self.scale_tip_label.setWordWrap(True)
-        self.scale_tip_label.setFont(scaled_area_font('status'))
-        self.scale_tip_label.setStyleSheet(f"color: {theme['secondary_text']};")
+        # O-6: font-size in QSS.
+        self.scale_tip_label.setStyleSheet(
+            f"color: {theme['secondary_text']}; font-size: {scaled_area_px('status')}px;")
         group_layout.addWidget(self.scale_tip_label)
 
         # Buttons row
@@ -784,8 +1131,10 @@ class DisplayScaleTab(QWidget):
         # ── Color Saturation group (SPEC-SAT-001) ───────────────────────────
         from PySide6.QtWidgets import QSlider
         self.saturation_group = QGroupBox("Color Saturation")
-        self.saturation_group.setStyleSheet(get_group_box_style())
-        self.saturation_group.setFont(scaled_area_font('panel_titles', bold=True))
+        # O-6: QGroupBox title font-size appended to the shared group style.
+        self.saturation_group.setStyleSheet(
+            get_group_box_style()
+            + f" QGroupBox {{ font-size: {scaled_area_px('panel_titles')}px; }}")
         sat_layout = QVBoxLayout(self.saturation_group)
         sat_layout.setSpacing(15)
 
@@ -795,13 +1144,18 @@ class DisplayScaleTab(QWidget):
             "oversaturated screens. 100% is full color."
         )
         sat_desc.setWordWrap(True)
-        sat_desc.setFont(scaled_area_font('info_text'))
+        # O-6: font-size in QSS.
+        sat_desc.setStyleSheet(f"font-size: {scaled_area_px('info_text')}px;")
+        _tag_font(sat_desc, 'info_text')
         sat_layout.addWidget(sat_desc)
 
         sat_slider_row = QHBoxLayout()
         sat_slider_row.setSpacing(10)
         sat_slider_label = QLabel("Saturation:")
         sat_slider_label.setFixedWidth(80)
+        # O-6: QSS-less QLabel froze at the qt-material default; size from buttons.
+        sat_slider_label.setStyleSheet(f"font-size: {scaled_area_px('buttons')}px;")
+        _tag_font(sat_slider_label, 'buttons')
         sat_slider_row.addWidget(sat_slider_label)
 
         self.saturation_slider = QSlider(Qt.Orientation.Horizontal)
@@ -817,7 +1171,10 @@ class DisplayScaleTab(QWidget):
         self.saturation_value_label = QLabel("100%")
         self.saturation_value_label.setFixedWidth(50)
         self.saturation_value_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.saturation_value_label.setFont(scaled_area_font('buttons', bold=True))
+        # O-6: font-size + weight in QSS.
+        self.saturation_value_label.setStyleSheet(
+            f"font-size: {scaled_area_px('buttons')}px; font-weight: bold;")
+        _tag_font(self.saturation_value_label, 'buttons')
         sat_slider_row.addWidget(self.saturation_value_label)
         sat_layout.addLayout(sat_slider_row)
 
@@ -843,16 +1200,19 @@ class DisplayScaleTab(QWidget):
         self.restart_warning = QLabel(
             "\u26a0  You may need to restart the app for all changes to take effect."
         )
-        self.restart_warning.setFont(scaled_area_font('status'))
-        self.restart_warning.setStyleSheet(f"color: #FFA726; padding: 4px 0;")
+        # O-6: font-size in QSS.
+        self.restart_warning.setStyleSheet(
+            f"color: #FFA726; padding: 4px 0; font-size: {scaled_area_px('status')}px;")
+        _tag_font(self.restart_warning, 'status')
         self.restart_warning.setWordWrap(True)
         self.restart_warning.setVisible(False)
         layout.addWidget(self.restart_warning)
 
         # DPI info label
         self.dpi_info_label = QLabel("")
-        self.dpi_info_label.setFont(scaled_area_font('info_text'))
-        self.dpi_info_label.setStyleSheet(f"color: {theme['secondary_text']};")
+        # O-6: font-size in QSS.
+        self.dpi_info_label.setStyleSheet(
+            f"color: {theme['secondary_text']}; font-size: {scaled_area_px('info_text')}px;")
         layout.addWidget(self.dpi_info_label)
         self._update_dpi_info()
 
@@ -867,8 +1227,12 @@ class DisplayScaleTab(QWidget):
         """Build a compact panel preview that mirrors the real Strength panel."""
         theme = get_theme_colors()
         self.preview_title = QLabel("Preview")
-        self.preview_title.setFont(QFont("", 10, QFont.Weight.Bold))
-        self.preview_title.setStyleSheet(f"color: {theme['secondary_text']}; border: none;")
+        # O-6: font-size in QSS (setFont is inert). This preview header tracks the
+        # preview's OWN scale factor (see _apply_preview_scale), not a global area;
+        # 10px is the factor-1.0 initial, updated live as the slider moves.
+        self.preview_title.setStyleSheet(
+            f"color: {theme['secondary_text']}; border: none; "
+            f"font-size: 10px; font-weight: bold;")
         parent_layout.addWidget(self.preview_title)
 
         self.preview_shell = QWidget()
@@ -1030,7 +1394,10 @@ class DisplayScaleTab(QWidget):
         header_size = max(8, int(10 * factor))
         chip_size = max(7, int(9 * factor))
 
-        self.preview_title.setFont(QFont("", title_size, QFont.Weight.Bold))
+        # O-6: font-size in QSS (setFont is inert); tracks the preview factor.
+        self.preview_title.setStyleSheet(
+            f"color: {get_theme_colors()['secondary_text']}; border: none; "
+            f"font-size: {title_size}px; font-weight: bold;")
         self.preview_header.setFixedHeight(max(28, int(32 * factor)))
         self.preview_lang_btn.setFixedSize(max(22, int(24 * factor)), max(22, int(24 * factor)))
         self._style_preview_header_controls(factor)
@@ -1212,13 +1579,24 @@ class DisplayScaleTab(QWidget):
         )
         theme = get_theme_colors()
         self.setStyleSheet(f"DisplayScaleTab {{ background-color: {theme['secondary_dark']}; }}")
-        self.scale_group.setStyleSheet(get_group_box_style())
+        # O-6: font-size must be replayed here too, or a theme switch drops the
+        # sizes back to the qt-material 13px default (construction sets them).
+        self.scale_group.setStyleSheet(
+            get_group_box_style()
+            + f" QGroupBox {{ font-size: {scaled_area_px('panel_titles')}px; }}")
         self.reset_btn.setStyleSheet(get_primary_button_style())
         self.auto_detect_btn.setStyleSheet(get_secondary_button_style())
         self.apply_btn.setStyleSheet(get_primary_button_style())
-        self.scale_tip_label.setStyleSheet(f"color: {theme['secondary_text']};")
-        self.preview_title.setStyleSheet(f"color: {theme['secondary_text']}; border: none;")
-        self.dpi_info_label.setStyleSheet(f"color: {theme['secondary_text']};")
+        self.scale_tip_label.setStyleSheet(
+            f"color: {theme['secondary_text']}; font-size: {scaled_area_px('status')}px;")
+        # preview_title font-size is owned by _apply_preview_scale (factor-based);
+        # re-assert a sane default here so a theme switch before any slider move
+        # does not refreeze it.
+        self.preview_title.setStyleSheet(
+            f"color: {theme['secondary_text']}; border: none; "
+            f"font-size: 10px; font-weight: bold;")
+        self.dpi_info_label.setStyleSheet(
+            f"color: {theme['secondary_text']}; font-size: {scaled_area_px('info_text')}px;")
         # SPEC-SAT-001 group. Missing here since the group shipped, so a live
         # theme switch left the whole Color Saturation box on its dark
         # construction colors while the rest of the page went light -- visible
@@ -1229,10 +1607,14 @@ class DisplayScaleTab(QWidget):
         # to this page with a setStyleSheet call, add it here in the same edit.
         # The gate that now catches it is test/theme_audit.py's settings walk
         # (_walk_settings_sections) plus the reference-free VIS-LINT.
-        self.saturation_group.setStyleSheet(get_group_box_style())
+        self.saturation_group.setStyleSheet(
+            get_group_box_style()
+            + f" QGroupBox {{ font-size: {scaled_area_px('panel_titles')}px; }}")
         self.saturation_reset_btn.setStyleSheet(get_secondary_button_style())
         self.saturation_apply_btn.setStyleSheet(get_primary_button_style())
         self._apply_preview_theme()
+        # td-c038: re-compose tagged migrated font-sizes from the live setting.
+        _replay_fonts(self)
 
 
 # =============================================================================
@@ -1252,6 +1634,7 @@ class _PadlockButton(QToolButton):
         self._settings = get_settings()
         self.setChecked(any(self._settings.is_locked(k) for k in self._keys))
         self._refresh()
+        _tag_font(self, 'buttons')  # td-c038 live-replay of the lock glyph
         self.toggled.connect(self._on_toggled)
 
     def _on_toggled(self, checked):
@@ -1267,7 +1650,10 @@ class _PadlockButton(QToolButton):
             if locked else
             "Unlocked: Varuna remembers the last value you used."
         )
-        self.setStyleSheet("color:#D4AF37;" if locked else "color:#888;")
+        # O-6: font-size in QSS so the lock glyph tracks the font settings.
+        self.setStyleSheet(
+            ("color:#D4AF37;" if locked else "color:#888;")
+            + f" font-size: {scaled_area_px('buttons')}px;")
 
 
 def _locked_row(form, key_paths, label_text, field, desc=None):
@@ -1276,13 +1662,18 @@ def _locked_row(form, key_paths, label_text, field, desc=None):
     row.setContentsMargins(0, 0, 0, 0)
     row.setSpacing(6)
     row.addWidget(_PadlockButton(key_paths))
-    row.addWidget(QLabel(label_text))
+    _lbl = QLabel(label_text)
+    # O-6: font-size in QSS (row label built here, not via a string addRow).
+    _lbl.setStyleSheet(f"font-size: {scaled_area_px('buttons')}px;")
+    _tag_font(_lbl, 'buttons')
+    row.addWidget(_lbl)
     row.addStretch()
     form.addRow(cell, field)
     if desc:
         detail = QLabel(desc)
         detail.setWordWrap(True)
         detail.setStyleSheet(f"color:#888; font-size:{scaled_area_px('info_text')}px; font-style:italic; margin-bottom:4px;")
+        _tag_font(detail, 'info_text')
         form.addRow("", detail)
 
 
@@ -1303,7 +1694,10 @@ def _locked_radio_group(form, key_paths, label_text, options, desc=None):
     hh.setSpacing(6)
     hh.addWidget(_PadlockButton(key_paths))
     lbl = QLabel(label_text)
-    lbl.setStyleSheet("font-weight: bold;")
+    # O-6: font-size + weight in QSS.
+    lbl.setStyleSheet(
+        f"font-weight: bold; font-size: {scaled_area_px('buttons')}px;")
+    _tag_font(lbl, 'buttons')
     hh.addWidget(lbl)
     hh.addStretch()
     form.addRow("", header_cell)
@@ -1316,6 +1710,9 @@ def _locked_radio_group(form, key_paths, label_text, options, desc=None):
     group.setExclusive(True)
     for i, (display, value) in enumerate(options):
         rb = QRadioButton(display)
+        # O-6: font-size in QSS.
+        rb.setStyleSheet(f"font-size: {scaled_area_px('buttons')}px;")
+        _tag_font(rb, 'buttons')
         rb.setProperty("opt_value", value)
         rh.addWidget(rb)
         group.addButton(rb, i)
@@ -1326,6 +1723,7 @@ def _locked_radio_group(form, key_paths, label_text, options, desc=None):
         d = QLabel(desc)
         d.setWordWrap(True)
         d.setStyleSheet(f"color:#888; font-size:{scaled_area_px('info_text')}px; font-style:italic; margin-bottom:4px;")
+        _tag_font(d, 'info_text')
         form.addRow("", d)
 
     return group
@@ -1360,6 +1758,30 @@ class ZodiacCalculationTab(QWidget):
     dasha_changed = Signal()
     house_system_changed = Signal(str)
     house_display_mode_changed = Signal(str)
+
+    # G9a: the settings keys this tab HOSTS — reset by an explicit allowlist, never
+    # reset_to_defaults("zodiac") (which would clobber any zodiac.* key another
+    # surface owns and skips the display-flavoured keys this tab also writes). Every
+    # key _on_apply writes is in here (pinned by test_g9a_zodiac_reset_allowlist);
+    # it also carries two GUI-less domain keys the tab's Reset has always restored
+    # (dasha.year_length.rasi, dasha.zr.anchor). If Finding-1A later moves a key to
+    # the Chart Display tab, drop it from this set.
+    OWNED_KEYS = frozenset({
+        "zodiac.mode", "zodiac.use_western_names", "zodiac.ayanamsa_id",
+        "zodiac.house_system", "zodiac.nakshatra_coords",
+        "dasha.left.ayanamsa_id", "dasha.right.mode", "dasha.right.ayanamsa_id",
+        "dasha.year_length.nakshatra", "dasha.year_length.rasi",
+        "dasha.zr.releaser", "dasha.zr.spirit_shift", "dasha.zr.anchor",
+        # G9b (td-v6nqc): the drawing choices chart.wheel_house_display,
+        # display.calendar_convention and display.date_format MOVED to the Chart
+        # Display tab (they left this allowlist). Cards of Truth planet order +
+        # show-in-chart are a CALCULATION per Lorris, so they STAY here.
+        "cot.planet_order", "cot.show_in_chart",
+        "ui.experience_level", "ui.hd_experience_level",
+    })
+    # Defaults for owned keys absent from DEFAULT_SETTINGS (settings_manager.py is
+    # line-frozen by the SI ratchet). A key covered by NEITHER raises at Reset.
+    OWNED_KEY_DEFAULTS = {"ui.hd_experience_level": "beginner"}
 
     # (display, mode, use_western_names). The third value IS written straight to
     # zodiac.use_western_names on Apply, so it must match what displayed_sign_name()
@@ -1408,6 +1830,24 @@ class ZodiacCalculationTab(QWidget):
         form.setLabelAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         desc_style = f"color: #888; font-size: {scaled_area_px('info_text')}px; font-style: italic; margin-bottom: 4px;"
 
+        # td-c038: record desc_style so every inline description label (all share
+        # this exact string) can be tagged for live font-replay in one pass at the
+        # end of construction; _hdr tags the inline section headers as they build.
+        self._c038_desc_style = desc_style
+
+        def _hdr(lbl):
+            return _tag_font(lbl, 'panel_titles')
+
+        # 4B: page-level Apply/Reset explanation at the top of the page (mirrors the
+        # Chart Display page).
+        page_note = QLabel("Changes take effect when you click Apply and are kept "
+                           "across restarts. Reset to Default restores only the "
+                           "settings on this page.")
+        page_note.setWordWrap(True)
+        page_note.setStyleSheet(desc_style)
+        _tag_font(page_note, 'info_text')
+        form.addRow("", page_note)
+
         # SPEC-MODE-001: experience-level gate at the top of the Zodiac section.
         # Beginner hides alternative sign-naming; Advanced exposes all 6 combinations.
         self.experience_radio = _locked_radio_group(
@@ -1421,6 +1861,7 @@ class ZodiacCalculationTab(QWidget):
 
         zodiac_header = QLabel("Zodiac System & Sign Naming")
         zodiac_header.setStyleSheet(f"font-weight: bold; font-size: {scaled_area_px('panel_titles')}px; margin-top: 4px;")
+        _hdr(zodiac_header)
         form.addRow("", zodiac_header)
 
         # Description text is mode-dependent; rebuilt by _update_zodiac_desc().
@@ -1434,9 +1875,19 @@ class ZodiacCalculationTab(QWidget):
         self.zodiac_combo = QComboBox()
         self.zodiac_combo.setMaximumWidth(220)
         _locked_row(form, ["zodiac.mode", "zodiac.use_western_names"], "Zodiac mode:", self.zodiac_combo)
+        # 2B: pointer to where the DRAWING of the signs is chosen (Chart Display),
+        # the mirror of the Sign display pointer on that page.
+        zodiac_mode_pointer = QLabel(
+            "How the signs are drawn, as names, symbols or Josh's glyphs, is chosen "
+            "under Chart Display.")
+        zodiac_mode_pointer.setWordWrap(True)
+        zodiac_mode_pointer.setStyleSheet(desc_style)
+        _tag_font(zodiac_mode_pointer, 'info_text')
+        form.addRow("", zodiac_mode_pointer)
 
         ayan_header = QLabel("Ayanamsa")
         ayan_header.setStyleSheet(f"font-weight: bold; font-size: {scaled_area_px('panel_titles')}px; margin-top: 12px;")
+        _hdr(ayan_header)
         form.addRow("", ayan_header)
 
         ayan_desc = QLabel(
@@ -1461,6 +1912,7 @@ class ZodiacCalculationTab(QWidget):
 
         dasha_header = QLabel("Dasha Ayanamshas")
         dasha_header.setStyleSheet(f"font-weight: bold; font-size: {scaled_area_px('panel_titles')}px; margin-top: 12px;")
+        _hdr(dasha_header)
         form.addRow("", dasha_header)
 
         dasha_desc = QLabel(
@@ -1489,6 +1941,8 @@ class ZodiacCalculationTab(QWidget):
         self.dasha_right_mode_combo = QComboBox()
         self.dasha_right_mode_combo.addItem("Planetary Ages", "nisarga")
         self.dasha_right_mode_combo.addItem("Vimshottari", "vimshottari")
+        # SPEC-ZR-001 DD6: Zodiacal Releasing as the third right-panel mode.
+        self.dasha_right_mode_combo.addItem("Zodiacal Releasing", "zr")
         self.dasha_right_mode_combo.setMaximumWidth(220)
         _locked_row(
             form,
@@ -1496,7 +1950,50 @@ class ZodiacCalculationTab(QWidget):
             "Right panel mode:",
             self.dasha_right_mode_combo,
         )
-        form.addRow("Right (Vimshottari) ayanamsa:", self.dasha_right_combo)
+        form.addRow(_form_label("Right (Vimshottari) ayanamsa:"), self.dasha_right_combo)
+
+        # SPEC-DSH-003: dasha year length (Kala "Dasa Length"), nakshatra family.
+        self.dasha_year_combo = QComboBox()
+        try:
+            from core.vimshottari_dasha import YEAR_LENGTH_LABELS
+            for key, label in YEAR_LENGTH_LABELS.items():
+                self.dasha_year_combo.addItem(label, key)
+        except ImportError:
+            self.dasha_year_combo.addItem("Saura (365.2422 d, tropical Sun)", "saura")
+        self.dasha_year_combo.setMaximumWidth(220)
+        form.addRow(_form_label("Dasha year (nakshatra dashas):"), self.dasha_year_combo)
+        year_desc = QLabel(
+            "Days per dasha year for Vimshottari on both panels. Saura is "
+            "Kala's default. Kala's Dasa Length setting must match this one "
+            "before comparing dates: the Nakshatra year runs about 6 days "
+            "shorter per dasha year, three months by age 15.")
+        year_desc.setWordWrap(True)
+        year_desc.setStyleSheet(desc_style)
+        form.addRow("", year_desc)
+
+        # SPEC-ZR-001 DD6: two ZR rows, always visible, enabled only in zr mode.
+        # The releaser combo's 12 sign labels follow the zodiac display, so it is
+        # rebuilt whenever the zodiac combo changes (_rebuild_zr_releaser_combo).
+        self.dasha_zr_releaser_combo = QComboBox()
+        self.dasha_zr_releaser_combo.setMaximumWidth(220)
+        self._rebuild_zr_releaser_combo()
+        self.zodiac_combo.currentIndexChanged.connect(self._rebuild_zr_releaser_combo)
+        form.addRow(_form_label("Right (ZR) releaser:"), self.dasha_zr_releaser_combo)
+
+        from PySide6.QtWidgets import QCheckBox as _QCheckBox
+        zr_opts = QWidget()
+        zr_opts_layout = QVBoxLayout(zr_opts)
+        zr_opts_layout.setContentsMargins(0, 0, 0, 0)
+        zr_opts_layout.setSpacing(2)
+        self.dasha_zr_shift_cb = _QCheckBox("Shift Spirit out of Fortune's sign")
+        # O-6: font-size in QSS (text checkbox).
+        self.dasha_zr_shift_cb.setStyleSheet(
+            f"QCheckBox {{ font-size: {scaled_area_px('buttons')}px; }}")
+        _tag_font(self.dasha_zr_shift_cb, 'buttons')
+        self.dasha_zr_shift_cb.setChecked(True)
+        zr_opts_layout.addWidget(self.dasha_zr_shift_cb)
+        self.dasha_zr_options_widget = zr_opts
+        form.addRow(_form_label("Right (ZR) options:"), zr_opts)
 
         self.nak_coords_combo = QComboBox()
         self.nak_coords_combo.addItem("Neither (ecliptic, default)", "neither")
@@ -1513,6 +2010,7 @@ class ZodiacCalculationTab(QWidget):
 
         house_header = QLabel("House System")
         house_header.setStyleSheet(f"font-weight: bold; font-size: {scaled_area_px('panel_titles')}px; margin-top: 12px;")
+        _hdr(house_header)
         form.addRow("", house_header)
 
         house_desc = QLabel(
@@ -1532,24 +2030,14 @@ class ZodiacCalculationTab(QWidget):
 
         house_note = QLabel("Applies immediately to the open chart when you click Apply.")
         house_note.setStyleSheet(f"color: #888; font-size: {scaled_area_px('status')}px;")
+        _tag_font(house_note, 'status')
         form.addRow("", house_note)
 
-        self.wheel_display_combo = QComboBox()
-        self.wheel_display_combo.addItem("Sign-based (traditional)", "sign_based")
-        self.wheel_display_combo.addItem("Standard Western houses", "standard_western")
-        self.wheel_display_combo.setMaximumWidth(220)
-        form.addRow("Wheel house display:", self.wheel_display_combo)
-
-        wheel_display_desc = QLabel(
-            "Standard Western layout starts the 1st house at the exact Ascendant "
-            "degree. Wheel chart only."
-        )
-        wheel_display_desc.setWordWrap(True)
-        wheel_display_desc.setStyleSheet(desc_style)
-        form.addRow("", wheel_display_desc)
-
+        # G9b (td-v6nqc): "Wheel house display" MOVED to the Chart Display tab
+        # (a drawing choice). Cards of Truth stays here (a calculation).
         cot_header = QLabel("Cards of Truth")
         cot_header.setStyleSheet(f"font-weight: bold; font-size: {scaled_area_px('panel_titles')}px; margin-top: 12px;")
+        _hdr(cot_header)
         form.addRow("", cot_header)
 
         self.cot_order_combo = QComboBox()
@@ -1591,29 +2079,74 @@ class ZodiacCalculationTab(QWidget):
             "button in its bottom-right corner.",
         )
 
-        # SPEC-CAL-001: calendar convention for DISPLAYING pre-1582 dates.
-        # Display-only (title bar, eclipse tables, birth readouts); never
-        # changes any JD, chart, or stored file.
-        hist_header = QLabel("Historical Dates (before 1582)")
-        hist_header.setStyleSheet(f"font-weight: bold; font-size: {scaled_area_px('panel_titles')}px; margin-top: 12px;")
-        form.addRow("", hist_header)
+        # G9b (td-v6nqc): "Historical Dates (before 1582)" and "Date format"
+        # MOVED to the Chart Display tab's "Dates" group (both are DRAWING/display
+        # choices, per Lorris's rule). Their keys left this tab's OWNED_KEYS.
 
-        self.hist_dates_combo = QComboBox()
-        self.hist_dates_combo.addItem("Astronomy standard (Julian before 1582)", "astronomical")
-        self.hist_dates_combo.addItem("Proleptic Gregorian (Kala)", "proleptic_gregorian")
-        self.hist_dates_combo.setMaximumWidth(320)
-        _locked_row(form, "display.calendar_convention", "Historical dates:", self.hist_dates_combo)
+        # -- Human Design ----------------------------------------------------
+        # Mirrors the Zodiac experience gate above. Beginner (default, locked)
+        # pins the bodygraph and the -88 Design chart to the Standard tropical
+        # frame; Advanced lets the top-bar zodiac buttons drive the HD frame.
+        # This is the ONE place the Aditya-shifted-gate meaning is explained
+        # (the old on-page warning popup is gone).
+        hd_header = QLabel("Human Design")
+        hd_header.setStyleSheet(
+            f"font-weight: bold; font-size: {scaled_area_px('panel_titles')}px; margin-top: 8px;")
+        _hdr(hd_header)
+        form.addRow("", hd_header)
 
-        hist_desc = QLabel(
-            "How dates before the 1582 Gregorian reform are DISPLAYED. "
-            "Astronomy standard uses the Julian calendar (matches NASA/Swiss "
-            "Ephemeris); Proleptic Gregorian extends today's calendar backwards "
-            "(matches Kala). Display-only: planetary positions are identical "
-            "either way. Dates from Oct 1582 onward look the same in both."
+        self.hd_experience_radio = _locked_radio_group(
+            form,
+            "ui.hd_experience_level",
+            "Experience level:",
+            [("Beginner", "beginner"), ("Advanced", "advanced")],
+            desc="Human Design charts are built from planetary positions, so the "
+                 "zodiac frame you pick changes which gates light up. The bodygraph "
+                 "and the Design chart (the chart calculated 88 degrees of the Sun "
+                 "before birth) can both be read in the Tropical Classic frame, the "
+                 "Aditya Circle frame or the Sidereal frame.",
         )
-        hist_desc.setWordWrap(True)
-        hist_desc.setStyleSheet(desc_style)
-        form.addRow("", hist_desc)
+
+        hd_frame_desc = QLabel(
+            "Beginner: Human Design is locked to Tropical Classic, the mapping used "
+            "by every Human Design website and book. The zodiac buttons on the chart "
+            "tab still switch your astrology chart, but the bodygraph and the Design "
+            "chart stay on Tropical Classic. This is a safety rail for readers new to "
+            "Human Design, not a restriction on what the app can do.\n\n"
+            "Advanced: the zodiac buttons also drive Human Design. Aditya Circle "
+            "starts gate 1 at 193.25 degrees instead of 223.25, and Sidereal applies "
+            "your ayanamsa. Every gate shifts, so type, authority, profile and cross "
+            "can all differ from a conventional Human Design chart. These frames are "
+            "an area of research and you are free to test them with your own charts."
+        )
+        hd_frame_desc.setWordWrap(True)
+        hd_frame_desc.setStyleSheet(desc_style)
+        form.addRow("", hd_frame_desc)
+
+        # C9 item 2: a link that opens the SAME frame-lock explanation users see
+        # in the in-app popup (explain_frames), so Settings and the popup can
+        # never drift.
+        #
+        # The link appears only once real copy exists. It first shipped with the
+        # module's "[COPY PENDING]" marker as its visible label, and Lorris met
+        # that placeholder in his running app on 2026-08-30. A placeholder is a
+        # note between sessions, never a string a user is allowed to read: no
+        # link at all is strictly better than a link that says nothing.
+        # copy_is_pending() is the single source of that judgement, and
+        # explain_frames() refuses independently, so forgetting this guard
+        # cannot put a placeholder dialog on screen either.
+        try:
+            from apps.widgets.hd.hd_frame_notice import (
+                copy_is_pending, explain_frames, EXPLAIN_TITLE)
+            if not copy_is_pending():
+                hd_frame_link = QLabel('<a href="#hd-frames">Read the full explanation</a>')
+                hd_frame_link.setOpenExternalLinks(False)
+                hd_frame_link.setStyleSheet(desc_style)
+                hd_frame_link.linkActivated.connect(
+                    lambda _=None: explain_frames(self))
+                form.addRow("", hd_frame_link)
+        except Exception as _hd_link_err:
+            print(f"[WARNING] HD frame explanation link not wired: {_hd_link_err}")
 
         layout.addLayout(form)
         layout.addStretch()
@@ -1636,6 +2169,15 @@ class ZodiacCalculationTab(QWidget):
         self.apply_btn.clicked.connect(self._on_apply)
         button_row.addWidget(self.apply_btn)
         outer.addLayout(button_row)
+
+        # td-c038 live-replay: tag every inline description label (all share the
+        # exact desc_style string) in one pass, plus the action buttons, so
+        # refresh_theme -> _replay_fonts re-composes them on a live font change.
+        for _lbl in self.findChildren(QLabel):
+            if _lbl.styleSheet() == self._c038_desc_style:
+                _tag_font(_lbl, 'info_text')
+        _tag_font(self.reset_btn, 'action_buttons')
+        _tag_font(self.apply_btn, 'action_buttons')
 
     def _find_combo_index(self, mode, western):
         """Locate (mode, western) on the ACTUAL combo items, not _ZODIAC_OPTIONS.
@@ -1734,8 +2276,43 @@ class ZodiacCalculationTab(QWidget):
         # Sidereal display.
         self.ayanamsa_combo.setEnabled(True)
 
+    def _rebuild_zr_releaser_combo(self):
+        """SPEC-ZR-001 DD6: Spirit / Fortune / 12 signs in position order.
+
+        The sign labels follow the pending zodiac-combo selection (mode + naming),
+        so a Sidereal or Western pick relabels the releaser list before Apply. The
+        stored value (spirit / fortune / sign:{i}) is preserved by data role.
+        """
+        combo = getattr(self, "dasha_zr_releaser_combo", None)
+        if combo is None:
+            return
+        from core.aditya_mode import displayed_sign_name
+        data = self.zodiac_combo.currentData()
+        mode, western = data if data else ("aditya", False)
+        prior = combo.currentData()
+        combo.blockSignals(True)
+        combo.clear()
+        combo.addItem("Spirit", "spirit")
+        combo.addItem("Fortune", "fortune")
+        from core.lots import LOT_REGISTRY, LOT_ORDER
+        for name in LOT_ORDER:
+            combo.addItem("Lot of " + LOT_REGISTRY[name]["label"], f"lot:{name}")
+        for i in range(12):
+            combo.addItem(displayed_sign_name(i, mode, western), f"sign:{i}")
+        if prior is not None:
+            idx = combo.findData(prior)
+            if idx >= 0:
+                combo.setCurrentIndex(idx)
+        combo.blockSignals(False)
+
     def _update_dasha_right_enabled(self):
-        self.dasha_right_combo.setEnabled(self.dasha_right_mode_combo.currentData() == "vimshottari")
+        right_mode = self.dasha_right_mode_combo.currentData()
+        self.dasha_right_combo.setEnabled(right_mode == "vimshottari")
+        is_zr = right_mode == "zr"
+        for w in (getattr(self, "dasha_zr_releaser_combo", None),
+                  getattr(self, "dasha_zr_shift_cb", None)):
+            if w is not None:
+                w.setEnabled(is_zr)
 
     def _read_from_settings(self):
         from managers.settings_manager import get_settings
@@ -1743,6 +2320,9 @@ class ZodiacCalculationTab(QWidget):
 
         self._select_radio_value(self.experience_radio, self._experience_level())
         self._rebuild_zodiac_combo()
+        self._select_radio_value(
+            self.hd_experience_radio,
+            settings.get("ui.hd_experience_level", "beginner"))
         mode = settings.get("zodiac.mode", "aditya")
         western = settings.get("zodiac.use_western_names", False)
         self.zodiac_combo.setCurrentIndex(self._find_combo_index(mode, western))
@@ -1750,12 +2330,13 @@ class ZodiacCalculationTab(QWidget):
         for combo, key, default in (
             (self.ayanamsa_combo, "zodiac.ayanamsa_id", 100),
             (self.house_combo, "zodiac.house_system", "campanus"),
-            (self.wheel_display_combo, "chart.wheel_house_display", "sign_based"),
+            # G9b: wheel_house_display / calendar_convention / date_format read on
+            # the Chart Display tab now (moved there).
             (self.dasha_left_combo, "dasha.left.ayanamsa_id", 100),
             (self.dasha_right_mode_combo, "dasha.right.mode", "nisarga"),
             (self.dasha_right_combo, "dasha.right.ayanamsa_id", 98),
+            (self.dasha_year_combo, "dasha.year_length.nakshatra", "saura"),
             (self.nak_coords_combo, "zodiac.nakshatra_coords", "neither"),
-            (self.hist_dates_combo, "display.calendar_convention", "astronomical"),
             # SPEC-COT-001: this row was MISSING, and _on_apply writes the
             # combo's current value unconditionally. So the panel always opened
             # showing index 0 whatever was stored, and pressing Apply for any
@@ -1772,6 +2353,16 @@ class ZodiacCalculationTab(QWidget):
         # whatever is stored and the next Apply turns the feature off.
         self.cot_in_chart_cb.setChecked(
             bool(settings.get("cot.show_in_chart", False)))
+
+        # SPEC-ZR-001 DD6: ZR releaser + options. Rebuild the releaser combo first
+        # so its data roles exist, then select the stored value.
+        self._rebuild_zr_releaser_combo()
+        zr_idx = self.dasha_zr_releaser_combo.findData(
+            settings.get("dasha.zr.releaser", "spirit"))
+        if zr_idx >= 0:
+            self.dasha_zr_releaser_combo.setCurrentIndex(zr_idx)
+        self.dasha_zr_shift_cb.setChecked(
+            bool(settings.get("dasha.zr.spirit_shift", True)))
 
         self._update_ayanamsa_enabled()
         self._update_dasha_right_enabled()
@@ -1797,34 +2388,42 @@ class ZodiacCalculationTab(QWidget):
         old_right_mode = settings.get("dasha.right.mode", "nisarga")
         old_right_aid = settings.get("dasha.right.ayanamsa_id", 98)
         old_nak_coords = settings.get("zodiac.nakshatra_coords", "neither")
+        old_year_length = settings.get("dasha.year_length.nakshatra", "saura")
+        old_zr_releaser = settings.get("dasha.zr.releaser", "spirit")
+        old_zr_shift = settings.get("dasha.zr.spirit_shift", True)
 
         new_ayanamsa = self.ayanamsa_combo.currentData()
         new_house = self.house_combo.currentData()
         new_left = self.dasha_left_combo.currentData()
         new_right_mode = self.dasha_right_mode_combo.currentData()
         new_right_aid = self.dasha_right_combo.currentData()
-        new_wheel_display = self.wheel_display_combo.currentData()
 
         settings.set("ui.experience_level", new_level)
+        settings.set("ui.hd_experience_level",
+                     self._radio_value(self.hd_experience_radio, "beginner"))
         settings.set("zodiac.mode", mode)
         settings.set("zodiac.use_western_names", western)
         settings.set("zodiac.ayanamsa_id", new_ayanamsa)
         settings.set("zodiac.house_system", new_house)
-        settings.set("chart.wheel_house_display", new_wheel_display)
         settings.set("dasha.left.ayanamsa_id", new_left)
         settings.set("dasha.right.mode", new_right_mode)
         settings.set("dasha.right.ayanamsa_id", new_right_aid)
+        new_year_length = self.dasha_year_combo.currentData()
+        settings.set("dasha.year_length.nakshatra", new_year_length)
+        # SPEC-ZR-001 DD6: ZR releaser + options share the same keys as the title
+        # menu (last writer wins).
+        new_zr_releaser = self.dasha_zr_releaser_combo.currentData()
+        new_zr_shift = self.dasha_zr_shift_cb.isChecked()
+        settings.set("dasha.zr.releaser", new_zr_releaser)
+        settings.set("dasha.zr.spirit_shift", new_zr_shift)
         new_nak_coords = self.nak_coords_combo.currentData()
         settings.set("zodiac.nakshatra_coords", new_nak_coords)
         settings.set("cot.planet_order", self.cot_order_combo.currentData())
         # set() fires the key-prefix callbacks, and every live South Indian
         # vector view is subscribed — so the chart redraws without a reload.
         settings.set("cot.show_in_chart", self.cot_in_chart_cb.isChecked())
-        # SPEC-CAL-001: DISPLAY-ONLY calendar convention. settings.set() fires
-        # _notify_change("display.calendar_convention", ...); subscribers (title
-        # bar in core_gui, eclipse tables in the eclipse panel) re-render date
-        # labels on their own. No chart recompute here (labels re-read at redraw).
-        settings.set("display.calendar_convention", self.hist_dates_combo.currentData())
+        # G9b (td-v6nqc): display.calendar_convention and display.date_format are
+        # written on the Chart Display tab now (moved there with their rows).
 
         if mode != old_mode:
             self.zodiac_changed.emit(mode)
@@ -1840,10 +2439,15 @@ class ZodiacCalculationTab(QWidget):
             self.ayanamsa_changed.emit(new_ayanamsa)
         if new_house != old_house:
             self.house_system_changed.emit(new_house)
-        self.house_display_mode_changed.emit(new_wheel_display)
+        # G9b: wheel house display moved to Chart Display; its live update now
+        # travels via that tab's chart_display_changed -> _on_chart_display_changed
+        # (which reads chart.wheel_house_display and applies it to the wheel).
         if (new_left != old_left or new_right_mode != old_right_mode
                 or new_right_aid != old_right_aid
-                or new_nak_coords != old_nak_coords):
+                or new_nak_coords != old_nak_coords
+                or new_year_length != old_year_length
+                or new_zr_releaser != old_zr_releaser
+                or new_zr_shift != old_zr_shift):
             self.dasha_changed.emit()
 
         # Rebuild the combo (3 <-> 6 entries) when the experience level changed,
@@ -1853,17 +2457,42 @@ class ZodiacCalculationTab(QWidget):
             self.zodiac_combo.setCurrentIndex(self._find_combo_index(mode, western))
 
     def _on_reset(self):
-        from managers.settings_manager import get_settings
+        # G9a: explicit owned-key allowlist (was reset_to_defaults("zodiac") + a
+        # partial list of dasha keys, which reset NONE of the display-flavoured keys
+        # this tab also hosts — chart.wheel_house_display, cot.*, display.*, ui.* —
+        # and would clobber any zodiac.* key another surface owns). One set() per
+        # owned key, defaults single-sourced from DEFAULT_SETTINGS (else the
+        # co-located OWNED_KEY_DEFAULTS), no silent fallback. Still covers the
+        # GUI-less dasha.year_length.rasi / dasha.zr.anchor the old Reset restored
+        # (SPEC-DSH-003, SPEC-ZR-001 DD6).
+        from copy import deepcopy
+        from managers.settings_manager import get_settings, DEFAULT_SETTINGS
         settings = get_settings()
-        settings.reset_to_defaults("zodiac")
-        settings.set("dasha.left.ayanamsa_id", 100)
-        settings.set("dasha.right.mode", "nisarga")
-        settings.set("dasha.right.ayanamsa_id", 98)
+
+        def _default(key):
+            node = DEFAULT_SETTINGS
+            for part in key.split("."):
+                if isinstance(node, dict) and part in node:
+                    node = node[part]
+                else:
+                    return self.OWNED_KEY_DEFAULTS[key]  # raises if truly unknown
+            return node
+
+        for key in self.OWNED_KEYS:
+            settings.set(key, deepcopy(_default(key)))
         self._read_from_settings()
+        # Flush the whole reset transaction, even if Apply now sees equal values.
+        self.zodiac_changed.emit(settings.get("zodiac.mode", "aditya"))
+        self.dasha_changed.emit()
 
     def refresh_theme(self):
         theme = get_theme_colors()
         self.setStyleSheet(f"ZodiacCalculationTab {{ background-color: {theme['secondary_dark']}; }}")
+        self.reset_btn.setStyleSheet(get_secondary_button_style())
+        self.apply_btn.setStyleSheet(get_primary_button_style())
+        # td-c038: re-compose migrated font-sizes from the live setting (this tab
+        # previously replayed no fonts at all — every label was static).
+        _replay_fonts(self)
 
 
 # =============================================================================
@@ -1915,129 +2544,144 @@ class FontSizesSection(QWidget):
     font_sizes_changed = Signal()
 
     _AREA_LABELS = [
-        ("tables", "Tables & Data"),
-        ("table_headers", "Table Headers"),
+        ("tabs", "Tab Bar"),
+        ("action_buttons", "Action buttons"),
+        ("sidebar", "Sidebar & Navigation"),
+        ("chart_memory", "Chart Names"),
         ("panel_titles", "Panel Titles"),
+        ("table_headers", "Table Headers"),
+        ("tables", "Tables & Data"),
+        ("status", "Status & Captions"),
         ("chart_labels", "Chart Labels"),
         ("info_text", "Info & Descriptions"),
         ("buttons", "Buttons & Controls"),
-        ("sidebar", "Sidebar & Navigation"),
-        ("chart_memory", "Chart Names"),
-        ("status", "Status & Captions"),
-        ("tabs", "Tab Bar"),
     ]
+
+    _AREA_GROUP_STARTS = {
+        "tabs": ("WINDOW FRAME & NAVIGATION", "always visible around the chart"),
+        "panel_titles": ("INFO PANELS", "the centre panels beside the chart"),
+        "chart_labels": ("CHART", "text drawn on the chart itself"),
+        "info_text": ("FORMS, DIALOGS & HELP", "New & Edit, Find Chart and dialogs"),
+    }
 
     _PREVIEW_INFO = {
         "tables": {
-            "where": "Center panels: Strength, Aspects, Elements, Karakas data rows. "
-                     "Also: planet positions in chart info, Find Chart results, dasha cycle labels.",
+            "where": "Center-panel data rows (Strength, Aspects, Elements, Karakas); "
+                     "planet positions in chart info; Find Chart results; dasha cycle rows.",
             "samples": [
-                "Sun  42.8  |  Moon  187.3  |  Mars  315.6  |  Jupiter  78.2",
-                "Venus  Dhata  12.5  |  Saturn  Mitra  28.3  |  Mercury  Aryama  4.1",
+                "Sun  42.8  |  Moon  187.3  |  Mars  315.6",
+                "Venus  Dhata  12.5  |  Saturn  Mitra  28.3",
             ],
         },
         "table_headers": {
-            "where": "Column headers above data tables in center panels (Strength, Aspects, "
-                     "Elements). Also: section headers in chart info dialogs, dual chart comparison names.",
+            "where": "Column headers above the center-panel tables; section headers in "
+                     "chart info dialogs; dual chart comparison names.",
             "samples": [
-                "PLANET        DIGBALA        UCCHA        SIGN        DEGREE",
-                "NAME          LONGITUDE      SPEED        HOUSE       DIGNITY",
+                "PLANET   DIGBALA   UCCHA   SIGN   DEGREE",
             ],
         },
         "panel_titles": {
-            "where": "Large section headings in center panels (e.g. 'Strength', 'Aspects', "
-                     "'Elements'). Also: dialog titles, welcome screen, chart creation headers, "
+            "where": "Section headings in the center panels AND the panel tab buttons "
+                     "(Karakas, Hora, Strength, Avastha...); dialog titles; "
                      "Find Chart section titles.",
             "samples": [
-                "Strength  /  Aspects  /  Elements  /  Karakas",
+                "Strength   Aspects   Elements   Karakas",
             ],
         },
         "chart_labels": {
-            "where": "Text painted directly on the charts: wheel cusp / house degree "
-                     "labels, planet degree readouts, the degree-ruler ticks, element "
-                     "pie percentages, the North-Indian Ascendant label, and body-graph "
-                     "planet names. Default 16 keeps these glyph labels readable.",
+            "where": "Text painted on the charts: wheel and South Indian degree labels, "
+                     "planet degree readouts, the degree-ruler ticks, element-pie "
+                     "percentages, the North Indian Ascendant label, and the Cards of Truth "
+                     "labels (card titles, the period ruler, the "
+                     "medallion and its AGE line).",
             "samples": [
                 "ASC 14°   C10 28°   MC 2°   Sun 12°34'   Moon 7°08'",
             ],
         },
         "info_text": {
-            "where": "Help text, tooltips, descriptions throughout the app. "
-                     "Includes: chart editing form labels, ayanamsa dialog help, "
-                     "search field labels in Find Chart, loading screen messages.",
+            "where": "Help text, form labels and descriptions: the chart editing form, "
+                     "ayanamsa help, Find Chart field labels, loading messages, tooltips.",
             "samples": [
                 "Enter the birth date, time, and location to calculate the chart",
-                "Hover over a planet to see its full description and dignity status",
             ],
         },
         "buttons": {
-            "where": "All clickable controls: top bar buttons (Transit, Now, Aditya Circle, "
-                     "Add Chart), dialog OK/Cancel buttons, dasha level selectors, "
-                     "Save buttons in chart creation, combo box labels.",
+            "where": "Form and control buttons and their labels: the New and Edit chart "
+                     "forms, dialog buttons (chart info, key, welcome, HD notice), the "
+                     "dasha level selectors 1-5, chart memory controls, combo-box text.",
             "samples": [
-                "Apply    Transit    Aditya Circle    Now    Add Chart",
-                "Save    Cancel    OK    Level 1    Level 2    Level 3",
+                "Save   Cancel   Apply   OK",
+                "1   2   3   4   5",
+            ],
+        },
+        "action_buttons": {
+            "where": "The shared primary and secondary button styles: dialog action "
+                     "buttons, form Save/Cancel, other styled push buttons across "
+                     "dialogs and panels, and the top action bar (chart name, view "
+                     "and mode buttons); the bar height follows the text.",
+            "samples": [
+                "Save   Cancel   Apply   Close   Find Chart",
             ],
         },
         "sidebar": {
-            "where": "Left column lists: sign selector (12 sign names), "
-                     "varga division selector (D1, D2, D9...), "
-                     "chart memory expanded sublists (houses, planets, strengths).",
+            "where": "Left columns: the sign selector (numbered 1-12, the sign name is "
+                     "the tooltip) and the varga division selector (the varga division "
+                     "numbers 1, 2, 9, 10R...); the ascendant guide list; the eclipse "
+                     "panel navigation.",
             "samples": [
-                "Dhata    Aryama    Mitra    Varuna    Indra    Vivasvan",
-                "D1 Rasi    D2 Hora    D9 Navamsa    D12 Dvadasamsa",
+                "1   2   3   4   5   6   7   8   9   10   11   12",
+                "1   2   9   10R   24R   60",
             ],
         },
         "chart_memory": {
-            "where": "Chart name cells in the bottom bar. "
-                     "Cell width scales with this size.",
+            "where": "Chart name cells in the bottom bar; the cell width scales with "
+                     "this size.",
             "samples": [
                 "Lorris  |  Albert Einstein  |  Marie Curie",
             ],
         },
         "status": {
-            "where": "Small captions and status messages: dasha active cycle info "
-                     "below the list, dual chart comparison metadata, login error messages, "
-                     "Find Chart result counts, footnotes in chart info panels.",
+            "where": "Small captions and status lines: the dasha active-cycle caption "
+                     "below the list, dual chart comparison metadata, login and Find "
+                     "Chart result messages, panel footnotes.",
             "samples": [
                 "Maha: Sun 6y  |  Antar: Moon 6m  |  Pratyantar: Mars 12d",
-                "3 charts found  |  Screen: 1920x1080  |  DPI: 96",
+                "3 charts found  |  Screen: 1920x1080",
             ],
         },
         "tabs": {
-            "where": "Main tab bar at the top of the window: the row of tabs "
-                     "used to switch between Chart, Settings, Find Chart, Nakshatra, "
-                     "Predictive Tools, and other main sections.",
+            "where": "The main tab bar at the top of the window: Chart, Settings, Find "
+                     "Chart, Nakshatra, Predictive Tools and the other main sections.",
             "samples": [
-                "CHART    SETTINGS    FIND CHART    NAKSHATRA    PREDICTIVE TOOLS",
+                "CHART   SETTINGS   FIND CHART   NAKSHATRA   PREDICTIVE TOOLS",
             ],
         },
     }
 
     _RESOLUTION_PRESETS = {
         "hd": {
-            "label": "HD",
+            "label": "Compact",
             "values": {
                 "tables": 8, "table_headers": 9, "panel_titles": 10,
-                "info_text": 8, "buttons": 9, "sidebar": 8,
+                "info_text": 8, "buttons": 9, "action_buttons": 11, "sidebar": 8,
                 "chart_memory": 8, "status": 8, "tabs": 10,
                 "chart_labels": 13,
             },
         },
         "fullhd": {
-            "label": "Full HD",
+            "label": "Balanced",
             "values": {
                 "tables": 9, "table_headers": 10, "panel_titles": 10,
-                "info_text": 9, "buttons": 10, "sidebar": 9,
+                "info_text": 9, "buttons": 10, "action_buttons": 12, "sidebar": 9,
                 "chart_memory": 9, "status": 8, "tabs": 11,
                 "chart_labels": 14,
             },
         },
         "2k": {
-            "label": "2K",
+            "label": "Large",
             "values": {
                 "tables": 11, "table_headers": 12, "panel_titles": 10,
-                "info_text": 11, "buttons": 10, "sidebar": 10,
+                "info_text": 11, "buttons": 10, "action_buttons": 12, "sidebar": 10,
                 "chart_memory": 10, "status": 9, "tabs": 12,
                 "chart_labels": 16,
             },
@@ -2048,13 +2692,21 @@ class FontSizesSection(QWidget):
         super().__init__(parent)
         self._spinboxes = {}
         self._preset_buttons = {}
-        self._detected_tier = None
+        self._active_preset = None
         self._build_ui()
         self._read_from_settings()
 
     def _build_ui(self):
         theme = get_theme_colors()
-        layout = QVBoxLayout(self)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        self.scroll_area = QScrollArea(self)
+        self.scroll_area.setWidgetResizable(True)
+        content = QWidget()
+        layout = QVBoxLayout(content)
+        layout.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
+        self.scroll_area.setWidget(content)
+        outer.addWidget(self.scroll_area, 1)
         layout.setContentsMargins(24, 16, 24, 16)
         layout.setSpacing(0)
 
@@ -2066,55 +2718,95 @@ class FontSizesSection(QWidget):
         )
         layout.addWidget(self._header_label)
 
-        master_row = QHBoxLayout()
-        master_row.setContentsMargins(0, 0, 0, 0)
-        self._master_label = QLabel("All Areas:")
-        self._master_label.setFixedWidth(160)
-        self._master_label.setStyleSheet(
-            f"color: {theme['primary_text']}; font-weight: bold;"
+        self._hint_label = QLabel("Choose a preset or adjust each area below.")
+        self._hint_label.setStyleSheet(
+            f"color: {theme['secondary_text']}; "
+            f"font-size: {scaled_area_px('status')}px; padding-bottom: 10px;"
         )
-        master_row.addWidget(self._master_label)
+        layout.addWidget(self._hint_label)
+
+        self._shortcuts_frame = QFrame()
+        shortcuts_row = QHBoxLayout(self._shortcuts_frame)
+        shortcuts_row.setContentsMargins(14, 10, 14, 10)
+        shortcuts_row.setSpacing(10)
+        self._master_label = QLabel("All areas")
+        # F-B2 (SPEC-FONT-001 §11 G3): was bold with no font-size, so qt-material
+        # froze it at 13px on every preset. Wire it to buttons like the other
+        # control-row labels; the live replay comes from the explicit setStyleSheet
+        # in this section's refresh_theme (FontSizesSection does not use _replay_fonts).
+        self._master_label.setStyleSheet(
+            f"color: {theme['primary_text']}; font-weight: bold; "
+            f"font-size: {scaled_area_px('buttons')}px;"
+        )
+        shortcuts_row.addWidget(self._master_label)
         self._master_spin = MixedValueSpinBox()
         self._master_spin.setRange(7, 24)
-        self._master_spin.setFixedWidth(80)
+        self._master_spin.setFixedWidth(86)
+        # F-B2 (G3): the master spinbox's QLineEdit renders at the qt-material 13px
+        # default like the per-area spins; wire it to buttons (re-applied in
+        # refresh_theme alongside the per-area spinboxes).
+        self._master_spin.setStyleSheet(
+            f"QSpinBox {{ font-size: {scaled_area_px('buttons')}px; }}")
         self._master_spin.valueChanged.connect(self._on_master_changed)
-        master_row.addWidget(self._master_spin)
-        master_row.addStretch()
-        layout.addLayout(master_row)
+        shortcuts_row.addWidget(self._master_spin)
 
         sep = QFrame()
-        sep.setFrameShape(QFrame.Shape.HLine)
-        sep.setFixedHeight(2)
-        sep.setStyleSheet(f"color: {theme['secondary_dark']};")
-        layout.addWidget(sep)
+        sep.setFrameShape(QFrame.Shape.VLine)
+        sep.setFixedWidth(2)
+        shortcuts_row.addWidget(sep)
 
-        # Resolution preset buttons (SPEC-FONT-002)
-        self._detected_tier = self._detect_resolution_tier()
-        preset_row = QHBoxLayout()
-        preset_row.setContentsMargins(0, 4, 0, 8)
-        preset_row.setSpacing(8)
+        self._preset_label = QLabel("Preset")
+        self._preset_label.setStyleSheet(
+            f"color: {theme['secondary_text']}; font-weight: bold; "
+            f"font-size: {scaled_area_px('buttons')}px;"
+        )
+        shortcuts_row.addWidget(self._preset_label)
         for key, preset in self._RESOLUTION_PRESETS.items():
             btn = QPushButton(preset["label"])
-            btn.setFixedWidth(70)
+            btn.setCheckable(True)
+            btn.setMinimumWidth(108)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            self._style_preset_button(btn, key == self._detected_tier, theme)
+            self._style_preset_button(btn, False, theme)
             btn.clicked.connect(lambda checked, k=key: self._apply_preset(k))
-            preset_row.addWidget(btn)
+            shortcuts_row.addWidget(btn)
             self._preset_buttons[key] = btn
-        preset_row.addStretch()
-        layout.addLayout(preset_row)
+        shortcuts_row.addStretch()
+        self._style_shortcuts_frame(theme)
+        layout.addWidget(self._shortcuts_frame)
+        layout.addSpacing(18)
 
         grid = QGridLayout()
-        grid.setContentsMargins(0, 8, 0, 8)
-        grid.setVerticalSpacing(16)
+        grid.setContentsMargins(0, 0, 0, 8)
+        grid.setVerticalSpacing(14)
         grid.setHorizontalSpacing(16)
-        grid.setColumnMinimumWidth(0, 160)
-        grid.setColumnMinimumWidth(1, 80)
+        grid.setColumnMinimumWidth(0, 184)
+        grid.setColumnMinimumWidth(1, 164)
+        grid.setColumnMinimumWidth(2, 320)
+        grid.setColumnMinimumWidth(3, 520)
         grid.setColumnStretch(2, 1)
+        self._areas_grid = grid
+
+        self._column_headers = {}
+        for column, (key, text) in enumerate((
+            ("area", "AREA"),
+            ("size", "SIZE"),
+            ("description", "DESCRIPTION"),
+            ("screenshot", "SCREENSHOT"),
+        )):
+            header = QLabel(text)
+            header.setObjectName(f"fontSizes{key.title()}Header")
+            header.setMinimumHeight(34)
+            grid.addWidget(header, 0, column)
+            self._column_headers[key] = header
 
         self._preview_labels = {}
+        self._preview_thumbs = {}
         self._area_labels = []
         self._where_labels = []
+        self._shown_labels = {}
+        self._default_labels = []
+        self._restore_buttons = []
+        self._group_labels = []
         self._preview_sample_style = (
             f"color: {theme['primary_text']}; "
             f"background-color: {theme['secondary']}; "
@@ -2126,27 +2818,72 @@ class FontSizesSection(QWidget):
             f"padding: 0px; margin: 0px;"
         )
 
-        for row_idx, (area_id, label_text) in enumerate(self._AREA_LABELS):
-            label = QLabel(f"{label_text}:")
-            label.setStyleSheet(f"color: {theme['primary_text']};")
+        grid_row = 1
+        for area_id, label_text in self._AREA_LABELS:
+            group = self._AREA_GROUP_STARTS.get(area_id)
+            if group:
+                group_label = QLabel(f"{group[0]}    {group[1]}")
+                group_label.setMinimumHeight(30)
+                grid.addWidget(group_label, grid_row, 0, 1, 4)
+                self._group_labels.append(group_label)
+                grid_row += 1
+
+            label = QLabel(label_text)
+            # F-B2 (G3): row labels were color-only, so qt-material froze them at
+            # 13px until the first refresh. Wire to buttons (replayed below).
+            label.setStyleSheet(
+                f"color: {theme['primary_text']}; "
+                f"font-size: {scaled_area_px('buttons')}px;")
             label.setAlignment(Qt.AlignmentFlag.AlignTop)
-            grid.addWidget(label, row_idx, 0)
+            grid.addWidget(label, grid_row, 0)
             self._area_labels.append(label)
 
             spin = QSpinBox()
             spin.setRange(7, 24)
-            spin.setFixedWidth(80)
+            spin.setFixedWidth(96)
+            # O-6 (QSpinBox family): the internal QLineEdit renders at the
+            # qt-material 13px default; font-size in the spinbox's own QSS wires
+            # it to the settings. 'buttons' area (matches the form-control labels;
+            # replayed in refresh_theme).
+            spin.setStyleSheet(f"QSpinBox {{ font-size: {scaled_area_px('buttons')}px; }}")
             spin.valueChanged.connect(
                 lambda val, aid=area_id: self._on_area_changed(aid, val)
             )
-            grid.addWidget(spin, row_idx, 1, Qt.AlignmentFlag.AlignTop)
             self._spinboxes[area_id] = spin
 
+            size_cell = QWidget()
+            size_layout = QVBoxLayout(size_cell)
+            size_layout.setContentsMargins(0, 0, 0, 0)
+            size_layout.setSpacing(4)
+            size_layout.addWidget(spin, 0, Qt.AlignmentFlag.AlignLeft)
+            shown_label = QLabel()
+            shown_label.setStyleSheet(where_style)
+            size_layout.addWidget(shown_label)
+            self._shown_labels[area_id] = shown_label
+            default_row = QHBoxLayout()
+            default_row.setContentsMargins(0, 0, 0, 0)
+            default_row.setSpacing(4)
+            default_label = QLabel(f"Default {AREA_DEFAULTS.get(area_id, 11)}")
+            default_label.setStyleSheet(where_style)
+            default_row.addWidget(default_label)
+            restore_btn = QPushButton("restore")
+            restore_btn.setFlat(True)
+            restore_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            restore_btn.clicked.connect(
+                lambda checked=False, aid=area_id: self._restore_area(aid)
+            )
+            default_row.addWidget(restore_btn)
+            default_row.addStretch()
+            size_layout.addLayout(default_row)
+            self._default_labels.append(default_label)
+            self._restore_buttons.append(restore_btn)
+            grid.addWidget(size_cell, grid_row, 1, Qt.AlignmentFlag.AlignTop)
+
             info = self._PREVIEW_INFO.get(area_id, {})
-            preview_cell = QWidget()
-            cell_layout = QVBoxLayout(preview_cell)
+            description_cell = QWidget()
+            cell_layout = QVBoxLayout(description_cell)
             cell_layout.setContentsMargins(0, 0, 0, 0)
-            cell_layout.setSpacing(2)
+            cell_layout.setSpacing(6)
 
             where_label = QLabel(info.get("where", ""))
             where_label.setWordWrap(True)
@@ -2157,6 +2894,7 @@ class FontSizesSection(QWidget):
             sample_labels = []
             for sample_text in info.get("samples", []):
                 slabel = QLabel(sample_text)
+                slabel.setWordWrap(True)
                 slabel.setStyleSheet(self._preview_sample_style)
                 slabel.setSizePolicy(
                     QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
@@ -2164,26 +2902,22 @@ class FontSizesSection(QWidget):
                 cell_layout.addWidget(slabel)
                 sample_labels.append(slabel)
 
-            preview_cell.setSizePolicy(
+            description_cell.setSizePolicy(
                 QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
             )
-            grid.addWidget(preview_cell, row_idx, 2)
+            grid.addWidget(description_cell, grid_row, 2, Qt.AlignmentFlag.AlignTop)
             self._preview_labels[area_id] = sample_labels
 
-        layout.addLayout(grid)
+            # The screenshot has its own wide column; clicking still opens the
+            # original full-size image in AreaPreviewThumb's popup.
+            thumb = AreaPreviewThumb(area_id)
+            thumb.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+            grid.addWidget(thumb, grid_row, 3, Qt.AlignmentFlag.AlignTop)
+            self._preview_thumbs[area_id] = thumb
+            grid_row += 1
 
-        self._tip_label = QLabel(
-            "These sizes are multiplied by the Display Scale. "
-            "Change scale for DPI, change these for relative "
-            "emphasis between areas."
-        )
-        self._tip_label.setWordWrap(True)
-        self._tip_label.setStyleSheet(
-            f"color: {theme['secondary_text']}; "
-            f"font-size: {scaled_area_px('status')}px; "
-            f"padding-top: 4px;"
-        )
-        layout.addWidget(self._tip_label)
+        self._style_table_chrome(theme)
+        layout.addLayout(grid)
 
         layout.addStretch()
 
@@ -2191,17 +2925,55 @@ class FontSizesSection(QWidget):
         btn_row.addStretch()
 
         reset_btn = QPushButton("Reset All")
-        reset_btn.setFixedWidth(120)
+        reset_btn.setMinimumWidth(120)
         reset_btn.setStyleSheet(get_secondary_button_style())
         reset_btn.clicked.connect(self._on_reset_all)
         btn_row.addWidget(reset_btn)
 
         apply_btn = QPushButton("Apply")
-        apply_btn.setFixedWidth(120)
+        apply_btn.setMinimumWidth(120)
         apply_btn.setStyleSheet(get_primary_button_style())
         apply_btn.clicked.connect(self._on_apply)
         btn_row.addWidget(apply_btn)
-        layout.addLayout(btn_row)
+        btn_row.setContentsMargins(24, 8, 24, 16)
+        outer.addLayout(btn_row)
+
+    def _style_shortcuts_frame(self, theme):
+        self._shortcuts_frame.setStyleSheet(
+            f"QFrame {{ background-color: {theme['secondary']}; "
+            f"border: 1px solid {theme['secondary_dark']}; border-radius: 6px; }}"
+            "QFrame QFrame { background: transparent; border: none; }"
+        )
+
+    def _style_table_chrome(self, theme):
+        header_style = (
+            f"color: {theme['primary_text']}; background-color: {theme['secondary']}; "
+            f"border-bottom: 1px solid {theme['secondary_dark']}; "
+            f"font-size: {scaled_area_px('status')}px; font-weight: bold; "
+            "padding: 7px 10px;"
+        )
+        for header in self._column_headers.values():
+            header.setStyleSheet(header_style)
+        group_style = (
+            f"color: {theme['primary']}; background-color: {theme['secondary_dark']}; "
+            f"font-size: {scaled_area_px('status')}px; font-weight: bold; "
+            "padding: 6px 10px;"
+        )
+        for label in self._group_labels:
+            label.setStyleSheet(group_style)
+        restore_style = (
+            f"QPushButton {{ color: {theme['primary']}; background: transparent; "
+            f"border: none; padding: 0px; font-size: {scaled_area_px('status')}px; }}"
+            f"QPushButton:hover {{ color: {theme['primary_light']}; }}"
+        )
+        for button in self._restore_buttons:
+            button.setStyleSheet(restore_style)
+        thumb_style = (
+            f"background-color: {theme['secondary_dark']}; border: 1px solid "
+            f"{theme['secondary_dark']}; padding: 8px;"
+        )
+        for thumb in self._preview_thumbs.values():
+            thumb.setStyleSheet(thumb_style)
 
     def _read_from_settings(self):
         settings = get_settings()
@@ -2227,7 +2999,11 @@ class FontSizesSection(QWidget):
             spin.blockSignals(True)
             spin.setValue(value)
             spin.blockSignals(False)
+        self._sync_preset_highlight()
         self._update_preview()
+
+    def _restore_area(self, area_id: str):
+        self._spinboxes[area_id].setValue(AREA_DEFAULTS.get(area_id, 11))
 
     def _on_apply(self):
         for area_id, _ in self._AREA_LABELS:
@@ -2246,6 +3022,11 @@ class FontSizesSection(QWidget):
             spin.blockSignals(False)
         self._update_master()
         self._update_preview()
+        # F-A1 (G5): commit the reset like _apply_preset does. Without this the
+        # spinboxes show the defaults but nothing is persisted or broadcast, so
+        # the reset is silently lost if the user does not also click Apply (and
+        # the live surfaces never refresh). Reset All is a commit, not a preview.
+        self._on_apply()
 
     def _update_master(self):
         values = [s.value() for s in self._spinboxes.values()]
@@ -2256,6 +3037,22 @@ class FontSizesSection(QWidget):
             self._master_spin.blockSignals(False)
         else:
             self._master_spin.set_mixed(True)
+        self._sync_preset_highlight()
+
+    def _matched_preset_key(self):
+        for key, preset in self._RESOLUTION_PRESETS.items():
+            if all(
+                self._spinboxes[area_id].value() == value
+                for area_id, value in preset["values"].items()
+            ):
+                return key
+        return None
+
+    def _sync_preset_highlight(self):
+        self._active_preset = self._matched_preset_key()
+        theme = get_theme_colors()
+        for key, button in self._preset_buttons.items():
+            self._style_preset_button(button, key == self._active_preset, theme)
 
     def _update_preview(self):
         from ui.qt_theme import get_scale_factor
@@ -2263,23 +3060,11 @@ class FontSizesSection(QWidget):
         for area_id, sample_labels in self._preview_labels.items():
             base = self._spinboxes[area_id].value()
             px = max(5, int(base * sf))
+            self._shown_labels[area_id].setText(f"Shown at {px} px")
             for slabel in sample_labels:
                 slabel.setStyleSheet(
                     f"{self._preview_sample_style} font-size: {px}px;"
                 )
-
-    def _detect_resolution_tier(self):
-        from PySide6.QtWidgets import QApplication
-        screen = QApplication.primaryScreen()
-        if screen is None:
-            return None
-        w = screen.size().width()
-        if w < 1600:
-            return "hd"
-        elif w <= 2200:
-            return "fullhd"
-        else:
-            return "2k"
 
     def _apply_preset(self, preset_key):
         preset = self._RESOLUTION_PRESETS[preset_key]
@@ -2290,25 +3075,26 @@ class FontSizesSection(QWidget):
                 spin.setValue(value)
                 spin.blockSignals(False)
         self._update_master()
-        self._active_preset = preset_key
-        theme = get_theme_colors()
-        for key, btn in self._preset_buttons.items():
-            self._style_preset_button(btn, key == preset_key, theme)
         self._on_apply()
 
     @staticmethod
-    def _style_preset_button(btn, is_detected, theme):
-        if is_detected:
+    def _style_preset_button(btn, is_active, theme):
+        # F-B2 (G3): keep the preset buttons on the live buttons-area font size
+        # instead of letting qt-material freeze them at its 13px default.
+        _fs = scaled_area_px('buttons')
+        btn.setChecked(is_active)
+        if is_active:
             btn.setStyleSheet(
                 f"QPushButton {{ background-color: {theme['primary']}; "
                 f"color: {theme['primary_text']}; border: none; "
-                f"border-radius: 3px; padding: 4px 8px; font-weight: bold; }}"
+                f"border-radius: 3px; padding: 4px 8px; font-weight: bold; "
+                f"font-size: {_fs}px; }}"
             )
         else:
             btn.setStyleSheet(
                 f"QPushButton {{ background-color: {theme['secondary']}; "
                 f"color: {theme['secondary_text']}; border: 1px solid {theme['secondary_dark']}; "
-                f"border-radius: 3px; padding: 4px 8px; }}"
+                f"border-radius: 3px; padding: 4px 8px; font-size: {_fs}px; }}"
                 f"QPushButton:hover {{ background-color: {theme['secondary_light']}; }}"
             )
 
@@ -2319,22 +3105,37 @@ class FontSizesSection(QWidget):
             f"font-size: {scaled_area_px('panel_titles')}px; "
             f"padding-bottom: 8px;"
         )
+        # F-B2 (G3): keep the font-size on the live refresh, else qt-material's
+        # 13px default returns on a theme/preset change.
         self._master_label.setStyleSheet(
-            f"color: {theme['primary_text']}; font-weight: bold;"
+            f"color: {theme['primary_text']}; font-weight: bold; "
+            f"font-size: {scaled_area_px('buttons')}px;"
         )
+        self._preset_label.setStyleSheet(
+            f"color: {theme['secondary_text']}; font-weight: bold; "
+            f"font-size: {scaled_area_px('buttons')}px;"
+        )
+        self._hint_label.setStyleSheet(
+            f"color: {theme['secondary_text']}; "
+            f"font-size: {scaled_area_px('status')}px; padding-bottom: 10px;"
+        )
+        self._style_shortcuts_frame(theme)
         for lbl in self._area_labels:
-            lbl.setStyleSheet(f"color: {theme['primary_text']};")
+            lbl.setStyleSheet(
+                f"color: {theme['primary_text']}; "
+                f"font-size: {scaled_area_px('buttons')}px;")
+        # O-6 (QSpinBox family): replay the spinbox font-size on a live change.
+        # F-B2 (G3): include the master spin, which the per-area loop below omits.
+        for spin in (self._master_spin, *self._spinboxes.values()):
+            spin.setStyleSheet(
+                f"QSpinBox {{ font-size: {scaled_area_px('buttons')}px; }}")
         where_style = (
             f"color: {theme['secondary_text']}; font-size: {scaled_area_px('status')}px; "
             f"padding: 0px; margin: 0px;"
         )
-        for lbl in self._where_labels:
+        for lbl in (*self._where_labels, *self._shown_labels.values(),
+                    *self._default_labels):
             lbl.setStyleSheet(where_style)
-        self._tip_label.setStyleSheet(
-            f"color: {theme['secondary_text']}; "
-            f"font-size: {scaled_area_px('status')}px; "
-            f"padding-top: 4px;"
-        )
         self._preview_sample_style = (
             f"color: {theme['primary_text']}; "
             f"background-color: {theme['secondary']}; "
@@ -2343,14 +3144,16 @@ class FontSizesSection(QWidget):
         )
         self._update_preview()
         preset_btn_set = set(self._preset_buttons.values())
+        restore_btn_set = set(self._restore_buttons)
         for btn in self.findChildren(QPushButton):
-            if btn in preset_btn_set:
+            if btn in preset_btn_set or btn in restore_btn_set:
                 continue
             if btn.text() == "Apply":
                 btn.setStyleSheet(get_primary_button_style())
             else:
                 btn.setStyleSheet(get_secondary_button_style())
-        active = getattr(self, '_active_preset', self._detected_tier)
+        self._style_table_chrome(theme)
+        active = self._active_preset
         for key, pbtn in self._preset_buttons.items():
             self._style_preset_button(pbtn, key == active, theme)
 
@@ -2366,6 +3169,39 @@ class ChartDisplaySection(QWidget):
     and default panel sub-tabs. Shared by both Lite and Pro settings."""
 
     chart_display_changed = Signal()
+
+    # G8: the chart.* keys this section OWNS (writes on Apply). Reset uses this
+    # allowlist so it cannot touch chart.* keys owned by other surfaces. Pinned
+    # equal to what _apply_to_settings writes by test_g8_reset_cross_tab_isolation
+    # — add a row that writes a new chart.* key and the test fails until it is
+    # listed here; a foreign key can never enter because Apply never writes it.
+    OWNED_CHART_KEYS = frozenset({
+        "view_type", "show_outer_planets", "additional_bodies",
+        "show_planet_names", "show_retinue_rings", "show_element_pies",
+        "cusp_glow_mode", "rashi_aspect_system",
+        # G9b (td-v6nqc): wheel house display MOVED here from Zodiac & Calculation
+        # (a drawing choice). This section now owns it (Apply writes it, Reset
+        # restores it); it left ZodiacCalculationTab.OWNED_KEYS.
+        "wheel_house_display",
+    })
+    # Defaults for owned chart.* keys that have NO entry in
+    # DEFAULT_SETTINGS["chart"]. Co-located here (not in DEFAULT_SETTINGS)
+    # because managers/settings_manager.py is line-frozen by the SI ratchet;
+    # this is the single source for those keys. A key in neither map fails the
+    # pin test (test_g8_reset_cross_tab_isolation), so none resets silently.
+    OWNED_CHART_KEY_DEFAULTS = {"additional_bodies": []}
+
+    # td-iaqm.2.1: the display.* keys this section writes on Apply. Companion to
+    # OWNED_CHART_KEYS, used by the Pro remote set_setting routing set so a remote
+    # set of any Chart-Display-owned key fires _on_chart_display_changed exactly
+    # like clicking Apply (Rule 24 harness parity). Pinned equal to what
+    # _apply_to_settings writes by test_remote_display_routing — add a row that
+    # writes a new display.* key and the pin fails until it is listed here.
+    OWNED_DISPLAY_KEYS = frozenset({
+        "sign_display", "south_indian_style", "south_indian_vector_finish",
+        "additional_body_icon_set", "planet_icon_set", "planet_svg_colors",
+        "calendar_convention", "date_format",
+    })
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -2416,44 +3252,106 @@ class ChartDisplaySection(QWidget):
         outer.addLayout(btn_bar)
 
     def _create_controls(self, form: QFormLayout):
-        info = QLabel("All settings below persist across restarts.")
+        # 4B: page-level Apply/Reset explanation, replacing the old persist note.
+        info = QLabel("Changes take effect when you click Apply and are kept "
+                      "across restarts. Reset to Default restores only the "
+                      "settings on this page.")
+        info.setWordWrap(True)
         info.setStyleSheet(f"color: #888; font-style: italic; font-size: {scaled_area_px('info_text')}px;")
+        _tag_font(info, 'info_text')
         form.addRow("", info)
+
+        # ===== G9b 3C: "All views" group =====
+        _group_header(form, "All views")
 
         self.view_combo = QComboBox()
         self.view_combo.addItem("South Indian", "south_indian")
         self.view_combo.addItem("North Indian", "north_indian")
         self.view_combo.addItem("Wheel", "wheel")
         self.view_combo.addItem("Body Graph", "body_graph")
+        # Finding 6 (td-v6nqc): the Nakshatra wheel joined the Core/Lite F2 ring
+        # ([0,1,2,3,6], SPEC-NAK-LITE-001) but had no combo entry, so an F2 stop on
+        # Nakshatra persisted chart.view_type="nakshatra" that this combo could not
+        # represent — it silently showed "South Indian" and Apply clobbered the
+        # stored value. Placed after Body Graph / before Cards of Truth (combo order
+        # follows the F2 ring). Label matches the action-bar / tab wording already on
+        # screen. The anti-clobber guard below still protects any OTHER view the combo
+        # cannot represent (e.g. human_design when the build hides it, see below).
+        self.view_combo.addItem("Nakshatra", "nakshatra")
         self.view_combo.addItem("Cards of Truth", "cards_of_truth")
+        # G9b-0 (td-v6nqc): Human Design can be a default chart view (Lorris's call).
+        # Placed LAST — the two views OUTSIDE the F2 ring (cards_of_truth, human_design;
+        # F2_RING_EXCLUDED_VIEWS) sit together at the end. Omitted when HD is hidden
+        # (the Lite build / the "Hide Human Design" setting, ui.hide_human_design): the
+        # entry would otherwise resolve through VIEW_STACK_INDEX to a page the build does
+        # not present. A persisted chart.view_type="human_design" is then unrepresentable
+        # and the Finding 6 anti-clobber guard below preserves it — never clobbered on
+        # Apply unless the user actively picks a different entry. The combo reflects the
+        # hide state at construction (HD visibility is a boot/restart-level setting).
+        if not get_settings().get_hide_human_design():
+            self.view_combo.addItem("Human Design", "human_design")
         self.view_combo.setMaximumWidth(220)
         _locked_row(
             form, "chart.view_type", "Chart view:", self.view_combo,
-            "South Indian (fixed grid), North Indian (diamond), Wheel (circular), "
-            "Body Graph (planets on a body silhouette), or Cards of Truth "
-            "(the 14-card birth spread).",
+            "The view shown when a chart opens. South Indian (fixed grid), North "
+            "Indian (diamond), Wheel (circular), Body Graph (planets on a body "
+            "silhouette), Nakshatra (the 27-mansion wheel), Cards of Truth "
+            "(the 14-card birth spread), or Human Design (the nine-centre chart). "
+            "F2 cycles the views on the Chart tab and remembers where you stop.",
         )
 
-        # SPEC-SIC-002 §4.7: the two South Indian themes. The stored
-        # VALUES stay "classic"/"vector" (settings, specs and the release
-        # pipeline all key off them); only the LABELS changed, because
-        # "experimental" stopped being true and "classic" described the
-        # image-backed theme's history rather than what a customer sees.
-        # Written to display.south_indian_style on
-        # Apply; chart_display_changed then reaches
-        # core_gui_qt._on_chart_display_changed, which syncs every live
-        # South Indian host (D-13, sync_all_south_indian_hosts).
-        self.si_theme_combo = QComboBox()
-        self.si_theme_combo.addItem("Artistic (image-backed)", "classic")
-        self.si_theme_combo.addItem("Conventional (vector)", "vector")
-        self.si_theme_combo.setMaximumWidth(220)
+        self.sign_display_combo = QComboBox()
+        for label, value in (("Sign names only", "names"),
+                             ("Sign names + zodiac icons", "zodiac"),
+                             ("Sign names + Josh glyphs", "josh"),
+                             ("Josh glyph only", "josh_only")):
+            self.sign_display_combo.addItem(label, value)
+        self.sign_display_combo.setMaximumWidth(260)
+        _locked_row(form, "display.sign_display", "Sign display:",
+                    self.sign_display_combo,
+                    "How signs are marked: sign names only, sign names with zodiac icons, sign names with Josh's Aditya glyphs, or Josh glyph only. Applies to every chart view except Cards of Truth and Human Design.")
+
+        self.sign_shadows_cb = QCheckBox()
         _locked_row(
-            form, "display.south_indian_style",
-            "South Indian theme:", self.si_theme_combo,
-            "Conventional: the clean vector theme, in the North Indian design "
-            "language. Artistic: the image-backed chart, a bolder and more "
-            "decorative look. Applies to every South Indian view.",
+            form, "chart_display.element_shadows.enabled",
+            "Sign glyph/icon shadows:", self.sign_shadows_cb,
+            "Add element-coloured shadows to Josh glyphs and zodiac icons in "
+            "every supported chart view. Planet shadows are controlled separately.",
         )
+        shadow_size_field = QWidget()
+        shadow_size_row = QHBoxLayout(shadow_size_field)
+        shadow_size_row.setContentsMargins(0, 0, 0, 0)
+        self.sign_shadow_size_slider = QSlider(Qt.Orientation.Horizontal)
+        self.sign_shadow_size_slider.setRange(0, 12)
+        self.sign_shadow_size_slider.setSingleStep(1)
+        self.sign_shadow_size_value_label = QLabel("6 px")
+        self.sign_shadow_size_value_label.setStyleSheet(
+            f"font-size: {scaled_area_px('buttons')}px;")
+        _tag_font(self.sign_shadow_size_value_label, 'buttons')
+        shadow_size_row.addWidget(self.sign_shadow_size_slider, 1)
+        shadow_size_row.addWidget(self.sign_shadow_size_value_label)
+        self.sign_shadow_size_slider.valueChanged.connect(
+            lambda value: self.sign_shadow_size_value_label.setText(f"{value} px"))
+        _locked_row(
+            form, "chart_display.element_shadows.blur_radius",
+            "Sign shadow size:", shadow_size_field,
+            "Increase or decrease the glyph and zodiac-icon shadow footprint.")
+        # 2B: pointer to where the zodiac FRAME + name set are chosen (a calculation
+        # choice that stays on Zodiac & Calculation, per Lorris's rule).
+        sign_display_pointer = QLabel(
+            "The zodiac frame and the Aditya or Western name set are chosen under "
+            "Zodiac & Calculation.")
+        sign_display_pointer.setWordWrap(True)
+        sign_display_pointer.setStyleSheet(
+            f"color:#888; font-size:{scaled_area_px('info_text')}px; font-style:italic;")
+        _tag_font(sign_display_pointer, 'info_text')
+        form.addRow("", sign_display_pointer)
+        # Finding 6 P3-b: track USER intent for the anti-clobber guard. `activated`
+        # fires on every user selection INCLUDING re-picking the already-shown item
+        # (currentIndexChanged does not) and NOT on programmatic setCurrentIndex, so
+        # it is exactly "the user chose a view". A persisted view the combo cannot
+        # represent is preserved until the user actually picks one.
+        self.view_combo.activated.connect(self._on_view_activated)
 
         self.outer_planets_cb = QCheckBox()
         _locked_row(
@@ -2461,13 +3359,52 @@ class ChartDisplaySection(QWidget):
             "Show Uranus, Neptune, and Pluto.",
         )
 
-        from PySide6.QtWidgets import QButtonGroup, QRadioButton, QHBoxLayout, QWidget
+        from libaditya.optional_bodies import BODIES
+        self.additional_body_checks = {}
+        for body in BODIES:
+            checkbox = QCheckBox(body.label)
+            # O-6: own-QSS font-size so the checkbox tracks the 'buttons' area
+            # instead of freezing at the universal qt-material 13px.
+            checkbox.setStyleSheet(f"font-size: {scaled_area_px('buttons')}px;")
+            _tag_font(checkbox, 'buttons')
+            checkbox.setToolTip('Show in chart views. Unavailable dates are reported on the chart.')
+            self.additional_body_checks[body.name] = checkbox
+            form.addRow(
+                _form_label('Additional bodies:') if len(self.additional_body_checks) == 1 else '',
+                checkbox)
+        # Appearance only: independent of which bodies are shown above.
+        self.additional_body_icon_combo = QComboBox()
+        self.additional_body_icon_combo.addItem('Current', 'current')
+        self.additional_body_icon_combo.addItem('Custom SVG', 'custom_svg')
+        self.additional_body_icon_combo.setMaximumWidth(220)
+        _locked_row(form, 'display.additional_body_icon_set',
+                    'Additional-body symbols:', self.additional_body_icon_combo)
+
+        self.planet_icon_combo = QComboBox()
+        self.planet_icon_combo.addItem('Artistic', 'artistic')
+        self.planet_icon_combo.addItem('Simple SVG', 'simple_svg')
+        # G9d (td-q43fm): cap the width like every sibling combo. G6 added the wide
+        # planet_icon_colors editor to this same QFormLayout column below, which
+        # stretched the field column; without a cap this combo grew to the full page
+        # width (2K capture) while every other combo stayed ~220px.
+        self.planet_icon_combo.setMaximumWidth(220)
+        _locked_row(form, 'display.planet_icon_set', 'Planet appearance:', self.planet_icon_combo)
+        from apps.widgets.planet_icon_colors import PlanetIconColors
+        self.planet_icon_colors = PlanetIconColors()
+        form.addRow(_form_label('SVG colors:'), self.planet_icon_colors)
+
         planet_label_widget = QWidget()
         planet_label_layout = QHBoxLayout(planet_label_widget)
         planet_label_layout.setContentsMargins(0, 0, 0, 0)
         planet_label_layout.setSpacing(12)
         self.planet_label_degrees_rb = QRadioButton("Degrees (15°22')")
         self.planet_label_names_rb = QRadioButton("Planet names")
+        # O-6: font-size in QSS (text radio buttons).
+        _rb_css = f"font-size: {scaled_area_px('buttons')}px;"
+        self.planet_label_degrees_rb.setStyleSheet(_rb_css)
+        self.planet_label_names_rb.setStyleSheet(_rb_css)
+        _tag_font(self.planet_label_degrees_rb, 'buttons')
+        _tag_font(self.planet_label_names_rb, 'buttons')
         self.planet_label_group = QButtonGroup()
         self.planet_label_group.addButton(self.planet_label_degrees_rb, 0)
         self.planet_label_group.addButton(self.planet_label_names_rb, 1)
@@ -2480,17 +3417,24 @@ class ChartDisplaySection(QWidget):
             "What to display under each planet icon on the chart.",
         )
 
-        self.retinue_rings_cb = QCheckBox()
-        _locked_row(
-            form, "chart.show_retinue_rings", "Retinue rings (Wheel):", self.retinue_rings_cb,
-            "Add the Hora and Trimsamsa outer rings (Wheel).",
-        )
-
-        self.element_pies_cb = QCheckBox()
-        _locked_row(
-            form, "chart.show_element_pies", "Element pies (Wheel):", self.element_pies_cb,
-            "Show the fire/earth/air/water balance as pie slices (Wheel).",
-        )
+        # ===== G9b 3C: "Wheel" group =====
+        _group_header(form, "Wheel")
+        # House display (MOVED from Zodiac & Calculation — a DRAWING choice per
+        # Lorris's rule). Wheel-only (SPEC-WHD-001 §309); NO lock icon, so a plain
+        # form row, not _locked_row.
+        self.wheel_display_combo = QComboBox()
+        self.wheel_display_combo.addItem("Sign-based (traditional)", "sign_based")
+        self.wheel_display_combo.addItem("Standard Western houses", "standard_western")
+        self.wheel_display_combo.setMaximumWidth(220)
+        form.addRow(_form_label("House display:"), self.wheel_display_combo)
+        wheel_display_desc = QLabel(
+            "Standard Western layout starts the 1st house at the exact Ascendant "
+            "degree.")
+        wheel_display_desc.setWordWrap(True)
+        wheel_display_desc.setStyleSheet(
+            f"color:#888; font-size:{scaled_area_px('info_text')}px; font-style:italic;")
+        _tag_font(wheel_display_desc, 'info_text')
+        form.addRow("", wheel_display_desc)
 
         self.cusp_glow_combo = QComboBox()
         self.cusp_glow_combo.addItem("Off", 0)
@@ -2498,10 +3442,74 @@ class ChartDisplaySection(QWidget):
         self.cusp_glow_combo.addItem("All", 2)
         self.cusp_glow_combo.setMaximumWidth(220)
         _locked_row(
-            form, "chart.cusp_glow_mode", "Cusp glow (Wheel):", self.cusp_glow_combo,
-            "Highlight house cusps. Angles only = 1/4/7/10; All = every cusp (Wheel).",
+            form, "chart.cusp_glow_mode", "Cusp glow:", self.cusp_glow_combo,
+            "Highlight house cusps. Angles only = 1/4/7/10; All = every cusp.",
         )
 
+        self.element_pies_cb = QCheckBox()
+        _locked_row(
+            form, "chart.show_element_pies", "Element pies:", self.element_pies_cb,
+            "Show the fire/earth/air/water balance as pie slices.",
+        )
+
+        self.retinue_rings_cb = QCheckBox()
+        _locked_row(
+            form, "chart.show_retinue_rings", "Retinue rings:", self.retinue_rings_cb,
+            "Add the Hora and Trimsamsa outer rings. Also applies to the vector "
+            "South Indian chart.",
+        )
+
+        # td-cyap: live house-number size. Canonical path
+        # chart_display.house_number.font_size, read by both the Wheel and the
+        # South Indian view; the SI view renders 3pt smaller, clamped to the floor.
+        self.house_number_size_spin = QSpinBox()
+        # td-cyap (sol #4/F5): cap from the single-source constant (collision-free
+        # across every integer rotation of the default sign_based layout).
+        from managers.settings_manager import HOUSE_NUMBER_FONT_MAX
+        self.house_number_size_spin.setRange(10, HOUSE_NUMBER_FONT_MAX)
+        self.house_number_size_spin.setMaximumWidth(80)
+        # O-6 (QSpinBox family): font-size in own QSS ('buttons'); replayed in
+        # refresh_theme so the internal QLineEdit does not freeze at 13px.
+        self.house_number_size_spin.setStyleSheet(
+            f"QSpinBox {{ font-size: {scaled_area_px('buttons')}px; }}")
+        _locked_row(
+            form, "chart_display.house_number.font_size",
+            "House number size:", self.house_number_size_spin,
+            "Font size of the 1-12 house numbers. The Wheel uses this value; "
+            "South Indian renders 3pt smaller.",
+        )
+
+        # ===== G9b 3C: "South Indian" group =====
+        _group_header(form, "South Indian")
+        # SPEC-SIC-002 §4.7: stored VALUES stay "classic"/"vector"; only the labels
+        # changed. Written to display.south_indian_style on Apply; chart_display_
+        # changed reaches core_gui_qt._on_chart_display_changed (D-13, syncs every
+        # live South Indian host). G9a greying (_sync_wood_controls) preserved.
+        self.si_theme_combo = QComboBox()
+        self.si_theme_combo.addItem("Artistic (image-backed)", "classic")
+        self.si_theme_combo.addItem("Conventional (vector)", "vector")
+        self.si_theme_combo.setMaximumWidth(220)
+        _locked_row(
+            form, "display.south_indian_style", "Theme:", self.si_theme_combo,
+            "Conventional: the clean vector theme, in the North Indian design "
+            "language. Artistic: the image-backed chart, a bolder and more "
+            "decorative look. Applies to every South Indian view.",
+        )
+
+        self.si_finish_combo = QComboBox()
+        for label, value in (("Classique", "standard"), ("Santal doux", "santal"), ("Frêne blanchi", "ash")):
+            self.si_finish_combo.addItem(label, value)
+        self.si_finish_combo.setMaximumWidth(260)
+        _locked_row(form, "display.south_indian_vector_finish", "Vector finish:",
+                    self.si_finish_combo, "Material for the South Indian vector chart.")
+        # G9a (Finding 3B): the SI theme/finish rows only affect a South Indian
+        # view, so gate their enablement on the Chart view too.
+        self.si_theme_combo.currentIndexChanged.connect(self._sync_wood_controls)
+        self.si_finish_combo.currentIndexChanged.connect(self._sync_wood_controls)
+        self.view_combo.currentIndexChanged.connect(self._sync_wood_controls)
+
+        # ===== G9b 3C: "Body Graph" group =====
+        _group_header(form, "Body Graph")
         # SPEC-BODY-002: rashi aspect system for the Body Graph aspect panel.
         self.rashi_aspect_combo = QComboBox()
         self.rashi_aspect_combo.addItem("Quadrant", "quadrant")
@@ -2510,13 +3518,55 @@ class ChartDisplaySection(QWidget):
         self.rashi_aspect_combo.setMaximumWidth(220)
         _locked_row(
             form, "chart.rashi_aspect_system",
-            "Rashi aspects (Body Graph):", self.rashi_aspect_combo,
+            "Rashi aspects:", self.rashi_aspect_combo,
             "Which rashi aspect set the Body Graph aspect panel draws (Shift+F2): "
             "Quadrant, Element, or Conventional.",
         )
 
+        # ===== G9b 3C: "Dates" group (MOVED from Zodiac & Calculation) =====
+        _group_header(form, "Dates")
+        # SPEC-CAL-001: calendar convention for DISPLAYING pre-1582 dates.
+        # Display-only; never changes any JD, chart or stored file.
+        self.hist_dates_combo = QComboBox()
+        self.hist_dates_combo.addItem("Astronomy standard (Julian before 1582)", "astronomical")
+        self.hist_dates_combo.addItem("Proleptic Gregorian (Kala)", "proleptic_gregorian")
+        self.hist_dates_combo.setMaximumWidth(320)
+        _locked_row(form, "display.calendar_convention", "Historical dates:", self.hist_dates_combo)
+        hist_desc = QLabel(
+            "How dates before the 1582 Gregorian reform are DISPLAYED. "
+            "Astronomy standard uses the Julian calendar (matches NASA/Swiss "
+            "Ephemeris); Proleptic Gregorian extends today's calendar backwards "
+            "(matches Kala). Display-only: planetary positions are identical "
+            "either way. Dates from Oct 1582 onward look the same in both."
+        )
+        hist_desc.setWordWrap(True)
+        hist_desc.setStyleSheet(
+            f"color:#888; font-size:{scaled_area_px('info_text')}px; font-style:italic;")
+        _tag_font(hist_desc, 'info_text')
+        form.addRow("", hist_desc)
+
+        self.date_format_combo = QComboBox()
+        self.date_format_combo.addItem("Month/Day/Year (US)", "MM/DD/YYYY")
+        self.date_format_combo.addItem("Day/Month/Year", "DD/MM/YYYY")
+        self.date_format_combo.setMaximumWidth(320)
+        _locked_row(form, "display.date_format", "Date format:", self.date_format_combo)
+        date_fmt_desc = QLabel(
+            "The numeric date order shown in the Vedanga, Vimshottari, Planetary "
+            "Ages and Zodiacal Releasing lists. Display-only: the age column and "
+            "AI reading derive from the exact instant, not this text."
+        )
+        date_fmt_desc.setWordWrap(True)
+        date_fmt_desc.setStyleSheet(
+            f"color:#888; font-size:{scaled_area_px('info_text')}px; font-style:italic;")
+        _tag_font(date_fmt_desc, 'info_text')
+        form.addRow("", date_fmt_desc)
+
         panel_header = QLabel("Default sub-tabs (Chart tab)")
-        panel_header.setStyleSheet(f"font-weight: bold; margin-top: 8px;")
+        # O-6: font-size in QSS.
+        panel_header.setStyleSheet(
+            f"font-weight: bold; margin-top: 8px; "
+            f"font-size: {scaled_area_px('panel_titles')}px;")
+        _tag_font(panel_header, 'panel_titles')
         form.addRow("", panel_header)
 
         panel_desc = QLabel(
@@ -2528,6 +3578,7 @@ class ChartDisplaySection(QWidget):
         panel_desc.setStyleSheet(
             f"color:#888; font-size:{scaled_area_px('info_text')}px; font-style:italic; margin-bottom:4px;"
         )
+        _tag_font(panel_desc, 'info_text')
         form.addRow("", panel_desc)
 
         self.karakas_radio = _locked_radio_group(
@@ -2548,24 +3599,78 @@ class ChartDisplaySection(QWidget):
             ],
         )
 
+    def _sync_wood_controls(self, *_):
+        # G9a (Finding 3B): the South-Indian theme + vector-finish rows do nothing
+        # on a non-South-Indian view, so DISABLE (not hide — keep them discoverable)
+        # both when the Chart view is not South Indian. The existing finish-follows-
+        # theme gating is preserved: finish is enabled only on a South Indian view
+        # AND a vector theme.
+        is_si = self.view_combo.currentData() == 'south_indian'
+        vector = self.si_theme_combo.currentData() == 'vector'
+        self.si_theme_combo.setEnabled(is_si)
+        self.si_finish_combo.setEnabled(is_si and vector)
+        # Disabled-row tooltip (why it is greyed) — placeholder-gated so nothing
+        # visible ships until the orchestrator's copy lands.
+        tip = "" if (is_si or _si_scope_tooltip_pending()) else _SI_SCOPE_TOOLTIP
+        self.si_theme_combo.setToolTip(tip)
+        self.si_finish_combo.setToolTip(tip)
+
+    def _on_view_activated(self, *_):
+        # Finding 6 P3-b: a user selection (even re-picking the item already shown)
+        # is intent to set that view; the anti-clobber guard then writes it on Apply.
+        self._view_user_touched = True
+
     def _read_from_settings(self):
         s = get_settings()
 
-        idx = self.view_combo.findData(s.get("chart.view_type", "south_indian"))
+        # Finding 6 (td-v6nqc): remember whether the combo can represent the stored
+        # view AND what it is showing after load, so Apply never clobbers a persisted
+        # view the combo cannot show (e.g. human_design). If findData < 0 the combo
+        # keeps its fallback selection; the guard in _apply_to_settings preserves the
+        # real value unless the user actively picks a different entry.
+        stored_view = s.get("chart.view_type", "south_indian")
+        idx = self.view_combo.findData(stored_view)
+        self._view_representable = idx >= 0
+        # Fresh load = no user intent yet; a programmatic setCurrentIndex below does
+        # not fire `activated`, so this stays False until the user picks a view.
+        self._view_user_touched = False
         if idx >= 0:
             self.view_combo.setCurrentIndex(idx)
 
         si_idx = self.si_theme_combo.findData(
             s.get("display.south_indian_style", "classic"))
         self.si_theme_combo.setCurrentIndex(si_idx if si_idx >= 0 else 0)
+        from ui.south_indian_finishes import normalize_finish, normalize_sign_display
+        self.si_finish_combo.setCurrentIndex(self.si_finish_combo.findData(
+            normalize_finish(s.get('display.south_indian_vector_finish', 'standard'))))
+        self.sign_display_combo.setCurrentIndex(self.sign_display_combo.findData(
+            normalize_sign_display(s.get('display.sign_display', 'zodiac'))))
+        element_shadows = s.get_chart_display_section('element_shadows')
+        self.sign_shadows_cb.setChecked(bool(element_shadows.get('enabled', True)))
+        self.sign_shadow_size_slider.setValue(int(clamp_sign_shadow_size(
+            element_shadows.get('blur_radius'), 6)))
+        self.sign_shadow_size_value_label.setText(
+            f"{self.sign_shadow_size_slider.value()} px")
+        self._sync_wood_controls()
 
         self.outer_planets_cb.setChecked(s.get("chart.show_outer_planets", True))
+        selected = s.get('chart.additional_bodies', [])
+        for name, checkbox in self.additional_body_checks.items():
+            checkbox.setChecked(isinstance(selected, list) and name in selected)
+        icon_idx = self.additional_body_icon_combo.findData(
+            s.get('display.additional_body_icon_set', 'current'))
+        self.additional_body_icon_combo.setCurrentIndex(max(icon_idx, 0))
+        self.planet_icon_combo.setCurrentIndex(max(0, self.planet_icon_combo.findData(
+            s.get('display.planet_icon_set', 'artistic'))))
+        self.planet_icon_colors.load(s.get('display.planet_svg_colors', {}))
         if s.get("chart.show_planet_names", False):
             self.planet_label_names_rb.setChecked(True)
         else:
             self.planet_label_degrees_rb.setChecked(True)
         self.retinue_rings_cb.setChecked(s.get("chart.show_retinue_rings", False))
         self.element_pies_cb.setChecked(s.get("chart.show_element_pies", True))
+        self.house_number_size_spin.setValue(
+            int(s.get_chart_display_section('house_number')['font_size']))
 
         glow = s.get("chart.cusp_glow_mode", 0)
         idx = self.cusp_glow_combo.findData(glow)
@@ -2576,6 +3681,15 @@ class ChartDisplaySection(QWidget):
             s.get("chart.rashi_aspect_system", "quadrant"))
         if aspect_idx >= 0:
             self.rashi_aspect_combo.setCurrentIndex(aspect_idx)
+
+        # G9b (td-v6nqc): the three rows moved here from Zodiac & Calculation.
+        for combo, key, default in (
+            (self.wheel_display_combo, "chart.wheel_house_display", "sign_based"),
+            (self.hist_dates_combo, "display.calendar_convention", "astronomical"),
+            (self.date_format_combo, "display.date_format", "MM/DD/YYYY"),
+        ):
+            _idx = combo.findData(s.get(key, default))
+            combo.setCurrentIndex(_idx if _idx >= 0 else 0)
 
         self._select_radio_value(self.karakas_radio, s.get("ui.panel.karakas_tab", 0))
         self._select_radio_value(self.strength_radio, s.get("ui.panel.strength_tab", 0))
@@ -2606,15 +3720,51 @@ class ChartDisplaySection(QWidget):
 
     def _apply_to_settings(self):
         s = get_settings()
-        s.set("chart.view_type", self.view_combo.currentData())
+        # Finding 6 (td-v6nqc) anti-clobber guard: only write chart.view_type when
+        # the combo could represent the stored value (so currentData is the real
+        # view), OR the user actively changed the selection since load. Otherwise a
+        # persisted view the combo cannot show (human_design today, any future view)
+        # would be silently overwritten by the combo's fallback selection on Apply.
+        cur_view = self.view_combo.currentData()
+        if getattr(self, "_view_representable", True) or \
+                getattr(self, "_view_user_touched", False):
+            s.set("chart.view_type", cur_view)
         s.set("display.south_indian_style", self.si_theme_combo.currentData())
+        s.set("display.south_indian_vector_finish", self.si_finish_combo.currentData())
+        s.set("display.sign_display", self.sign_display_combo.currentData())
+        element_shadows = dict(s.get_chart_display_section('element_shadows'))
+        element_shadows['enabled'] = self.sign_shadows_cb.isChecked()
+        element_shadows['blur_radius'] = self.sign_shadow_size_slider.value()
+        s.set_chart_display_section('element_shadows', element_shadows)
         s.set("chart.show_outer_planets", self.outer_planets_cb.isChecked())
+        s.set('chart.additional_bodies', [name for name, checkbox in
+              self.additional_body_checks.items() if checkbox.isChecked()])
+        s.set('display.additional_body_icon_set', self.additional_body_icon_combo.currentData())
+        s.set('display.planet_icon_set', self.planet_icon_combo.currentData())
+        s.set('display.planet_svg_colors', dict(self.planet_icon_colors.colors))
         s.set("chart.show_planet_names",
               self.planet_label_names_rb.isChecked())
         s.set("chart.show_retinue_rings", self.retinue_rings_cb.isChecked())
         s.set("chart.show_element_pies", self.element_pies_cb.isChecked())
+        # td-cyap: write the canonical house-number size path both views read.
+        hn = dict(s.get_chart_display_section('house_number'))
+        hn['font_size'] = self.house_number_size_spin.value()
+        s.set_chart_display_section('house_number', hn)
         s.set("chart.cusp_glow_mode", self.cusp_glow_combo.currentData())
         s.set("chart.rashi_aspect_system", self.rashi_aspect_combo.currentData())
+
+        # G9b (td-v6nqc): the three rows moved here from Zodiac & Calculation.
+        # wheel_house_display applies live via chart_display_changed ->
+        # _on_chart_display_changed (which reads it); calendar_convention fires its
+        # own display-only subscribers (title bar, eclipse tables). set() fires the
+        # key-prefix callbacks so live hosts re-render without a chart recompute.
+        s.set("chart.wheel_house_display", self.wheel_display_combo.currentData())
+        s.set("display.calendar_convention", self.hist_dates_combo.currentData())
+        # date_format is DISPLAY-ONLY; only write when it actually changed so an
+        # Apply that leaves it untouched does not fire the DashaManager relist.
+        _new_date_format = self.date_format_combo.currentData()
+        if _new_date_format != s.get("display.date_format", "MM/DD/YYYY"):
+            s.set("display.date_format", _new_date_format)
 
         s.set("ui.panel.karakas_tab", self._radio_value(self.karakas_radio, 0))
         s.set("ui.panel.strength_tab", self._radio_value(self.strength_radio, 0))
@@ -2625,12 +3775,53 @@ class ChartDisplaySection(QWidget):
         s.set("ui.panel.aspects_mode", a_mode)
         s.set("ui.panel.aspects_tab", a_tab)
 
+        # td-iaqm.2.1: the icon-view repaint moved into the window's shared
+        # apply_chart_display_settings() tail (connected to this signal), so both
+        # Apply and the remote path refresh icons identically. Just fire the signal.
         self.chart_display_changed.emit()
 
     def _on_reset(self):
+        from managers.settings_manager import DEFAULT_CHART_DISPLAY, DEFAULT_SETTINGS
         s = get_settings()
-        s.reset_to_defaults("chart")
+        # G8: reset ONLY the chart.* keys this section owns (allowlist), never the
+        # whole "chart" namespace. reset_to_defaults("chart") REPLACES the section
+        # and would clobber keys owned elsewhere — the live chart UI state
+        # chart.show_aspect_panel / chart.aspect_split_fraction (Body-Graph
+        # aspect panel + splitter) / chart.show_trimsamsha_degrees (SI vector
+        # toggle). (G9b: chart.wheel_house_display moved INTO this section's
+        # allowlist — it is now owned here, not by Zodiac & Calculation.)
+        # OWNED_CHART_KEYS is pinned to what _apply_to_settings writes
+        # (test_g8_reset_cross_tab_isolation), so a new row cannot silently fall
+        # out of Reset and a foreign key can never enter. One set() per key =
+        # each subscriber fires once, no reset-then-restore flicker.
+        from copy import deepcopy
+        chart_defaults = DEFAULT_SETTINGS["chart"]
+        # Single-source default per owned key, no silent fallback: from
+        # DEFAULT_SETTINGS["chart"] when present, else the explicit exception map
+        # below. A key in NEITHER raises KeyError here (and fails the pin test)
+        # instead of resetting to a made-up value. deepcopy so mutable defaults
+        # (the additional_bodies list) are never aliased into settings.
+        for _k in self.OWNED_CHART_KEYS:
+            _default = (chart_defaults[_k] if _k in chart_defaults
+                        else self.OWNED_CHART_KEY_DEFAULTS[_k])
+            s.set(f"chart.{_k}", deepcopy(_default))
+        # house-number size lives in chart_display, not the "chart" namespace,
+        # so reset it explicitly to the single-source default.
+        hn = dict(s.get_chart_display_section('house_number'))
+        hn['font_size'] = DEFAULT_CHART_DISPLAY['house_number']['font_size']
+        s.set_chart_display_section('house_number', hn)
+        s.set_chart_display_section(
+            'element_shadows', deepcopy(DEFAULT_CHART_DISPLAY['element_shadows']))
         s.set("display.south_indian_style", "classic")
+        s.set("display.south_indian_vector_finish", "standard")
+        s.set("display.sign_display", "zodiac")
+        s.set("display.additional_body_icon_set", "current")
+        s.set("display.planet_icon_set", "artistic")
+        s.set("display.planet_svg_colors", {})
+        # G9b (td-v6nqc): the two date rows moved here own their display.* defaults
+        # on this page's Reset now (they left ZodiacCalculationTab's allowlist).
+        s.set("display.calendar_convention", "astronomical")
+        s.set("display.date_format", "MM/DD/YYYY")
         s.set("ui.panel.karakas_tab", 0)
         s.set("ui.panel.strength_tab", 0)
         s.set("ui.panel.aspects_mode", "vedic")
@@ -2638,12 +3829,19 @@ class ChartDisplaySection(QWidget):
         self._read_from_settings()
         # Reset must propagate to live hosts the same way Apply does
         # (SPEC-SIC-002 D-13: e.g. SI theme back to classic without waiting
-        # for a later Apply or restart).
+        # for a later Apply or restart). The icon-view repaint rides the shared
+        # apply_chart_display_settings() tail connected to this signal (td-iaqm.2.1).
         self.chart_display_changed.emit()
 
     def refresh_theme(self):
         self._reset_btn.setStyleSheet(get_secondary_button_style())
         self._apply_btn.setStyleSheet(get_primary_button_style())
+        # O-6 (QSpinBox family): replay the house-number spinbox font on a live
+        # font-size change (this section is persistent, not rebuilt).
+        self.house_number_size_spin.setStyleSheet(
+            f"QSpinBox {{ font-size: {scaled_area_px('buttons')}px; }}")
+        # td-c038: re-compose tagged migrated font-sizes from the live setting.
+        _replay_fonts(self)
 
 
 # =============================================================================
@@ -2695,6 +3893,7 @@ class SettingsTab(QWidget):
         self.nav_list.addItem("Chart Display")
         self.nav_list.addItem("Zodiac & Calculation")
         self.nav_list.addItem("Default Folders")
+        self.nav_list.addItem("AI Providers")
         self.nav_list.setCurrentRow(0)
 
         from ui.qt_theme import get_list_style
@@ -2742,6 +3941,11 @@ class SettingsTab(QWidget):
         self.folders_tab = DefaultFoldersTab(settings_path=self.settings_path)
         self.content_stack.addWidget(self.folders_tab)
 
+        # Narrow provider settings used by Add Chart image reading.
+        from ui.ai_provider_settings import AIProviderSettings
+        self.ai_providers_tab = AIProviderSettings()
+        self.content_stack.addWidget(self.ai_providers_tab)
+
         main_layout.addWidget(self.content_stack)
         self.nav_list.currentRowChanged.connect(self.content_stack.setCurrentIndex)
 
@@ -2775,3 +3979,5 @@ class SettingsTab(QWidget):
             self.chart_display_tab.refresh_theme()
         if hasattr(self, 'font_sizes_tab'):
             self.font_sizes_tab.refresh_theme()
+        if hasattr(self, 'ai_providers_tab'):
+            self.ai_providers_tab.refresh_theme()

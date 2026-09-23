@@ -216,8 +216,8 @@ capabilities.
   <li><b>Left panel</b> &mdash; Two dasha panels side by side:
       the <b>left dasha</b> (Vedanga Jyotisha) and the <b>right dasha</b>
       (switchable between Vimshottari and Planetary Ages with <kbd>F7</kbd>)</li>
-  <li><b>Center</b> &mdash; Chart display (South Indian, Wheel, North Indian, Body Graph
-      or Cards of Truth)</li>
+  <li><b>Center</b> &mdash; Chart display (South Indian, Wheel, North Indian, Body Graph,
+      Nakshatra or Cards of Truth)</li>
   <li><b>Right panel</b> &mdash; Info panels (Karakas, Strength, Aspects)</li>
 </ul>
 
@@ -274,13 +274,19 @@ the same instant.</p>
 <a name="chart-views"></a>
 <h2>Chart Views</h2>
 
-<p>Varuna360 offers five chart visualization styles. Press <kbd>F2</kbd> to cycle through them,
-or use <b>View &gt; Cycle Chart View</b>. The cycle order is
-<b>South Indian &rarr; Wheel &rarr; North Indian &rarr; Body Graph &rarr; Cards of Truth</b>.</p>
+<p>Varuna360 offers six chart visualization styles. Press <kbd>F2</kbd> to cycle through the
+five main views, or use <b>View &gt; Cycle Chart View</b>. The cycle order is
+<b>South Indian &rarr; Wheel &rarr; North Indian &rarr; Body Graph &rarr; Nakshatra</b>. Cards of Truth is its
+own button on the action bar (shortcut <kbd>Alt+K</kbd>), reached directly rather than through
+the F2 cycle.</p>
+
+<p>Press <kbd>F2</kbd> to cycle to the Nakshatra view, a sidereal view of the 27 nakshatras
+and their padas around your chart. It follows the zodiac frame buttons of the main tab and
+the ayanamsa chosen in Settings.</p>
 
 <p>Press <kbd>F</kbd> (or the status-bar fullscreen glyph) to send the current chart view
 fullscreen, and <kbd>F</kbd> or <kbd>Esc</kbd> to return. This works on every tab that shows a
-chart, not just the main Chart tab: the Nakshatra wheel, the Antikythera map, and the dual
+chart, not just the main Chart tab: the Nakshatra view, the Antikythera map, and the dual
 comparison views (Eclipse Reading, Compatibility, Transit, Solar Return) each go fullscreen
 correctly. While a chart is fullscreen, <kbd>F2</kbd> still cycles the main chart style, and
 the comparison views keep refitting when you toggle their overlay. On a tab with no chart view
@@ -1902,6 +1908,63 @@ fixed object. It is fluid, like the life it describes.
 The mode automatically deactivates when you load a new chart, reload the current chart,
 or load a "Now" chart.</p>
 
+<h3>The Bodygraph</h3>
+
+<p>The <b>Human Design</b> button on the chart tab cycles through three views: the bodygraph,
+the Design chart, and back to the wheel. The keyboard shortcut <kbd>Ctrl+Shift+H</kbd> does
+the same.</p>
+
+<p>The bodygraph shows the nine centres, the 36 channels and the 64 gates. Each planet
+activates one gate and one line. The Personality column (cyan) uses the birth moment; the
+Design column (amber) uses the moment the Sun was 88 degrees earlier, about three months
+before birth. A channel is defined when both of its gates are activated, by either column. A
+centre is defined when at least one of its channels is. From the defined channels the app
+derives the type, strategy, authority, profile, definition and incarnation cross, following
+the standard Human Design rules. Hover a centre, a channel or a planet row to focus it; click
+to pin it; <kbd>Escape</kbd> clears. The mouse wheel zooms and a drag pans.</p>
+
+<p>Chiron is listed in both columns because it is part of the chart, but it activates no gate:
+standard Human Design uses thirteen bodies, Sun to Pluto plus Earth and the lunar nodes.</p>
+
+<h3>Where gate 1 starts: the three frames</h3>
+
+<p>The 64 gates sit on the ecliptic in the order of the I Ching wheel, 5.625 degrees each.
+Conventional Human Design places the start of gate 1 at 223.25 degrees of the tropical zodiac
+(3 degrees 15 minutes of Scorpio). Varuna360 offers three frames:</p>
+<ul>
+  <li><b>Tropical Classic</b>: gate 1 at 223.25 degrees, the mapping used by every Human Design
+      website and book. This is the default.</li>
+  <li><b>Aditya Circle</b>: gate 1 at 193.25 degrees, the same 30 degree offset the Aditya
+      Circle applies to the signs. Every gate shifts by one sign.</li>
+  <li><b>Sidereal</b>: the tropical mapping applied to sidereal longitudes with your ayanamsa.
+      Gates shift by the ayanamsa, about 24 degrees.</li>
+</ul>
+<p>The Design chart (the 88 degree chart) can be displayed in the same three frames.</p>
+
+<h3>Beginner and Advanced</h3>
+
+<p><b>Settings &gt; Zodiac &gt; Human Design</b> has an experience level. In Beginner mode, the
+default, Human Design is locked to Tropical Classic: the zodiac buttons keep switching your
+astrology chart, but the bodygraph and the Design chart do not follow. Clicking another frame
+shows a short notice instead. In Advanced mode the zodiac buttons drive Human Design too.</p>
+
+<p>The lock exists because astrology is already complex, Human Design adds a second system on
+top, and a reader who does not yet know what the Aditya Circle is will be lost very fast if the
+two combine. Beginners see what every other Human Design source shows them. Nothing is hidden:
+switch to Advanced and every option is there.</p>
+
+<h3>An area of research</h3>
+
+<p>Human Design contains astrology: its creator stated that the Design chart is calculated 88
+degrees of the Sun before birth. Yet most Human Design circles learn little or no astrology,
+and the creator admitted he knew little of it himself. So two questions stay open: whether
+Human Design works in practice, and whether a different zodiac frame, Aditya Circle or
+Sidereal, is meant to apply to it (sidereal Human Design does exist in some circles). We do
+not take a side. The app ships the conventional mapping as its default and leaves the other
+frames available, so that anyone who wants to test them against real charts can. Readers can
+compare a person's bodygraph in the three frames and judge which type and authority describe
+them.</p>
+
 <!-- ============================================================ -->
 <a name="toolbar"></a>
 <h2>Toolbar (Left to Right)</h2>
@@ -1915,10 +1978,10 @@ Here is each button from left to right:</p>
 <h3>Left Side: View and Chart Name</h3>
 
 <p><b>Wheel / South / North</b> (<kbd>F2</kbd>) &mdash; Shows the current chart view style.
-Click to cycle through all five views: South Indian, Wheel, North Indian, Body Graph,
-Cards of Truth.</p>
+Click to cycle through the four views: South Indian, Wheel, North Indian, and Body Graph.
+Cards of Truth is no longer in this cycle; it has its own button (<kbd>Alt+K</kbd>).</p>
 
-<p><b>Open in Kala</b> (<kbd>Alt+K</kbd>) &mdash; Opens the current chart in Kala software
+<p><b>Open in Kala</b> (<kbd>Alt+O</kbd>) &mdash; Opens the current chart in Kala software
 (Ernst Wilhelm's astrology program). Requires Kala to be installed and configured in
 Settings.</p>
 
@@ -2193,7 +2256,7 @@ reference.</p>
 <div class="note">
 <b>There is now a full Cards of Truth view.</b> This table is the short version, kept here
 because it sits beside the positions. The whole fourteen-card spread has its own chart view:
-press <kbd>F2</kbd> until you reach it, or see
+open it with the Cards of Truth button (<kbd>Alt+K</kbd>), or see
 <a href="#chart-views">Cards of Truth</a> under Chart Views.
 </div>
 
@@ -2373,6 +2436,9 @@ and text across the entire application. The chart wheel has its own independent 
 the top sets a base size that applies everywhere. Below it, each area has its own spinner
 with a description and live preview showing sample text at the current size.</p>
 
+<p>Each font size row shows a small picture of the part of the app it controls, so you can
+see at a glance which area will change; click any picture to view it full size.</p>
+
 <p class="img-wrap"><img src="images/settings_font_sizes.webp" class="panel-screenshot"
    alt="Font Sizes settings with resolution presets and per-area spinners and live previews for all ten areas"></p>
 
@@ -2389,11 +2455,7 @@ value, the All Areas spinner shows <code>--</code> rather than pretending they d
       section headers in chart info dialogs, dual chart comparison names</li>
   <li><b>Panel Titles</b> &mdash; Large section headings (Strength / Aspects / Elements / Karakas),
       dialog titles, welcome screen, chart creation headers, Find Chart section titles</li>
-  <li><b>Chart Labels</b> &mdash; Text painted directly on the charts themselves: wheel cusp and
-      house degree labels, planet degree readouts, the degree-ruler ticks, element pie
-      percentages, the North Indian Ascendant label, and Body Graph planet names. This one is
-      separate from everything else for a reason: chart text is read at a glance from a
-      distance, so it usually wants to be larger than panel text. It defaults to 16.</li>
+  <li><b>Chart Labels</b> &mdash; Text painted directly on the charts themselves: sign names on the Wheel, the North Indian chart and both South Indian styles, South Indian planet, degree and house labels, wheel cusp and house degree labels, planet degree readouts, the degree-ruler ticks, element pie percentages, the North Indian Ascendant label, and Body Graph planet names. This one is separate from everything else for a reason: chart text is read at a glance from a distance, so it usually wants to be larger than panel text. It defaults to 16. On the Wheel and North Indian chart the sign names follow the resolution presets, which never exceed the default, so the Cards of Truth plaques always fit their sectors. Typing a larger Chart Labels size by hand can push some plaques out.</li>
   <li><b>Info &amp; Descriptions</b> &mdash; Help text, tooltips, descriptions throughout the app,
       chart editing form labels, ayanamsa dialog help, search field labels, loading messages</li>
   <li><b>Buttons &amp; Controls</b> &mdash; All clickable controls: top bar buttons (Transit, Now,
@@ -2426,7 +2488,8 @@ returns every area to its default.</p>
 <ul>
   <li><b>Chart view</b> &mdash; Default chart style: South Indian (fixed grid), North Indian
       (diamond), Wheel (circular), Body Graph (planets on a body silhouette), or Cards of Truth
-      (the 14-card birth spread). Can also be changed with <kbd>F2</kbd>.</li>
+      (the 14-card birth spread). The four main views cycle with <kbd>F2</kbd>; Cards of Truth
+      has its own action-bar button (<kbd>Alt+K</kbd>).</li>
   <li><b>South Indian theme</b> &mdash; <b>Classic</b> (the image-backed stone chart, the
       default) or <b>Vector</b> (the fully drawn element-card theme). Applies to every South
       Indian view in the app at once, including the small ones inside other panels.</li>
@@ -2549,7 +2612,7 @@ open CHTK files, the app starts in these folders.</p>
 <ul>
   <li><b>Kala Executable</b> &mdash; Path to the Kala.exe file. On Linux/macOS, Kala is
       launched through Wine. This enables the <b>Open in Kala</b> button
-      (<kbd>Alt+K</kbd>) in the toolbar. Leave empty if you do not use Kala.</li>
+      (<kbd>Alt+O</kbd>) in the toolbar. Leave empty if you do not use Kala.</li>
 </ul>
 
 <p>Click <b>SAVE SETTINGS</b> at the bottom right to apply folder changes.</p>
@@ -2950,13 +3013,14 @@ folder and confirm the file is really there.
   <li><kbd>Ctrl+C</kbd> in the terminal that launched it quits immediately.</li>
 </ul>
 
-<p>Three calculation tools can also be run directly from the source folder. The first two
-take a <code>--json</code> option so their output can be fed to something else; the third
-writes a chart file and has no JSON mode:</p>
+<p>Several calculation tools can also be run directly from the source folder. Most take a
+<code>--json</code> option so their output can be fed to something else; the
+<code>text_to_chtk</code> tool writes a chart file and has no JSON mode:</p>
 <ul>
   <li><code>python -m AI_tools.analysis.AI_aspects &lt;chart file&gt;</code></li>
   <li><code>python -m AI_tools.AI_main_function.dignities_in_vargas &lt;chart file&gt;</code></li>
   <li><code>python -m AI_tools.AI_main_function.text_to_chtk "&lt;birth details as text&gt;"</code></li>
+  <li>Nakshatra positions (CLI): <code>python -m AI_tools.cli.show_nakshatra_positions &lt;chart.chtk|.toml&gt; [--frame sidereal|tropical] [--ayanamsa &lt;id&gt;] [--json]</code> prints each body's nakshatra, pada and longitude, plus the Lagna.</li>
 </ul>
 
 <!-- ============================================================ -->
@@ -3305,7 +3369,7 @@ so if a picture matters, open the folder and confirm it is there.
 <h3>View Controls</h3>
 <table>
   <tr><th>Shortcut</th><th>Action</th></tr>
-  <tr><td><kbd>F2</kbd></td><td>Cycle Chart View (South Indian &rarr; Wheel &rarr; North Indian &rarr; Body Graph &rarr; Cards of Truth)</td></tr>
+  <tr><td><kbd>F2</kbd></td><td>Cycle Chart View (South Indian &rarr; Wheel &rarr; North Indian &rarr; Body Graph)</td></tr>
   <tr><td><kbd>Shift+F2</kbd></td><td>Show/hide the Rashi Aspect panel (Body Graph view)</td></tr>
   <tr><td><kbd>F3</kbd></td><td>Toggle Transit Overlay</td></tr>
   <tr><td><kbd>F4</kbd></td><td>Cycle Sign as Ascendant</td></tr>
@@ -3340,7 +3404,8 @@ so if a picture matters, open the folder and confirm it is there.
   <tr><td><kbd>Alt+Z</kbd></td><td>Set Aditya Zodiac Mode</td></tr>
   <tr><td><kbd>Alt+C</kbd></td><td>Set Tropical Classic Mode</td></tr>
   <tr><td><kbd>Alt+S</kbd></td><td>Toggle Sidereal Mode</td></tr>
-  <tr><td><kbd>Alt+K</kbd></td><td>Open Current Chart in Kala</td></tr>
+  <tr><td><kbd>Alt+K</kbd></td><td>Toggle Cards of Truth view</td></tr>
+  <tr><td><kbd>Alt+O</kbd></td><td>Open Current Chart in Kala</td></tr>
   <tr><td><kbd>F1</kbd></td><td>Open Help Manual</td></tr>
 </table>
 
@@ -3766,7 +3831,7 @@ holds the detail.</p>
       <td>Edit Chart</td></tr>
   <tr><td>Save or export a chart</td><td><b>File</b> menu</td>
       <td>Chart Files: CHTK and TOML</td></tr>
-  <tr><td>Change the chart style</td><td><kbd>F2</kbd> cycles five views</td>
+  <tr><td>Change the chart style</td><td><kbd>F2</kbd> cycles four views</td>
       <td>Chart Views</td></tr>
   <tr><td>See a planet's details</td><td><b>Double-click</b> the planet</td>
       <td>Chart Views</td></tr>

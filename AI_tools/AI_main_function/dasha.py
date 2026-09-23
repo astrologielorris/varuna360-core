@@ -23,6 +23,7 @@ from core.time_utils import (
     julday,
     invert_chtk_timezone,
     resolve_total_offset,
+    display_revjul,
 )
 
 from core.chtk_reader import CHTKReader
@@ -335,7 +336,8 @@ def get_dasha_params(birth_data, is_human_design=False):
 
 
 def calculate_dasha(birth_data, dlevels=1, ayanamsa=98,
-                    is_human_design=False):
+                    is_human_design=False, date_format=None, convention=None,
+                    year_length=None):
     """
     Calculate dasha periods from birth data.
 
@@ -351,6 +353,7 @@ def calculate_dasha(birth_data, dlevels=1, ayanamsa=98,
         dlevels: Depth 1-5 (Maha through Prana)
         ayanamsa: Ayanamsa ID (98=Dhruva, 1=Lahiri, 999=Tropical, etc.)
         is_human_design: If True, use Design date Moon for dasha sequence
+        year_length: dasha year key (saura|savana|nakshatra|sidereal), default saura
 
     Returns:
         list of dasha entry dicts with keys:
@@ -364,6 +367,9 @@ def calculate_dasha(birth_data, dlevels=1, ayanamsa=98,
         dlevels=dlevels, ayanamsa=ayanamsa,
         tz_offset_hours=params['tz_offset'],
         moon_jd_override=params['moon_jd_override'],
+        date_format=date_format,
+        convention=convention,
+        year_length=year_length,
     )
 
 
@@ -427,7 +433,7 @@ def _get_ayanamsa_display_name(ayanamsa_id):
     return str(ayanamsa_id)
 
 
-def format_dasha_table(entries, birth_data, ayanamsa=98,
+def format_dasha_table(entries, birth_data, ayanamsa=98, year_length="saura",
                        dlevels=1, design_date_info=None):
     """
     Format dasha entries as a human-readable console table.
@@ -463,6 +469,7 @@ def format_dasha_table(entries, birth_data, ayanamsa=98,
         dm = int((d['hour'] - dh) * 60)
         lines.append(f"  Design date: {d['day']:02d}/{d['month']:02d}/{d['year']}  {dh:02d}:{dm:02d} UTC")
     lines.append(f"  Ayanamsa: {ayanamsa_name} (ID {ayanamsa})")
+    lines.append(f"  Dasha year: {year_length}")
     lines.append(f"  Depth: {dlevels} ({_LEVEL_NAMES.get(dlevels - 1, f'Level {dlevels}')}dasha)")
 
     # Moon nakshatra info — use Design JD if HD, else birth UT JD
@@ -511,8 +518,22 @@ def format_dasha_table(entries, birth_data, ayanamsa=98,
     return "\n".join(lines)
 
 
+def _start_iso_from_jd(jd, convention=None):
+    """ISO 'YYYY-MM-DD' from a period-start JD, for the --json machine key.
+
+    td-okit c0-5 (sol 6 / GLM P2): the displayed `start_date` follows
+    --date-format, so the JSON also carries a format-independent ISO derived from
+    the JD. `convention` is passed explicitly by CLIs (astronomical) so the key
+    never depends on host settings."""
+    if jd is None:
+        return ""
+    y, m, d, _h = display_revjul(jd, convention)
+    return "%04d-%02d-%02d" % (int(y), int(m), int(d))
+
+
 def format_dasha_json(entries, birth_data, ayanamsa=98,
-                      dlevels=1, design_date_info=None):
+                      dlevels=1, design_date_info=None, convention=None,
+                      year_length="saura"):
     """
     Format dasha entries as a JSON string.
 
@@ -522,6 +543,8 @@ def format_dasha_json(entries, birth_data, ayanamsa=98,
         ayanamsa: Ayanamsa ID used
         dlevels: Dasha depth level
         design_date_info: If set (dict with jd/year/month/day/hour), include HD data
+        convention: calendar convention for the start_iso key (CLIs pass
+            "astronomical" explicitly; None reads the setting).
 
     Returns:
         str: JSON string
@@ -559,6 +582,7 @@ def format_dasha_json(entries, birth_data, ayanamsa=98,
             "ayanamsa_name": _get_ayanamsa_display_name(ayanamsa),
             "dlevels": dlevels,
             "human_design": is_hd,
+            "year_length": year_length,
         },
         "moon_nakshatra": {
             "name": nak_name,
@@ -570,6 +594,7 @@ def format_dasha_json(entries, birth_data, ayanamsa=98,
             {
                 "lord": e.get('lord', '?'),
                 "start_date": e.get('date', ''),
+                "start_iso": _start_iso_from_jd(e.get('jd'), convention),
                 "start_time": e.get('time', ''),
                 "age": e.get('age', ''),
                 "is_current": e.get('is_current', False),

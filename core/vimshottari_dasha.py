@@ -13,6 +13,7 @@ Supports multiple ayanamsas:
 
 from libaditya import swe
 from core.planets_calculator import get_calendar_flag, get_calendar_flag_from_jd
+from core.time_utils import format_display_date
 
 # Nakshatra size in degrees
 NAKSIZE = 13 + (1/3)
@@ -37,6 +38,43 @@ LENGTH = 1
 # Default year length (Saura year)
 DEFAULT_YEAR_LENGTH = 365.2422
 
+# Dasha year lengths (SPEC-DSH-003). The four Kala offers under "Dasa Length",
+# three from the Surya Siddhanta plus the sidereal year; values are the
+# libaditya constants (libaditya/constants.py dasha_years). Kala's default and
+# ours is Saura. A Kala profile switched to Nakshatra (359.0167) drifts from a
+# Saura run by ~6.2 days per dasha year, i.e. about 3 months by age 15.
+YEAR_LENGTHS = {
+    "saura": 365.2422,      # Sun through the tropics
+    "savana": 360.0,        # 360 sunrises
+    "nakshatra": 359.0167,  # 360 earthly (sidereal) rotations
+    "sidereal": 365.2564,   # sidereal year
+}
+DEFAULT_YEAR_LENGTH_KEY = "saura"
+YEAR_LENGTH_LABELS = {
+    "saura": "Saura (365.2422 d, tropical Sun)",
+    "savana": "Savana (360 d, sunrises)",
+    "nakshatra": "Nakshatra (359.0167 d, sidereal rotations)",
+    "sidereal": "Sidereal (365.2564 d)",
+}
+
+
+def resolve_year_length(value):
+    """Days per dasha year from a key ("saura", "nakshatra", ...) or a number.
+    None -> the Saura default. Unknown keys raise ValueError (never a silent
+    fallback: a wrong year length shifts every date by months)."""
+    if value is None:
+        return DEFAULT_YEAR_LENGTH
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        if not value > 0:
+            raise ValueError(f"dasha year length must be positive, got {value!r}")
+        return float(value)
+    key = str(value).strip().lower()
+    if key not in YEAR_LENGTHS:
+        raise ValueError(
+            f"unknown dasha year length {value!r}; expected one of "
+            f"{', '.join(YEAR_LENGTHS)}")
+    return YEAR_LENGTHS[key]
+
 
 class JulianDay:
     """Display-only JD wrapper for dasha date formatting (MM/DD/YYYY, HH:MM)."""
@@ -48,8 +86,14 @@ class JulianDay:
             get_calendar_flag(int(jd[0]), int(jd[1]), int(jd[2])))
         self.datetime = swe.revjul(self.jd, get_calendar_flag_from_jd(self.jd))
 
-    def date(self):
-        return f"{int(self.datetime[1]):02d}/{int(self.datetime[2]):02d}/{int(self.datetime[0]):04d}"
+    def date(self, date_format=None, convention=None):
+        """Display date string in the user's field order (td-okit decision 7).
+        `date_format` None reads display.date_format; an explicit value never
+        touches settings (CLI path). `convention` None reads
+        display.calendar_convention; an explicit value is CLI-safe (td-okit
+        c0-5). Derived from the JD via the display helper, so the numeric order is
+        a setting and never a computation input."""
+        return format_display_date(self.jd, date_format, convention)
 
     def time(self):
         h = self.datetime[3]
@@ -240,7 +284,8 @@ def calculate_vimshottari_dasha(birth_jd, dlevels=1, yrlen=DEFAULT_YEAR_LENGTH,
     return converted_periods + [lib_first] + [lib_age]
 
 
-def format_dasha_for_display(dasha_data, birth_jd, max_periods=200, today_jd=None):
+def format_dasha_for_display(dasha_data, birth_jd, max_periods=200, today_jd=None,
+                             date_format=None, convention=None):
     """
     Format dasha data for hierarchical GUI display
 
@@ -314,7 +359,7 @@ def format_dasha_for_display(dasha_data, birth_jd, max_periods=200, today_jd=Non
 
             result.append({
                 'lord': display_lord,
-                'date': start_jd.date(),
+                'date': start_jd.date(date_format, convention),
                 'time': start_jd.time(),
                 'age': age_str,
                 'is_current': is_current,
@@ -337,7 +382,8 @@ def format_dasha_for_display(dasha_data, birth_jd, max_periods=200, today_jd=Non
 
 
 def calculate_sub_dashas_for_period(parent_start_jd, parent_end_jd, parent_lord,
-                                    ayanamsa=98, tz_offset_hours=0):
+                                    ayanamsa=98, tz_offset_hours=0,
+                                    date_format=None, convention=None):
     """
     Calculate only the sub-dashas within a specific parent period's time range.
     This is MUCH faster than calculating from birth and filtering.
@@ -429,11 +475,11 @@ def calculate_sub_dashas_for_period(parent_start_jd, parent_end_jd, parent_lord,
         # Build display lord (append to parent chain)
         display_lord = f"{parent_lord}/{sub_lord_abbrev}"
 
-        # Convert JD to date/time
+        # Convert JD to date/time (date order via display helper, td-okit c0-2)
         year, month, day, hour_decimal = swe.revjul(current_jd, get_calendar_flag_from_jd(current_jd))
         hour = int(hour_decimal)
         minute = int((hour_decimal - hour) * 60)
-        date_str = f"{int(month):02d}/{int(day):02d}/{int(year):04d}"
+        date_str = format_display_date(current_jd, date_format, convention)
         time_str = f"{hour:02d}:{minute:02d}"
 
         # Calculate age from parent start
@@ -468,7 +514,9 @@ def calculate_sub_dashas_for_period(parent_start_jd, parent_end_jd, parent_lord,
 def calculate_dasha_from_birth_data(year, month, day, hour, minute, second=0,
                                     dlevels=1, ayanamsa=98,
                                     tz_offset_hours=0, moon_jd_override=None,
-                                    nak_mode="neither", **_ignored):
+                                    nak_mode="neither", date_format=None,
+                                    convention=None, year_length=None,
+                                    **_ignored):
     """
     Convenience function to calculate dasha from birth data.
 
@@ -478,6 +526,8 @@ def calculate_dasha_from_birth_data(year, month, day, hour, minute, second=0,
         ayanamsa: Ayanamsa number (999=Tropical, 0-46=Swiss Eph, 98/100=Custom)
         tz_offset_hours: UTC offset in hours (e.g., 1.0 for CET, 5.5 for IST).
         moon_jd_override: If set (float, UT), override Moon lookup JD (for Human Design).
+        year_length: Dasha year key ("saura" default, "savana", "nakshatra",
+            "sidereal") or days per year (SPEC-DSH-003).
 
     Returns:
         Formatted dasha data ready for display
@@ -487,7 +537,7 @@ def calculate_dasha_from_birth_data(year, month, day, hour, minute, second=0,
                           get_calendar_flag(year, month, day))
 
     dasha_data = calculate_vimshottari_dasha(
-        birth_jd, dlevels=dlevels, yrlen=DEFAULT_YEAR_LENGTH,
+        birth_jd, dlevels=dlevels, yrlen=resolve_year_length(year_length),
         ayanamsa=ayanamsa,
         tz_offset_hours=tz_offset_hours,
         moon_jd_override=moon_jd_override,
@@ -516,7 +566,9 @@ def calculate_dasha_from_birth_data(year, month, day, hour, minute, second=0,
 
     formatted = format_dasha_for_display(dasha_data, birth_jd,
                                          max_periods=max_periods,
-                                         today_jd=today_jd_local)
+                                         today_jd=today_jd_local,
+                                         date_format=date_format,
+                                         convention=convention)
 
     return formatted
 

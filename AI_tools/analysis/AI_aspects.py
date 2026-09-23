@@ -519,9 +519,8 @@ def extract_from_chtk(chtk_path):
 
     from core.chart_factory import build_chart_from_params
     from libaditya import swe
-    hour_decimal = (bd['utc_hour'] + bd['utc_minute'] / 60.0
-                    + bd['utc_second'] / 3600.0)
-    jd = swe.julday(bd['utc_year'], bd['utc_month'], bd['utc_day'], hour_decimal)
+    from core.chart_factory import jd_from_birth_data
+    jd = jd_from_birth_data(bd)
     chart = build_chart_from_params(jd=jd, lat=lat, lon=lon, mode="aditya", ayanamsa=1)
 
     return chart, bd['name']

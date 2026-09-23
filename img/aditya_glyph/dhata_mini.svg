@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 13 13" fill="currentColor" stroke="none" shape-rendering="crispEdges">
+  <!-- Dhata, 13-unit grid variant (SPEC-BAR-001 decision D-8).  Selected when
+       the rendered glyph box is below ~20px at DPR < 1.5, where the 48-unit
+       dhata.svg rasterises to ZERO fully-opaque pixels and the four petal
+       pairs merge into a grey cross (analysis report 06, section 5).
+
+       PIXEL-AUTHORED, NOT SCALED DOWN.  Every edge sits on an integer grid
+       line, so wherever one SVG unit maps to a whole number of device pixels
+       the mark is 100% opaque with no antialiasing at all.  Measured: 100% of
+       inked pixels fully opaque at device boxes 13 / 26 / 39 / 52 (DPR 1, 2,
+       3, 4) against 0% / 11% / 25% / 39% for the full glyph.
+
+       RASTERISATION CONTRACT: paint it into a device box that is an integer
+       multiple of 13 and at an integer device offset.  At in-between boxes
+       (a 16.25px device box from a 13px logical box at DPR 1.25, or a half
+       pixel of translation) it degrades to antialiasing like any other
+       drawing.  It still beats the full glyph there, but the "crisp" claim
+       belongs to the integer case only.
+
+       THE MARK: a solid 3x3 centre stands in for the r=4 stroked circle,
+       which cannot survive as a ring at 3 device pixels; four 5-pixel
+       diamonds on the cardinal axes stand in for the four petal PAIRS (the
+       full glyph's petal is a vesica, pointed at both ends and widest in the
+       middle, so a diamond is its faithful reduction, not a simplification of
+       convenience).  The 1px unlit gap between centre and petals is the
+       load-bearing detail: it is what the original draws, and it is what
+       keeps the mark reading as "centre plus radiating petals" rather than
+       as a plus sign.  Arm weight is 1 device pixel, matching the bar's
+       other 1px-stroke iconography; a heavier 2px-lobed variant was drawn
+       and rejected for outweighing the adjacent 12px label text.
+
+       COLOUR: currentColor, so the bar tints per theme and per control state.
+       QSvgRenderer does not resolve currentColor; the paint code substitutes
+       the ink colour in the source or SourceIn-tints the cached pixmap
+       (report 06 section 5, forms A and B).  Unlike dhata.svg there is no
+       stroke="#e0d8c8" attribute here for form A to rewrite: match on
+       currentColor, or use form B. -->
+
+  <!-- centre -->
+  <rect x="5" y="5" width="3" height="3"/>
+
+  <!-- north petal -->
+  <rect x="6" y="1" width="1" height="3"/>
+  <rect x="5" y="2" width="3" height="1"/>
+
+  <!-- east petal -->
+  <rect x="9" y="6" width="3" height="1"/>
+  <rect x="10" y="5" width="1" height="3"/>
+
+  <!-- south petal -->
+  <rect x="6" y="9" width="1" height="3"/>
+  <rect x="5" y="10" width="3" height="1"/>
+
+  <!-- west petal -->
+  <rect x="1" y="6" width="3" height="1"/>
+  <rect x="2" y="5" width="1" height="3"/>
+</svg>

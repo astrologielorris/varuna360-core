@@ -19,7 +19,6 @@ import functools
 import logging
 import platform
 import uuid
-import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -231,169 +230,6 @@ def _bind_oauth_server(handler_class) -> "HTTPServer":
     return server
 
 
-def _exchange_google_token_for_firebase(google_token: str) -> dict:
-    """
-    Exchange a Google OAuth token for a Firebase ID token + refresh token
-    via Firebase's signInWithIdp REST endpoint.
-
-    Tries id_token format first, falls back to access_token format.
-    Returns: {"id_token": str, "refresh_token": str, "email": str}
-    """
-    url = f"{FIREBASE_AUTH_URL}:signInWithIdp?key={FIREBASE_API_KEY}"
-
-    # Try as id_token first (Google ID token from OAuth redirect)
-    for token_key in ("id_token", "access_token"):
-        payload = {
-            "postBody": f"{token_key}={google_token}&providerId=google.com",
-            "requestUri": "http://localhost",
-            "returnIdpCredential": True,
-            "returnSecureToken": True,
-        }
-        try:
-            resp = requests.post(url, json=payload, timeout=15)
-            data = resp.json()
-
-            if resp.status_code == 200 and "idToken" in data:
-                return {
-                    "id_token": data["idToken"],
-                    "refresh_token": data.get("refreshToken", ""),
-                    "email": data.get("email", ""),
-                }
-
-            error_msg = data.get("error", {}).get("message", "")
-            # INVALID_IDP_RESPONSE means wrong token type — try the other format
-            if "INVALID_IDP_RESPONSE" in error_msg and token_key == "id_token":
-                continue
-            raise LicenseError(f"Firebase token exchange failed: {error_msg or 'Unknown error'}")
-
-        except requests.RequestException as e:
-            raise LicenseError(f"Network error during token exchange: {e}")
-
-    raise LicenseError("Could not exchange Google token for Firebase session.")
-
-
-def google_oauth_login() -> "LicenseState":
-    """
-    Google OAuth login flow for desktop app.
-
-    Opens browser → Google consent → redirects to localhost → exchanges
-    code for Firebase ID token → validates license.
-    """
-    import webbrowser
-    import urllib.parse
-    from http.server import BaseHTTPRequestHandler
-
-    # Storage for the OAuth result
-    oauth_result = {"id_token": None, "error": None}
-
-    class OAuthCallbackHandler(BaseHTTPRequestHandler):
-        def do_GET(self):
-            parsed = urllib.parse.urlparse(self.path)
-            params = urllib.parse.parse_qs(parsed.query)
-
-            # Extract the token or error from callback
-            if "id_token" in params:
-                oauth_result["id_token"] = params["id_token"][0]
-            elif "error" in params:
-                oauth_result["error"] = params["error"][0]
-
-            # Also check fragment (hash) params sent via POST-redirect
-            self.send_response(200)
-            self.send_header("Content-Type", "text/html")
-            self.end_headers()
-            self.wfile.write(b"""
-            <html><body style="background:#1a1a2e;color:#d4af37;font-family:sans-serif;
-            display:flex;align-items:center;justify-content:center;height:100vh;margin:0">
-            <div style="text-align:center">
-            <h1>Varuna360</h1>
-            <p>Sign-in complete. You can close this tab.</p>
-            <script>
-                // Firebase redirects with token in URL fragment
-                const hash = window.location.hash.substring(1);
-                const params = new URLSearchParams(hash);
-                const idToken = params.get('id_token') || params.get('access_token');
-                if (idToken) {
-                    fetch('/token?id_token=' + encodeURIComponent(idToken));
-                }
-                // Also try query params
-                const query = new URLSearchParams(window.location.search);
-                const qToken = query.get('id_token');
-                if (qToken) {
-                    fetch('/token?id_token=' + encodeURIComponent(qToken));
-                }
-                setTimeout(() => window.close(), 2000);
-            </script>
-            </div></body></html>
-            """)
-
-        def log_message(self, format, *args):
-            pass  # Suppress HTTP server logs
-
-    # Bind server directly (no TOCTOU gap between port check and bind)
-    server = _bind_oauth_server(OAuthCallbackHandler)
-    server.timeout = 120  # 2 minute timeout
-    port = server.server_address[1]
-
-    # Build sign-in URL with the actual bound port
-    signin_url = (
-        f"https://{GOOGLE_AUTH_DOMAIN}/"
-        f"__/auth/handler?"
-        f"apiKey={FIREBASE_API_KEY}&"
-        f"authType=signInViaRedirect&"
-        f"providerId=google.com&"
-        f"scopes=email%20profile&"
-        f"redirectUrl=http%3A%2F%2Flocalhost%3A{port}%2Fcallback"
-    )
-
-    # Open browser
-    logger.info("Opening Google sign-in in browser (port %d)...", port)
-    webbrowser.open(signin_url)
-
-    # Handle requests until we get the token or timeout
-    # (browsers may send extra requests like favicon between the redirect and JS fetch)
-    deadline = time.monotonic() + 120
-    while not oauth_result["id_token"] and not oauth_result["error"]:
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            break
-        server.timeout = min(remaining, 30)
-        server.handle_request()
-    server.server_close()
-
-    if oauth_result.get("error"):
-        raise LicenseError(f"Google sign-in failed: {oauth_result['error']}")
-
-    google_token = oauth_result.get("id_token")
-    if not google_token:
-        raise LicenseError(
-            "Could not receive Google sign-in token. "
-            "Try email/password login instead."
-        )
-
-    # Exchange Google token for Firebase session (ID token + refresh token)
-    fb = _exchange_google_token_for_firebase(google_token)
-
-    # Validate license with the Firebase ID token
-    result = validate_license_online(fb["id_token"])
-
-    state = LicenseState()
-    state.is_licensed = True
-    state.tier = result.get("tier", "subscriber")
-    state.email = fb.get("email", result.get("email", ""))
-    state.valid_until = _normalize_valid_until(result.get("valid_until", ""))
-    state.license_token = result.get("license_token", "")
-    state.firebase_refresh_token = fb["refresh_token"]
-
-    # Cache tokens — now with refresh token for silent renewal
-    save_token_cache(
-        license_token=state.license_token,
-        refresh_token=fb["refresh_token"],
-    )
-
-    logger.info("Google OAuth login successful for %s", state.email)
-    return state
-
-
 def firebase_refresh_token(refresh_token: str) -> dict:
     """
     Refresh a Firebase ID token using the refresh token.
@@ -470,6 +306,17 @@ def validate_license_online(firebase_id_token: str) -> dict:
         raise LicenseError(f"Network error: {e}")
 
 
+# Clock-skew tolerance for every verifying jwt.decode in the license stack.
+# PyJWT's default leeway is ZERO, and it rejects a token whose iat is even one
+# second in the future (ImmatureSignatureError). A Windows clock lagging the
+# server at activation therefore made a server-valid, freshly issued token
+# fail offline verification ("The server returned an invalid activation
+# token", 2026-08-21, self-healed when the clock resynced). 300s tolerates
+# real-world skew while keeping exp enforcement accurate to five minutes on
+# multi-day tokens.
+JWT_LEEWAY_S = 300
+
+
 def verify_license_token_offline(token: str) -> dict:
     """
     Verify a cached license JWT using the embedded public key.
@@ -483,6 +330,7 @@ def verify_license_token_offline(token: str) -> dict:
             LICENSE_PUBLIC_KEY,
             algorithms=["RS256"],
             issuer=LICENSE_ISSUER,
+            leeway=JWT_LEEWAY_S,
         )
         return decoded
     except jwt.ExpiredSignatureError:
@@ -704,6 +552,7 @@ def attempt_cached_login() -> LicenseState:
                 license_token, LICENSE_PUBLIC_KEY,
                 algorithms=["RS256"], issuer=LICENSE_ISSUER,
                 options={"verify_exp": False},
+                leeway=JWT_LEEWAY_S,
             )
         except jwt.InvalidTokenError:
             pass
@@ -781,38 +630,6 @@ def attempt_cached_login() -> LicenseState:
             pass
 
     logger.info("Cached token expired and beyond grace period — online login required")
-    return state
-
-
-def login_and_validate(email: str, password: str) -> LicenseState:
-    """
-    Full login flow: Firebase auth → license validation → cache tokens.
-
-    Raises LicenseError with user-facing message on failure.
-    """
-    state = LicenseState()
-
-    # Step 1: Firebase login
-    fb = firebase_login(email, password)
-    state.email = fb["email"]
-
-    # Step 2: Validate license with server
-    result = validate_license_online(fb["id_token"])
-
-    # Step 3: Store state
-    state.is_licensed = True
-    state.tier = result.get("tier", "subscriber")
-    state.valid_until = _normalize_valid_until(result.get("valid_until", ""))
-    state.license_token = result.get("license_token", "")
-    state.firebase_refresh_token = fb["refresh_token"]
-
-    # Step 4: Cache tokens
-    save_token_cache(
-        license_token=state.license_token,
-        refresh_token=fb["refresh_token"],
-    )
-
-    logger.info("Login successful for %s (tier=%s)", state.email, state.tier)
     return state
 
 

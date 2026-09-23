@@ -869,15 +869,9 @@ def create_chart_from_text(
         from libaditya import swe
         from core.chart_factory import build_chart_from_params
 
-        hour_decimal = (
-            birth_data["utc_hour"]
-            + birth_data["utc_minute"] / 60.0
-            + birth_data["utc_second"] / 3600.0
-        )
-        jd = swe.julday(
-            birth_data["utc_year"], birth_data["utc_month"],
-            birth_data["utc_day"], hour_decimal,
-        )
+        # Same calendar/JD precedence as import and recipe restoration (td-xwb1).
+        from core.chart_factory import jd_from_birth_data
+        jd = jd_from_birth_data(birth_data)
         chart = build_chart_from_params(
             jd=jd, lat=lat, lon=lon, mode=mode, name=result.name,
             ayanamsa=ayanamsa, utcoffset=utc_offset_hours,

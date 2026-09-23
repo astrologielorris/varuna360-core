@@ -536,6 +536,13 @@ class BirthDataManager:
         # the ADB batch 93 charts 6-21 arcminutes of ascendant). Compute total
         # seconds then divmod so a rounded :60 rolls into the minute/hour
         # instead of emitting an invalid ":60".
+        # NOT routed through core.time_utils.format_offset_from_hours (td-7q5s.4
+        # C2): that helper rounds the SIGNED float, this rounds the ABS and
+        # takes the sign from `chtk` directly. They diverge for a chtk in
+        # (-0.5s, 0): here '-00:00:00', there '+00:00:00'. No real offset lands
+        # there, but the two are not byte-identical, so this float-space
+        # formatter stays local. (The generate_chtk IANA branch works in
+        # integer-seconds space and DOES route through format_offset_seconds.)
         total_sec = int(round(abs(chtk) * 3600))
         h, rem = divmod(total_sec, 3600)
         m, s = divmod(rem, 60)
@@ -951,77 +958,6 @@ class BirthDataManager:
                 return ("", f"UTC{offset_hours:+.1f} {iana_tz}")
         except Exception:
             return ("UTC", f"UTC {iana_tz}")
-
-    @staticmethod
-    def format_location_string(birth_data: Dict) -> str:
-        """
-        Format location for display.
-
-        Args:
-            birth_data: Canonical birth_data dict
-
-        Returns:
-            Formatted string like "Coimbra, Portugal"
-        """
-        city = birth_data.get('city', '')
-        country = birth_data.get('country', '')
-
-        # Clean up city - remove ", 0" suffix if present
-        if city.endswith(', 0'):
-            city = city[:-3].strip()
-
-        if city and country:
-            # Avoid "Portugal, Portugal" duplication
-            if city.lower() == country.lower():
-                return city
-            return f"{city}, {country}"
-        elif city:
-            return city
-        elif country:
-            return country
-        else:
-            return "Unknown"
-
-    @staticmethod
-    def format_date_string(birth_data: Dict) -> str:
-        """
-        Format birth date for display (MM/DD/YYYY format).
-        Handles BCE dates (negative years) with proper display.
-
-        Args:
-            birth_data: Canonical birth_data dict
-
-        Returns:
-            Formatted date string (e.g., "01/15/12 BCE" or "07/23/1985")
-        """
-        month = birth_data.get('local_month', 1)
-        day = birth_data.get('local_day', 1)
-        year = birth_data.get('local_year', 1970)
-
-        if year <= 0:
-            # BCE year: astronomical year 0 = 1 BCE, -1 = 2 BCE, etc.
-            bce_year = 1 - year  # Convert astronomical to BCE
-            return f"{month:02d}/{day:02d}/{bce_year} BCE"
-        else:
-            return f"{month:02d}/{day:02d}/{year}"
-
-    @staticmethod
-    def format_time_string(birth_data: Dict, utc: bool = False) -> str:
-        """
-        Format birth time for display (HH:MM:SS format).
-
-        Args:
-            birth_data: Canonical birth_data dict
-            utc: If True, return UTC time; else return local time
-
-        Returns:
-            Formatted time string
-        """
-        prefix = 'utc_' if utc else 'local_'
-        hour = birth_data.get(f'{prefix}hour', 0)
-        minute = birth_data.get(f'{prefix}minute', 0)
-        second = birth_data.get(f'{prefix}second', 0)
-        return f"{hour:02d}:{minute:02d}:{second:02d}"
 
 # Convenience function for quick access
 def create_birth_data_from_chtk(chtk_path: str) -> Dict[str, Any]:

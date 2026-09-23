@@ -20,7 +20,8 @@ from PySide6.QtWidgets import (
 
 from state.user_data import get_default_data_dir, set_user_data_dir
 
-from ui.qt_theme import scaled_area_font
+from ui.qt_theme import scaled_area_px
+from ui.popup_fonts import tier_px, popup_title_px
 
 
 class FirstRunDialog(QDialog):
@@ -39,7 +40,9 @@ class FirstRunDialog(QDialog):
         layout.setSpacing(18)
 
         title = QLabel("Welcome to Varuna360")
-        title.setFont(scaled_area_font('panel_titles', bold=True))
+        # O-6: font-size in QSS, not setFont (qt-material overrides setFont).
+        title.setStyleSheet(
+            f"font-size: {popup_title_px(14)}px; font-weight: bold;")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(title)
 
@@ -49,8 +52,8 @@ class FirstRunDialog(QDialog):
             "You can change this later in Settings > Default Folders."
         )
         desc.setWordWrap(True)
-        desc_font = scaled_area_font('info_text')
-        desc.setFont(desc_font)
+        _info_css = f"font-size: {scaled_area_px('info_text')}px;"
+        desc.setStyleSheet(_info_css)
         layout.addWidget(desc)
 
         # Path input row
@@ -58,17 +61,17 @@ class FirstRunDialog(QDialog):
         path_layout.setSpacing(8)
 
         path_label = QLabel("Data folder:")
-        path_label.setFont(desc_font)
+        path_label.setStyleSheet(_info_css)
         path_layout.addWidget(path_label)
 
         self._path_edit = QLineEdit()
         self._path_edit.setText(str(get_default_data_dir()))
-        self._path_edit.setFont(desc_font)
+        self._path_edit.setStyleSheet(f"font-size: {tier_px('buttons', 11)}px;")
         self._path_edit.setMinimumWidth(300)
         path_layout.addWidget(self._path_edit, stretch=1)
 
         browse_btn = QPushButton("Browse...")
-        browse_btn.setFont(scaled_area_font('buttons'))
+        browse_btn.setStyleSheet(f"font-size: {scaled_area_px('buttons')}px;")
         browse_btn.clicked.connect(self._on_browse)
         path_layout.addWidget(browse_btn)
 
@@ -81,13 +84,14 @@ class FirstRunDialog(QDialog):
         ok_btn = QPushButton("Continue")
         ok_btn.setDefault(True)
         ok_btn.setMinimumWidth(120)
-        ok_btn.setFont(scaled_area_font('buttons', bold=True))
+        ok_btn.setStyleSheet(
+            f"font-size: {tier_px('action_buttons', 10)}px; font-weight: bold;")
         ok_btn.clicked.connect(self._on_accept)
         btn_layout.addWidget(ok_btn)
 
         cancel_btn = QPushButton("Quit")
         cancel_btn.setMinimumWidth(80)
-        cancel_btn.setFont(scaled_area_font('buttons'))
+        cancel_btn.setStyleSheet(f"font-size: {tier_px('action_buttons', 10)}px;")
         cancel_btn.clicked.connect(self.reject)
         btn_layout.addWidget(cancel_btn)
 

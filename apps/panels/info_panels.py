@@ -507,8 +507,27 @@ def create_right_panels(gui):
     _all_tab_btns = lambda: [gui.karakas_tab_btn, gui.hora_tab_btn,
                              gui.trimsamsa_tab_btn, gui.graph_tab_btn]
 
+    def _sync_karakas_visibility(index):
+        """td-7932: gate the 3 eager controllers of this stack (index 3 is the
+        lazy planetary_condition). Persist-free.
+
+        For index 3 the lazy planetary_condition is turned ON conditionally by
+        switch_to_condition (it depends on the inner stack page), so we only
+        turn it OFF here when leaving the Condition tab — otherwise it keeps
+        recomputing while a sibling karakas page is shown."""
+        for _i, _name in ((0, 'karakas_controller'), (1, 'hora_controller'),
+                          (2, 'trimsamsa_controller')):
+            _c = getattr(gui, _name, None)
+            if _c is not None:
+                _c.set_visible(_i == index)
+        if index != 3:
+            _pc = getattr(gui, 'planetary_condition_controller', None)
+            if _pc is not None:
+                _pc.set_visible(False)
+
     def _switch_tab(index, active_btn):
         gui.karakas_stack.setCurrentIndex(index)
+        _sync_karakas_visibility(index)
         for btn in _all_tab_btns():
             btn.setStyleSheet(gui._karakas_tab_active_style if btn is active_btn
                               else gui._karakas_tab_inactive_style)
@@ -543,6 +562,9 @@ def create_right_panels(gui):
     gui.switch_to_trimsamsa_tab = switch_to_trimsamsa
     gui.switch_to_graph_tab = switch_to_condition
 
+    # td-7932: initial visibility (non-current eager controllers start hidden).
+    _sync_karakas_visibility(gui.karakas_stack.currentIndex())
+
     # Single swap handler: toggles ALL enriched views at once
     gui._karakas_enriched_mode = False
 
@@ -557,8 +579,14 @@ def create_right_panels(gui):
                 gui.karakas_controller._refresh()
             if hasattr(gui, '_ensure_controller'):
                 gui._ensure_controller('planetary_condition')
+                # td-7932: only VISIBLE when the Condition tab is actually the
+                # shown karakas page. Enriched mode can be toggled while a sibling
+                # karakas page (0/1/2) is current, and marking planetary_condition
+                # visible there re-opens the hidden-recompute leak that
+                # _sync_karakas_visibility closes (the two writers must agree).
                 if hasattr(gui, 'planetary_condition_controller'):
-                    gui.planetary_condition_controller.set_visible(True)
+                    _on_condition = gui.karakas_stack.currentIndex() == 3
+                    gui.planetary_condition_controller.set_visible(_on_condition)
         if not enriched:
             if hasattr(gui, 'planetary_condition_controller'):
                 gui.planetary_condition_controller.set_visible(False)
@@ -849,8 +877,21 @@ def create_right_panels(gui):
         gui.strength_lang_btn.setToolTip(tip)
         gui.strength_lang_btn.setVisible(index in (0, 2, 3))
 
+    def _sync_strength_visibility(index):
+        """td-7932: gate the 4 eager controllers of this stack on visibility —
+        only the shown one refreshes on chart changes; the hidden siblings defer
+        (PanelControllerBase._is_visible) and drain on their next show. Persist-
+        free so it is safe to call for initial visibility without clobbering the
+        saved tab."""
+        for _i, _name in ((0, 'strength_controller'), (1, 'elements_controller'),
+                          (2, 'modality_controller'), (3, 'dignities_controller')):
+            _c = getattr(gui, _name, None)
+            if _c is not None:
+                _c.set_visible(_i == index)
+
     def _switch_strength_tab(index, active_btn):
         gui.strength_elements_stack.setCurrentIndex(index)
+        _sync_strength_visibility(index)
         for btn in _all_strength_tabs():
             btn.setStyleSheet(gui._tab_active_style if btn is active_btn else gui._tab_inactive_style)
         _update_lang_btn_tooltip(index)
@@ -933,6 +974,11 @@ def create_right_panels(gui):
     gui.switch_to_elements_tab = switch_to_elements
     gui.switch_to_modality_tab = switch_to_modality
     gui.switch_to_dignities_tab = switch_to_dignities
+
+    # td-7932: initial visibility (non-current eager controllers start hidden).
+    # Persist-free; startup restore later calls switch_to_*_tab for the saved
+    # index, re-syncing through _switch_strength_tab.
+    _sync_strength_visibility(gui.strength_elements_stack.currentIndex())
 
     # Add small vertical space below
     strength_layout.addSpacing(2)
@@ -1276,9 +1322,24 @@ def create_right_panels(gui):
         for i, btn in enumerate(btns):
             btn.setStyleSheet(gui._tab_active_style if i == active_idx else gui._tab_inactive_style)
 
+    def _sync_aspects_eager(active_idx):
+        """td-7932: gate the EAGER members of aspects_stack — aspects (0) and the
+        three deferred Tajika controllers (matrix 3 / relationships 4 / yogas 5).
+        The lazy members (avastha/shame/interchange/nabhasa) are gated inline in
+        each switch handler already; this covers the eager ones the same way.
+        getattr-guarded — deferred Tajika controllers may not exist yet."""
+        for _idx, _name in ((0, 'aspects_controller'),
+                            (3, 'tajika_matrix_controller'),
+                            (4, 'tajika_relationships_controller'),
+                            (5, 'tajika_yogas_controller')):
+            _c = getattr(gui, _name, None)
+            if _c is not None:
+                _c.set_visible(_idx == active_idx)
+
     # Vedic tab switches (indices 0-2)
     def switch_to_aspects():
         gui.aspects_stack.setCurrentIndex(0)
+        _sync_aspects_eager(0)
         _set_tab_styles(0)
         if hasattr(gui, 'avastha_controller'):
             gui.avastha_controller.set_visible(False)
@@ -1291,6 +1352,7 @@ def create_right_panels(gui):
 
     def switch_to_avastha():
         gui.aspects_stack.setCurrentIndex(1)
+        _sync_aspects_eager(1)
         _set_tab_styles(1)
         gui._ensure_controller('avastha')
         if hasattr(gui, 'avastha_controller'):
@@ -1304,6 +1366,7 @@ def create_right_panels(gui):
 
     def switch_to_shame():
         gui.aspects_stack.setCurrentIndex(2)
+        _sync_aspects_eager(2)
         _set_tab_styles(2)
         if hasattr(gui, 'avastha_controller'):
             gui.avastha_controller.set_visible(False)
@@ -1317,6 +1380,7 @@ def create_right_panels(gui):
 
     def switch_to_exchange():
         gui.aspects_stack.setCurrentIndex(6)
+        _sync_aspects_eager(6)
         _set_tab_styles(3)
         if hasattr(gui, 'avastha_controller'):
             gui.avastha_controller.set_visible(False)
@@ -1331,6 +1395,7 @@ def create_right_panels(gui):
     def switch_to_nabhasa():
         # 4th tab of the Tajika row (row position 3). Shows the natal Nabhasa panel.
         gui.aspects_stack.setCurrentIndex(7)
+        _sync_aspects_eager(7)
         _set_tab_styles(3)
         if hasattr(gui, 'avastha_controller'):
             gui.avastha_controller.set_visible(False)
@@ -1347,6 +1412,7 @@ def create_right_panels(gui):
         gui.aspects_stack.setCurrentIndex(3)
         _set_tab_styles(0)
         gui._ensure_controller('tajika_matrix')
+        _sync_aspects_eager(3)
         if hasattr(gui, 'avastha_controller'):
             gui.avastha_controller.set_visible(False)
         if hasattr(gui, 'shame_controller'):
@@ -1360,6 +1426,7 @@ def create_right_panels(gui):
         gui.aspects_stack.setCurrentIndex(4)
         _set_tab_styles(1)
         gui._ensure_controller('tajika_relationships')
+        _sync_aspects_eager(4)
         if hasattr(gui, 'avastha_controller'):
             gui.avastha_controller.set_visible(False)
         if hasattr(gui, 'shame_controller'):
@@ -1373,6 +1440,7 @@ def create_right_panels(gui):
         gui.aspects_stack.setCurrentIndex(5)
         _set_tab_styles(2)
         gui._ensure_controller('tajika_yogas')
+        _sync_aspects_eager(5)
         if hasattr(gui, 'avastha_controller'):
             gui.avastha_controller.set_visible(False)
         if hasattr(gui, 'shame_controller'):
@@ -1484,6 +1552,12 @@ def create_right_panels(gui):
     gui.switch_to_tajika_matrix_tab = switch_to_tajika_matrix
     gui.switch_to_tajika_relationships_tab = switch_to_tajika_relationships
     gui.switch_to_tajika_yogas_tab = switch_to_tajika_placeholder
+
+    # td-7932 boot sync: seed the eager members' _is_visible to match the stack's
+    # initial page (persist-free — startup restore fires the real switch handlers
+    # later). At boot only aspects_controller (0) exists; the deferred Tajika
+    # controllers are created on first switch, so this just hides/shows index 0.
+    _sync_aspects_eager(gui.aspects_stack.currentIndex())
 
     # Add small spacing below
     aspects_layout.addSpacing(2)

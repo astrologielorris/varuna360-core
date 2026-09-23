@@ -152,13 +152,15 @@ class Nakshatra:
 
     def init_ash_long_Cusp(self):
         swe.set_sid_mode(self.ayanamsa)
-        cusps, _, _, _ = swe.houses_ex2(
+        cusps, angles, _, _ = swe.houses_ex2(
             self._occupant.timeJD.jd_number(),
             self._occupant.location.lat,
             self._occupant.location.long,
             self._occupant.hsys,
             swe.FLG_SIDEREAL,
         )
+        if self._occupant.angle_index is not None:
+            return angles[self._occupant.angle_index]
         return cusps[self._occupant.cusp_index()]
 
     def ayanamsa_name(self):

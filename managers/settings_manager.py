@@ -16,6 +16,7 @@ Architecture:
 import copy
 import json
 import os
+import threading
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 try:
@@ -43,14 +44,15 @@ def _get_log():
 _MANAGERS_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(_MANAGERS_DIR)
 
-# Default South Indian chart display settings.
-#
-# Synced from the author's working configuration so a fresh install
-# shows the full styled appearance (sign badges with frames + gradients,
-# element shadows, planet glow shadows, ascendant/house-5/house-9
-# effects, framed house numbers, sized planets) instead of a barebones
-# wireframe. Users can still customize everything via the Settings tab;
-# these are the starting point, not a lock.
+# Default styled South Indian appearance; every value remains user-configurable.
+
+# td-cyap (sol F5): single source of truth for the house-number size ceiling.
+# Above this the wheel's 1-12 numbers collide. The spinbox range AND both view
+# read-sites clamp to it via min(HOUSE_NUMBER_FONT_MAX, stored), so a stored or
+# legacy value above the cap can never be painted or collide — the guarantee
+# does not rely on the UI having clamped the value first.
+HOUSE_NUMBER_FONT_MAX = 28
+
 DEFAULT_CHART_DISPLAY = {   'shadow': {   'enabled': True,
                   'blur_radius': 15,
                   'offset_x': 4,
@@ -127,7 +129,11 @@ DEFAULT_CHART_DISPLAY = {   'shadow': {   'enabled': True,
                         'offset_x': 8,
                         'offset_y': 38,
                         'font_family': 'default',
-                        'font_size': 16,
+                        # td-cyap: wheel-parity default (was a dead 16). Single
+                        # source of truth for both views + the settings control.
+                        # No migration: no profile persists a house_number key,
+                        # so existing installs pick up 23 via the deep-merge.
+                        'font_size': 23,
                         'font_weight': 'normal',
                         'outline_enabled': False,
                         'outline_color': '#000000',
@@ -185,14 +191,15 @@ DEFAULT_CHART_DISPLAY = {   'shadow': {   'enabled': True,
                        'color': '#000000',
                        'opacity': 255},
     'element_shadows': {   'enabled': True,
-                           'blur_radius': 4,
+                           'blur_radius': 6,
                            'offset_x': 2,
                            'offset_y': 1,
                            'opacity': 205,
                            'fire': '#ff4444',
                            'earth': '#dc6d1e',
-                           'air': '#9fff05',
-                           'water': '#4444FF'},
+                           'air': '#F0C75E',
+                           'water': '#1E88E5',
+                           '_size_default_v2': False},
     'planet_text_offsets': {   'Sun': 0,
                                'Moon': -11,
                                'Mars': 0,
@@ -519,22 +526,34 @@ DEFAULT_SETTINGS = {
         # get vector; existing settings files already carry their stored choice
         # and the boot deep-merge (:773) never overwrites present keys.
         "south_indian_style": "vector",
+        "south_indian_vector_finish": "standard",
+        # td-iaqm.5 (CP5): SI sign display folded into app-wide display.sign_display; retired key never shipped.
         # SPEC-CAL-001: calendar convention for DISPLAYING pre-1582 dates.
         # 'astronomical' = Julian calendar pre-1582 (current behaviour, matches
         # NASA/Swiss Ephemeris). 'proleptic_gregorian' = Gregorian extended
         # backwards (Kala norm). DISPLAY-ONLY: never affects JD/computation.
         "calendar_convention": "astronomical",
+        # td-okit c0-2 (decision 7): the numeric date order for the dasha rows
+        # (Vedanga/Vimshottari, Planetary Ages, Zodiacal Releasing). US English
+        # default "MM/DD/YYYY"; "DD/MM/YYYY" for the rest of the world. DISPLAY-
+        # ONLY: the age column and remote ISO derive from the JD, never from this
+        # text, so the setting can never change a calculation. Lockable like
+        # every display.* key. Follow-up td-fwj1 adopts it on the other surfaces
+        # (chart title, overlay, New/Edit form, transit panel).
+        "date_format": "MM/DD/YYYY",
         "fonts": {
             "tables": 11,
             "table_headers": 12,
             "panel_titles": 14,
             "info_text": 11,
             "buttons": 10,
+            "action_buttons": 12,
             "sidebar": 10,
             "status": 9,
             "tabs": 12,
-            "chart_labels": 16
-        }
+            "chart_labels": 16,
+            "chart_memory": 10
+        },
     },
 
     "chart": {
@@ -571,8 +590,8 @@ DEFAULT_SETTINGS = {
         "sign_language": "en"
     },
 
-    # SPEC-COT-001: the Cards of Truth position order, shared by the F2 view,
-    # the Planet Placements dialog and the Settings combo. The default is
+    # SPEC-COT-001: the Cards of Truth position order, shared by the Cards of
+    # Truth view, the Planet Placements dialog and the Settings combo. The default is
     # solar_system because that is what Kala uses (D-5, verified) —
     # the LIBRARY default is "vedic" and it relabels three of the seven main
     # cards and moves their occupants. This key had no entry here at all, so
@@ -587,7 +606,8 @@ DEFAULT_SETTINGS = {
 
     "dasha": {
         "left":  {"ayanamsa_id": 100},
-        "right": {"mode": "nisarga", "ayanamsa_id": 98}
+        "right": {"mode": "nisarga", "ayanamsa_id": 98},
+        # dasha.year_length/zr defaults: managers/settings_defaults_ext.py (SI ceiling).
     },
 
     # Transit panel (Pro) preferences.
@@ -638,6 +658,16 @@ DEFAULT_SETTINGS = {
     "ui": {
         "last_active_tab": 0,
         "restore_last_tab": True,
+        # SPEC-BAR-001: Vibrancy Segmented is the migrated default.
+        "action_bar_v2": True,
+        "action_bar_v2_default_migrated": False,
+        # SPEC-BAR-001 D-5: hide the Human Design button; the Sidereal zodiac
+        # segment takes its tray slot. Typed contract in spec §4.
+        "hide_human_design": False,
+        # SPEC-BAR-001 M4 (Dm4-48/49): the mockup's prefers-reduced-motion
+        # reading — the breathing NOW dot pins at 0.85, the 160/180 ms
+        # transitions KEEP running. Same typed contract as hide_human_design.
+        "reduce_motion": False,
         # SPEC-MODE-001: Beginner hides alternative sign-naming; Advanced exposes
         # all 6 zodiac/label combinations. Default Beginner on fresh + upgraded
         # installs (injected here so _deep_merge propagates it to existing files).
@@ -679,6 +709,9 @@ DEFAULT_SETTINGS = {
         "auto_restore_session": True
     }
 }
+
+from managers.settings_defaults_ext import apply as _apply_ext_defaults
+_apply_ext_defaults(DEFAULT_SETTINGS)
 
 # Font size presets (ordered from smallest to largest)
 FONT_SIZE_PRESETS = {
@@ -794,6 +827,20 @@ API_PROVIDERS = {
 }
 
 
+def _normalize_chart_display(display):
+    """Replace only former shipped element-shadow defaults."""
+    shadows = display.get("element_shadows", {})
+    for key, old, new in (("air", "#9fff05", "#F0C75E"),
+                          ("water", "#4444ff", "#1E88E5")):
+        if str(shadows.get(key, "")).lower() == old:
+            shadows[key] = new
+    if not shadows.get("_size_default_v2", False):
+        if shadows.get("blur_radius") == 4:
+            shadows["blur_radius"] = 6
+        shadows["_size_default_v2"] = True
+    return display
+
+
 class SettingsManager:
     """
     Centralized settings manager with typed access and auto-migration.
@@ -837,6 +884,10 @@ class SettingsManager:
         self._config_path = os.path.join(self._config_dir, self.CONFIG_FILE)
         self._env_path = os.path.join(self._config_dir, self.ENV_FILE)
         self._settings: Dict[str, Any] = {}
+        self._save_lock = threading.RLock()
+        # Ordered explicit assignments, including values equal to the local
+        # snapshot. A stale instance can deliberately restore its old value.
+        self._pending_writes = []
         self._env_cache: Dict[str, str] = {}
         self._callbacks: List[callable] = []
         self._key_callbacks: Dict[str, List[Callable]] = {}
@@ -856,6 +907,22 @@ class SettingsManager:
         # Migrate from PrefsStore (settings.json) if not already done
         if not self.get("_migrated_from_prefs", False):
             self._migrate_from_prefs()
+
+        # SPEC-BAR-001 D-15: adopt the new bar as the default for existing files.
+        self._migrate_bar_default()
+
+    def _migrate_bar_default(self):
+        """One-time: the Vibrancy Segmented bar became the default (D-15).
+
+        ``ui.action_bar_v2`` was never user-settable before this release, so any
+        stored value is an inherited old default, not a choice — flip it to True
+        exactly once. The marker makes this idempotent, so a LATER explicit
+        opt-in to the classic bar (the settings checkbox) is respected on every
+        subsequent launch."""
+        if self.get("ui.action_bar_v2_default_migrated", False):
+            return
+        self.set("ui.action_bar_v2", True, save=False)
+        self.set("ui.action_bar_v2_default_migrated", True, save=True)
 
     # -------------------------------------------------------------------------
     # Core Methods
@@ -878,29 +945,48 @@ class SettingsManager:
             return False
 
     def _save(self) -> bool:
-        """Save current settings to app_settings.json. Never raises.
+        """Merge explicit local writes into the latest disk state atomically.
 
-        ATOMIC (2026-07-25). The previous implementation was
-        `open(path, 'w')` + `json.dump`, which truncates the live file first
-        and only then writes. Two consequences, both observed:
-
-          - A crash, a kill, or a full disk between the truncate and the write
-            leaves a zero-length or half-written app_settings.json, and the
-            user loses every preference.
-          - The owner runs the full app and the --lite build at the same time
-            against the same data directory, so two processes truncate and
-            write the same file concurrently. A stress run over 160 saves read
-            a corrupt settings file 13 times before this change and 0 times
-            after.
-
-        The write now goes to a UNIQUE temp file in the same directory, is
-        fsync'd, and is promoted with os.replace (atomic on POSIX and on
-        Windows), with a bounded retry for the transient sharing violations
-        OneDrive produces on a synced Documents folder.
+        A sibling kernel lock covers the complete read/merge/replace, including
+        independent full and Lite processes. Failure retains the pending writes
+        for retry. The local runtime snapshot is intentionally not hot-reloaded
+        from other instances: that would change values without their callbacks.
         """
         try:
-            atomic_write_json(self._config_path, self._settings,
-                              indent=2, ensure_ascii=False)
+            from state import profile_store
+            with self._save_lock:
+                os.makedirs(self._config_dir, exist_ok=True)
+                # Fail closed on unsupported platforms or inaccessible locks.
+                if profile_store._fcntl is None and profile_store._msvcrt is None:
+                    raise OSError("No settings advisory lock primitive available")
+                with open(self._config_path + ".lock", "a+b") as handle:
+                    if not profile_store._acquire_lock(handle, 0.5):
+                        raise TimeoutError("Settings file is busy; pending changes retained")
+                    try:
+                        try:
+                            with open(self._config_path, encoding="utf-8") as source:
+                                latest = json.load(source)
+                            if not isinstance(latest, dict):
+                                raise ValueError("Settings JSON must contain an object")
+                        except FileNotFoundError:
+                            latest = {}
+                        # Invalid/unreadable files must never become defaults.
+                        merged = self._deep_merge(copy.deepcopy(DEFAULT_SETTINGS), latest)
+                        for path, value in self._pending_writes:
+                            if not path:  # Explicit reset of the whole document.
+                                merged = copy.deepcopy(value)
+                                continue
+                            target = merged
+                            for key in path[:-1]:
+                                if not isinstance(target.get(key), dict):
+                                    target[key] = {}
+                                target = target[key]
+                            target[path[-1]] = copy.deepcopy(value)
+                        atomic_write_json(self._config_path, merged,
+                                          indent=2, ensure_ascii=False)
+                        self._pending_writes.clear()
+                    finally:
+                        profile_store._release_lock(handle)
             self.last_error = None
             return True
         except Exception as e:
@@ -1058,7 +1144,8 @@ class SettingsManager:
             self.set("appearance.font_family", fonts["primary"], save=False)
 
         self.set("_migrated_from_prefs", True, save=False)
-        self._save()
+        if not self._save():
+            return  # Keep the migration source until its changes are durable.
 
         # Rename settings.json to .bak.
         # os.replace, NOT os.rename: on POSIX rename overwrites an existing
@@ -1108,21 +1195,27 @@ class SettingsManager:
         Returns:
             True if successful
         """
-        keys = key_path.split(".")
-        target = self._settings
-        try:
-            for key in keys[:-1]:
-                if key not in target:
-                    target[key] = {}
-                target = target[key]
-            target[keys[-1]] = value
-            if save:
-                self._save()
-            self._notify_change(key_path, value)
-            return True
-        except Exception as e:
-            debug_print(f"[SettingsManager] Error setting {key_path}: {e}")
-            return False
+        with self._save_lock:
+            keys = key_path.split(".")
+            target = self._settings
+            try:
+                for key in keys[:-1]:
+                    if key not in target:
+                        target[key] = {}
+                    target = target[key]
+                value = copy.deepcopy(value)
+                target[keys[-1]] = value
+                self._pending_writes.append((tuple(keys), copy.deepcopy(value)))
+                # Propagate persistence failure (the in-memory set still holds
+                # and observers still fire — the value IS changed for this run —
+                # but a caller that checks the return must not be told a value
+                # that never reached disk was saved; last_error has the reason).
+                saved_ok = self._save() if save else True
+                self._notify_change(key_path, value)
+                return saved_ok
+            except Exception as e:
+                debug_print(f"[SettingsManager] Error setting {key_path}: {e}")
+                return False
 
     # -------------------------------------------------------------------------
     # Lock / Write-back API (SPEC-SET-002)
@@ -1155,10 +1248,12 @@ class SettingsManager:
 
         Stores under the flat ``locks`` dict keyed by the full dot-path.
         """
-        self._settings.setdefault("locks", {})[key_path] = bool(locked)
-        self._save()
+        with self._save_lock:
+            self._settings.setdefault("locks", {})[key_path] = bool(locked)
+            self._pending_writes.append((("locks", key_path), bool(locked)))
+            self._save()
 
-    def persist_runtime_change(self, key_path: str, value: Any) -> None:
+    def persist_runtime_change(self, key_path: str, value: Any, save: bool = True) -> None:
         """
         Write-back path for runtime changes that RESPECTS the lock.
 
@@ -1166,9 +1261,20 @@ class SettingsManager:
         the change is discarded (the stored value is left untouched so the
         pinned value is restored on next startup). Otherwise the value is
         written via set(). Falsy values such as 0 are written normally.
+
+        ``save=False`` updates the value in memory but defers the disk write to
+        a later ``flush()`` — for debounced writers (td-iopy view-switch persist)
+        that coalesce a burst of changes into one disk write. The lock check is
+        applied either way, so a debounced writer cannot bypass a pinned value.
         """
         if not self.is_locked(key_path):
-            self.set(key_path, value)
+            self.set(key_path, value, save=save)
+
+    def flush(self) -> bool:
+        """Force any deferred in-memory change (from a ``save=False`` write) to
+        disk. Returns True on success. Idempotent — a flush with nothing dirty
+        preserves other instances' writes."""
+        return self._save()
 
     # -------------------------------------------------------------------------
     # Typed Getters - Appearance
@@ -1334,17 +1440,42 @@ class SettingsManager:
         self.set("paths.default_folder", folders[0] if folders[0] else "", save=False)
         self.set("paths.chart_folders", folders)
 
-    def get_screenshot_folder(self) -> str:
-        """Get screenshot folder path."""
-        return self.get("paths.screenshot_folder", "")
-
-    def set_screenshot_folder(self, path: str):
-        """Set screenshot folder path."""
-        self.set("paths.screenshot_folder", path)
-
     # -------------------------------------------------------------------------
     # Typed Getters - Defaults
     # -------------------------------------------------------------------------
+
+    def get_hide_human_design(self) -> bool:
+        """SPEC-BAR-001 §4 (Dm3-26): hide the HD button, Sidereal takes its
+        tray slot (D-5). Non-bool on disk reads as False — a hand-edited
+        "true" string or 1 must not silently enable a width-changing
+        setting from a malformed file."""
+        v = self.get("ui.hide_human_design", False)
+        return v if isinstance(v, bool) else False
+
+    def set_hide_human_design(self, hidden: bool) -> bool:
+        return self.set("ui.hide_human_design", bool(hidden))
+
+    def get_reduce_motion(self) -> bool:
+        """SPEC-BAR-001 M4 (Dm4-49): reduced motion for the action bar —
+        stops ONLY the infinite dot loop (pinned 0.85), keeps the 160/180 ms
+        transitions (the mockup's media query overrides exactly one rule).
+        Non-bool on disk reads False, same rationale as hide_human_design."""
+        v = self.get("ui.reduce_motion", False)
+        return v if isinstance(v, bool) else False
+
+    def set_reduce_motion(self, reduced: bool) -> bool:
+        return self.set("ui.reduce_motion", bool(reduced))
+
+    def get_action_bar_v2(self) -> bool:
+        """SPEC-BAR-001 D-15: True = the Vibrancy Segmented bar (the DEFAULT);
+        False = the classic legacy bar (opt-in). The bar is built once at
+        startup, so a change takes effect on restart. Non-bool on disk reads
+        as the new default True, same rationale as reduce_motion."""
+        v = self.get("ui.action_bar_v2", True)
+        return v if isinstance(v, bool) else True
+
+    def set_action_bar_v2(self, enabled: bool) -> bool:
+        return self.set("ui.action_bar_v2", bool(enabled))
 
     def get_default_aditya_mode(self) -> str:
         """Get default Aditya mode (aditya, tropical_classic, or sidereal)."""
@@ -1374,11 +1505,9 @@ class SettingsManager:
             Dict with shadow, sign_label, sign_icon, planets, planet_text,
             lagna_strip, and planet_sizes settings.
         """
-        stored = self.get("chart_display", None)
-        if stored is None:
-            return DEFAULT_CHART_DISPLAY.copy()
-        # Deep merge with defaults to ensure all keys exist
-        return self._deep_merge(DEFAULT_CHART_DISPLAY.copy(), stored)
+        merged = self._deep_merge(copy.deepcopy(DEFAULT_CHART_DISPLAY),
+                                  self.get("chart_display", None) or {})
+        return _normalize_chart_display(merged)
 
     def set_chart_display(self, settings: Dict[str, Any]):
         """
@@ -1856,6 +1985,19 @@ class SettingsManager:
         """
         self._key_callbacks.setdefault(key, []).append(callback)
 
+    def remove_on_changed(self, key: str, callback: Callable) -> None:
+        """Unregister a callback previously added via on_changed for `key`.
+
+        The keyed mirror of on_changed. on_changed stores callbacks strongly
+        (self._key_callbacks), so a page that subscribed for its lifetime must
+        call this from its destroy hook or its closure is retained forever —
+        offscreen every-theme construction would otherwise pin every page built.
+        No-ops if the key or callback is absent (idempotent).
+        """
+        cbs = self._key_callbacks.get(key)
+        if cbs and callback in cbs:
+            cbs.remove(callback)
+
     def _notify_change(self, key_path: str, value: Any):
         """Notify all callbacks of a setting change."""
         for callback in list(self._callbacks):
@@ -1865,7 +2007,14 @@ class SettingsManager:
                 debug_print(f"[SettingsManager] Callback error: {e}")
         if hasattr(self, "_key_callbacks"):
             for prefix, cbs in self._key_callbacks.items():
-                if key_path == "*" or key_path.startswith(prefix):
+                # SPEC-BAR-001 Dm3-33: the match is SYMMETRIC — a subscriber
+                # of "ui.hide_human_design" hears both the leaf write and an
+                # ancestor write ("ui", e.g. a section reset or subtree
+                # replacement). Subscribers re-read the value by contract
+                # (Dm3-28), so the ancestor notification's value payload
+                # being the whole dict is fine.
+                if (key_path == "*" or key_path.startswith(prefix)
+                        or prefix.startswith(key_path + ".")):
                     for cb in list(cbs):
                         try:
                             cb(key_path, value)
@@ -1886,10 +2035,16 @@ class SettingsManager:
         """
         if section:
             if section in DEFAULT_SETTINGS:
+                # SPEC-BAR-001 §4 reset (Dm3-33): set() notifies the SECTION
+                # path and _notify_change's symmetric prefix match delivers
+                # the ancestor write to every per-key subscriber underneath
+                # it — no leaf walk needed.
                 self.set(section, copy.deepcopy(DEFAULT_SETTINGS[section]))
         else:
-            self._settings = copy.deepcopy(DEFAULT_SETTINGS)
-            self._save()
+            with self._save_lock:
+                self._settings = copy.deepcopy(DEFAULT_SETTINGS)
+                self._pending_writes.append(((), copy.deepcopy(DEFAULT_SETTINGS)))
+                self._save()
             self._notify_change("*", None)
 
 

@@ -546,7 +546,10 @@ class BodyGraphView(QGraphicsView):
         # Planet icon (visible, non-interactive — the overlay handles clicks).
         pixmap = self._planet_pixmap(name, _ICON_SIZE)
         if pixmap is not None and not pixmap.isNull():
-            icon = self.scene.addPixmap(pixmap)
+            from apps.widgets.additional_body_glyphs import make_planet_item
+            from PySide6.QtWidgets import QGraphicsPixmapItem
+            icon = make_planet_item(QGraphicsPixmapItem, name, pixmap)
+            self.scene.addItem(icon)
             icon.setPos(bar_x + 8, cy - pixmap.height() / 2.0)
             icon.setZValue(11)
 

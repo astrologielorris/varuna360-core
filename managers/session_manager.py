@@ -30,11 +30,7 @@ try:
     # failure must never raise a modal dialog; the Settings banner surfaces it
     # instead. Keeping it out of the import list makes reintroducing one a
     # visible act rather than a one-line accident.
-    from PySide6.QtWidgets import (
-        QDialog, QLabel, QPushButton,
-        QVBoxLayout, QHBoxLayout, QWidget
-    )
-    from PySide6.QtCore import QTimer, Qt
+    from PySide6.QtCore import QTimer
     QT_AVAILABLE = True
 except ImportError:
     QT_AVAILABLE = False
@@ -794,151 +790,6 @@ class SessionManager:
             debug_print(f"[SESSION] Error checking session: {e}")
             return False, 0, True
 
-    def _show_qt_restore_dialog(self, chart_count, properly_closed):
-        """
-        Show restore dialog using Qt (PySide6).
-
-        Args:
-            chart_count: Number of charts in session
-            properly_closed: Whether app closed properly
-
-        Returns:
-            True if user chose to restore, False otherwise
-        """
-        from ui.qt_theme import get_theme_colors, scaled_area_px
-
-        # Build dialog message
-        if not properly_closed:
-            title = "Restore Session"
-            message = f"Application didn't close properly.\nRestore previous session?\n\n({chart_count} charts)"
-        else:
-            title = "Restore Session"
-            message = f"Restore previous session?\n\n({chart_count} charts)"
-
-        theme = get_theme_colors()
-
-        # Create dialog
-        dialog = QDialog(self.app)
-        dialog.setWindowTitle(title)
-        dialog.setFixedSize(380, 170)
-        dialog.setModal(True)
-
-        # Layout
-        layout = QVBoxLayout(dialog)
-        layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(15)
-
-        # Message label — SPEC-THM-001 G14 live theme color.
-        msg_label = QLabel(message)
-        msg_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        msg_label.setWordWrap(True)
-        msg_label.setStyleSheet(f"""
-            QLabel {{
-                color: {theme["secondary_text"]};
-                font-size: {scaled_area_px('info_text')}px;
-                background: transparent;
-            }}
-        """)
-        layout.addWidget(msg_label)
-
-        # Button layout
-        btn_layout = QHBoxLayout()
-        btn_layout.setSpacing(10)
-
-        # Result variable
-        result = {'restore': False}
-
-        def on_restore():
-            result['restore'] = True
-            dialog.accept()
-
-        def on_start_fresh():
-            result['restore'] = False
-            dialog.accept()
-
-        # Restore button (primary - green)
-        restore_btn = QPushButton("Restore")
-        restore_btn.setFixedSize(120, 36)
-        restore_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        restore_btn.setStyleSheet(f"""
-            QPushButton {{
-                background-color: #27AE60;
-                color: #FFFFFF;
-                border: none;
-                border-radius: 4px;
-                font-size: {scaled_area_px('info_text')}px;
-                font-weight: bold;
-            }}
-            QPushButton:hover {{
-                background-color: #219A52;
-            }}
-        """)
-        restore_btn.clicked.connect(on_restore)
-        btn_layout.addWidget(restore_btn)
-
-        # Start Fresh button (secondary) — SPEC-THM-001 G14 live theme colors.
-        fresh_btn = QPushButton("Start Fresh")
-        fresh_btn.setFixedSize(120, 36)
-        fresh_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        fresh_btn.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {theme["secondary"]};
-                color: {theme["secondary_text"]};
-                border: 1px solid {theme["secondary_light"]};
-                border-radius: 4px;
-                font-size: {scaled_area_px('info_text')}px;
-            }}
-            QPushButton:hover {{
-                background-color: {theme["secondary_light"]};
-            }}
-        """)
-        fresh_btn.clicked.connect(on_start_fresh)
-        btn_layout.addWidget(fresh_btn)
-
-        layout.addLayout(btn_layout)
-
-        # Show dialog and wait
-        dialog.exec()
-
-        return result['restore']
-
-    def _show_ctk_restore_dialog(self, chart_count, properly_closed):
-        """Legacy CTK dialog — no longer used. Falls back to Qt dialog."""
-        debug_print("[SESSION] CTK dialog removed — use Qt dialog instead")
-        return self._show_qt_restore_dialog(chart_count, properly_closed)
-
-    def show_restore_dialog_if_needed(self):
-        """
-        Show restore dialog if there's a previous session.
-        Automatically detects Qt vs CustomTkinter and uses appropriate dialog.
-
-        Returns:
-            True if session was restored, False otherwise
-        """
-        has_session, chart_count, properly_closed = self.has_previous_session()
-
-        if not has_session:
-            return False
-
-        # Dispatch to appropriate dialog based on framework
-        if self.is_qt:
-            user_wants_restore = self._show_qt_restore_dialog(chart_count, properly_closed)
-        elif self.is_ctk:
-            user_wants_restore = self._show_ctk_restore_dialog(chart_count, properly_closed)
-        else:
-            debug_print("[SESSION] No supported GUI framework detected")
-            return False
-
-        # Perform restore if requested
-        if user_wants_restore:
-            self.restore_session()
-            self._session_restored = True
-            return True
-        else:
-            # Clear the improperly closed flag
-            self.mark_properly_closed()
-            return False
-
     def restore_session_silently(self, preserve_current_chart=False):
         """Silently restore previous session without showing a dialog.
 
@@ -1083,10 +934,14 @@ class SessionManager:
                         'aditya_mode': self.app.state.aditya_mode,
                         'background_num': getattr(self.app, 'background_num', 1),
                         'planet_size': getattr(self.app, 'planet_size', 60),
-                        # Dasha ayanamsa settings
-                        'vedanga_ayanamsa': getattr(self.app, 'vedanga_ayanamsa', 100),
-                        'vimshottari_ayanamsa': getattr(self.app, 'vimshottari_ayanamsa', 98),
-                        'right_dasha_mode': getattr(self.app, 'right_dasha_mode', 'nisarga'),
+                        # Dasha ayanamsa settings (values now read from
+                        # DashaManager.dasha_state; keys unchanged, SPEC-DSH-002).
+                        'vedanga_ayanamsa': (self.app.dasha_manager.ayanamsa("left")
+                                             if getattr(self.app, "dasha_manager", None) else 100),
+                        'vimshottari_ayanamsa': (self.app.dasha_manager.ayanamsa("right")
+                                                 if getattr(self.app, "dasha_manager", None) else 98),
+                        'right_dasha_mode': (self.app.dasha_manager.right_mode
+                                             if getattr(self.app, "dasha_manager", None) else 'nisarga'),
                         # Chart zodiac (sidereal) settings
                         'chart_zodiac': getattr(self.app, 'chart_zodiac', 'tropical'),
                         'chart_sidereal_ayanamsa_id': getattr(self.app, 'chart_sidereal_ayanamsa_id', 100),
@@ -1364,63 +1219,40 @@ class SessionManager:
 
             # Restore UI state
             ui_state = data.get('ui_state', {})
-            if ui_state:
-                from state.events import SetZodiacMode
-                from managers.settings_manager import get_settings
-                # Guard restore: a locked zodiac.mode must not be clobbered by
-                # session restore (which fires ~500ms after boot).
-                if not get_settings().is_locked("zodiac.mode"):
-                    session_mode = _translate_mode(ui_state.get('aditya_mode', 'aditya'))
-                    if session_mode != self.app.state.aditya_mode:
-                        self.app.state.dispatch(SetZodiacMode(mode=session_mode))
-                self.app.background_num = ui_state.get('background_num', 1)
-                self.app.planet_size = ui_state.get('planet_size', 60)
-                # Restore dasha ayanamsa settings. Guard each side by its lock key so
-                # a locked dasha config (frozen in app_settings.json) is not clobbered
-                # by session restore (which fires ~500ms after boot). Grouped per side.
-                if not get_settings().is_locked("dasha.left.ayanamsa_id"):
-                    self.app.vedanga_ayanamsa = ui_state.get('vedanga_ayanamsa', 100)
-                if not get_settings().is_locked("dasha.right.ayanamsa_id"):
-                    self.app.vimshottari_ayanamsa = ui_state.get('vimshottari_ayanamsa', 98)
-                if not get_settings().is_locked("dasha.right.mode"):
-                    self.app.right_dasha_mode = ui_state.get('right_dasha_mode', 'nisarga')
-                # Restore chart zodiac (sidereal) settings. Lock-aware per
-                # SPEC-KUTA-AYA-001 3.1a: a locked zodiac.mode / zodiac.ayanamsa_id must
-                # survive session restore (which fires ~500ms after boot), and a legacy
-                # session file lacking the ayanamsa key must NOT silently migrate the
-                # boot-time settings value (no bare default). chart_zodiac follows the
-                # same lock as zodiac.mode so the two runtime flags cannot disagree.
-                if not get_settings().is_locked("zodiac.mode"):
-                    # Legacy sessions may carry aditya_mode="sidereal" without a
-                    # chart_zodiac key; defaulting to 'tropical' would leave the two
-                    # runtime flags disagreeing (state sidereal, chart_zodiac tropical).
-                    # Absent key -> derive from the mode already restored above.
-                    _cz = ui_state.get('chart_zodiac')
-                    if _cz is None:
-                        _cz = ("sidereal" if self.app.state.aditya_mode == "sidereal"
-                               else "tropical")
-                    self.app.chart_zodiac = _cz
-                if not get_settings().is_locked("zodiac.ayanamsa_id"):
-                    _restored_ayan = ui_state.get('chart_sidereal_ayanamsa_id')
-                    if _restored_ayan is not None:
-                        self.app.chart_sidereal_ayanamsa_id = _restored_ayan
-                        get_settings().persist_runtime_change(
-                            "zodiac.ayanamsa_id", _restored_ayan)
-                        # Section 7 refresh contract (INV-3 writer): the kuta dock cannot
-                        # be open this early, so no recompute is needed here, but any
-                        # future session-restored page state would hook it at this point.
-                # Restore sidereal mode if it was active (skip if mode is locked or already set)
-                if self.app.chart_zodiac == "sidereal" and not get_settings().is_locked("zodiac.mode"):
-                    if self.app.state.aditya_mode != "sidereal":
-                        self.app.state.dispatch(SetZodiacMode(mode="sidereal"))
-                # Update title buttons if they exist
-                if hasattr(self.app, 'dasha_manager'):
-                    self.app.dasha_manager._update_dasha_title("vedanga")
-                    if getattr(self.app, 'right_dasha_mode', 'vimshottari') == 'nisarga':
-                        self.app.vimshottari_title_btn.setText("Planetary Ages")
-                        self.app.vimshottari_title_btn.setEnabled(False)
-                    else:
-                        self.app.dasha_manager._update_dasha_title("vimshottari")
+            from state.events import SetZodiacMode
+            from managers.settings_manager import get_settings
+            # Profiles store chart membership and presentation, not a second
+            # set of zodiac defaults. Apply the pinned settings on every restore.
+            settings = get_settings()
+            if hasattr(self.app, "zodiac_settings"):
+                self.app.zodiac_settings.apply_settings(tuple(
+                    self.app.zodiac_settings.DEFAULTS))
+            else:
+                mode = _translate_mode(settings.get("zodiac.mode", "aditya"))
+                self.app.state.dispatch(SetZodiacMode(mode=mode))
+                self.app.chart_zodiac = "sidereal" if mode == "sidereal" else "tropical"
+                self.app.chart_sidereal_ayanamsa_id = get_settings().get(
+                    "zodiac.ayanamsa_id", 100)
+            self.app.background_num = ui_state.get('background_num', 1)
+            self.app.planet_size = ui_state.get('planet_size', 60)
+            for side, default in (("left", 100), ("right", 98)):
+                self.app.dasha_manager.set_ayanamsa(
+                    side, settings.get(f"dasha.{side}.ayanamsa_id", default),
+                    persist=False, relist=False, reset="none")
+            # Update title buttons if they exist
+            if hasattr(self.app, 'dasha_manager'):
+                self.app.dasha_manager._update_dasha_title("vedanga")
+                # Reshape the right panel to the restored mode through the one
+                # dispatcher (SPEC-ZR-001 §3.6). Previously only the title was
+                # fixed here, so a restored mode differing from the boot mode
+                # kept the wrong nav/level shape; an unknown persisted mode
+                # now falls back to the default with a logged warning instead
+                # of rendering as Vimshottari.
+                self.app.dasha_manager.configure_right_panel(
+                    get_settings().get(
+                        "dasha.right.mode",
+                        self.app.dasha_manager.DEFAULT_RIGHT_MODE),
+                    announce=False)
 
             # Restore charts
             charts = data.get('charts', [])
@@ -1961,23 +1793,9 @@ class SessionManager:
                 self._auto_save_timer.timeout.connect(self._auto_save_tick)
                 self._auto_save_timer.start(self.AUTO_SAVE_INTERVAL)
                 debug_print("[SESSION] Started Qt auto-save timer (30s interval)")
-        elif self.is_ctk:
-            # Tkinter: Use after()
-            self._schedule_auto_save()
-            debug_print("[SESSION] Started Tkinter auto-save timer (30s interval)")
-
-    def _schedule_auto_save(self):
-        """Schedule the next auto-save (Tkinter only)."""
-        if not self.is_ctk:
-            return
-
-        if self._auto_save_timer:
-            self.app.root.after_cancel(self._auto_save_timer)
-
-        self._auto_save_timer = self.app.root.after(
-            self.AUTO_SAVE_INTERVAL,
-            self._auto_save_tick
-        )
+        # Tkinter auto-save path (_schedule_auto_save + self.app.root.after)
+        # removed td-7q5s.5 C3: is_ctk is always False in the Qt-only app
+        # (Tkinter deprecated). The QTimer above is the sole auto-save mechanism.
 
     def _auto_save_tick(self):
         """Perform auto-save and schedule next one."""
@@ -1985,17 +1803,11 @@ class SessionManager:
             # Skip if paused (during profile switching)
             if self._auto_save_paused:
                 debug_print("[SESSION] Auto-save skipped (paused)")
-                # Still schedule next tick
-                if self.is_ctk:
-                    self._schedule_auto_save()
                 return
 
-            # Save session (not marking as closed - that's only on clean exit)
+            # Save session (not marking as closed - that's only on clean exit).
+            # Qt's repeating QTimer fires the next tick; no manual reschedule.
             self.save_session(mark_closed=False)
-
-            # Schedule next auto-save (Tkinter only - Qt uses repeating QTimer)
-            if self.is_ctk:
-                self._schedule_auto_save()
 
         except Exception as e:
             debug_print(f"[SESSION] Auto-save error: {e}")
@@ -2007,25 +1819,6 @@ class SessionManager:
                 if self.is_qt and QT_AVAILABLE:
                     # Qt: Stop QTimer
                     self._auto_save_timer.stop()
-                elif self.is_ctk:
-                    # Tkinter: Cancel after()
-                    self.app.root.after_cancel(self._auto_save_timer)
             except Exception as e:
                 debug_print(f"[SESSION] Error stopping auto-save: {e}")
             self._auto_save_timer = None
-
-    def on_app_closing(self):
-        """Called when app is closing - save session and mark as properly closed.
-
-        Deliberately NOT force=True. A close event can be delivered while the
-        Qt event loop is pumped mid-profile-switch, and at that moment the
-        panel holds the wrong profile's charts; forcing the write would put
-        them into the incoming profile's session.json on the way out — the
-        very loss the pause guard prevents. The outgoing profile was already
-        saved by switch_profile(), so at worst this skips marking the incoming
-        session properly-closed.
-        """
-        debug_print("[SESSION] App closing - saving session...")
-        self.stop_auto_save()
-        self.save_session(mark_closed=True)
-        debug_print("[SESSION] Session saved successfully")

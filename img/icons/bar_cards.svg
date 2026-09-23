@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">
+<!-- SPEC-BAR-001 action-bar glyph, extracted VERBATIM from the binding mockup
+     proprietary_docs/spec_design/action_bar_v2/vibrancy_segmented.html <symbol id="i-cards">.
+     Ink is currentColor: paint_controls substitutes the state foreground before
+     handing the bytes to QSvgRenderer (per-path opacity survives, which SourceIn
+     tinting would also preserve but attribute substitution keeps cheaper).
+     Do not redraw by hand - regenerate from the mockup if the design moves. -->
+  <rect x="5.5" y="2.6" width="8" height="10.8" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.2"/>
+  <path d="M4.1 4.4a1.5 1.5 0 0 0-1.6 1.5v6.2a1.5 1.5 0 0 0 1.5 1.5h4.4" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" opacity=".65"/>
+  <path d="M9.5 6.2 11.2 8 9.5 9.8 7.8 8Z" fill="currentColor" opacity=".55"/>
+</svg>

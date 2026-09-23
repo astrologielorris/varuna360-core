@@ -58,13 +58,18 @@ class ChartOverlayManager:
         try:
             chart = self._build_from_entry(entry)
             label = self._entry_label(entry)
+            # D-23(b) / F2: the chip's full birth-identity payload comes from
+            # the recipe (the built Chart cannot supply the place — its
+            # Location.placename holds the person NAME, chart_factory.py).
+            from managers.overlay_display import overlay_display_from_recipe
+            birth = overlay_display_from_recipe(entry.get("recipe") or {})
         except Exception as e:
             self._status(f"Could not overlay chart: {e}")
             import traceback
             traceback.print_exc()
             return False
         source = {"kind": "memory", "id": entry_id, "path": None}
-        return self._apply_overlay(chart, label, source)
+        return self._apply_overlay(chart, label, source, birth)
 
     def overlay_from_file(self, path):
         """Build a chart from a .chtk/.toml file (non-activating) and overlay it."""
@@ -75,13 +80,19 @@ class ChartOverlayManager:
         try:
             chart, birth_data = self._gui.chart_manager.build_chart_from_file(path)
             label = birth_data.get("name") or Path(path).stem
+            # D-23(b) / F2: build the chip payload from the file's birth_data.
+            from managers.overlay_display import overlay_display_from_birth_data
+            birth = overlay_display_from_birth_data(birth_data)
+            if not birth_data.get("name"):
+                import dataclasses
+                birth = dataclasses.replace(birth, name=Path(path).stem)
         except Exception as e:
             self._status(f"Could not overlay {Path(path).name}: {e}")
             import traceback
             traceback.print_exc()
             return False
         source = {"kind": "file", "id": None, "path": str(path)}
-        return self._apply_overlay(chart, label, source)
+        return self._apply_overlay(chart, label, source, birth)
 
     def reoverlay_current(self):
         """Rebuild the current overlay in the active chart's current frame.
@@ -118,9 +129,9 @@ class ChartOverlayManager:
             self._gui.transit_overlay_manager.transit_enabled)
 
     # --- internals -----------------------------------------------------------
-    def _apply_overlay(self, chart, label, source):
+    def _apply_overlay(self, chart, label, source, birth=None):
         ok = self._gui.transit_overlay_manager.overlay_chart(
-            chart, label=label, source=source)
+            chart, label=label, source=source, birth=birth)
         if not ok:
             self._status(f"Could not overlay {label}.")
             return False

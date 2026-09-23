@@ -24,6 +24,9 @@ from PySide6.QtWidgets import (
     QTextEdit, QVBoxLayout,
 )
 
+from ui.qt_theme import scaled_area_px
+from ui.popup_fonts import tier_px
+
 
 class _PlanWorker(QThread):
     """Reads sessions and builds charts. Never writes."""
@@ -113,13 +116,20 @@ class BulkExportDialog(QDialog):
         self._write_worker = None
 
         layout = QVBoxLayout(self)
-        layout.addWidget(QLabel(
+        # O-6: every text surface carries font-size in its own QSS (this dialog
+        # is rebuilt on each open and has no theme-switch replay, so a
+        # construction-time stylesheet is sufficient).
+        _text_css = f"font-size: {scaled_area_px('info_text')}px;"
+        intro = QLabel(
             "Charts created before Varuna360 started saving a file for every "
             "chart exist only in your session. This finds them and gives each "
-            "one a file.\n\nNothing is written until you press Save."))
+            "one a file.\n\nNothing is written until you press Save.")
+        intro.setStyleSheet(_text_css)
+        layout.addWidget(intro)
 
         self.include_flagged = QCheckBox(
             "Also save charts that look like duplicates of a file you already have")
+        self.include_flagged.setStyleSheet(f"QCheckBox {{ font-size: {tier_px('buttons', 11)}px; }}")
         self.include_flagged.setToolTip(
             "A position match is a strong hint, not proof. Leave this off to "
             "review them yourself.")
@@ -127,6 +137,7 @@ class BulkExportDialog(QDialog):
 
         self.summary = QTextEdit()
         self.summary.setReadOnly(True)
+        self.summary.setStyleSheet(f"QTextEdit {{ {_text_css} }}")
         layout.addWidget(self.summary, 1)
 
         self.progress = QProgressBar()
@@ -135,11 +146,14 @@ class BulkExportDialog(QDialog):
 
         row = QHBoxLayout()
         row.addStretch()
+        _btn_css = f"font-size: {scaled_area_px('action_buttons')}px;"
         self.save_button = QPushButton("Save the missing files")
         self.save_button.setEnabled(False)
+        self.save_button.setStyleSheet(_btn_css)
         self.save_button.clicked.connect(self._write)
         row.addWidget(self.save_button)
         close = QPushButton("Close")
+        close.setStyleSheet(_btn_css)
         close.clicked.connect(self.reject)
         row.addWidget(close)
         layout.addLayout(row)
@@ -166,6 +180,8 @@ class BulkExportDialog(QDialog):
 
     def _plan_ready(self, plans, error):
         if error:
+            self._plans = {}
+            self.save_button.setEnabled(False)
             self.summary.setPlainText(f"Could not check your charts:\n{error}")
             return
         self._plans = plans or {}
@@ -231,6 +247,8 @@ class BulkExportDialog(QDialog):
 def make_bulk_export_button(parent=None):
     """The button for the Settings folders page."""
     button = QPushButton("Save charts that have no file…", parent)
+    # O-6: font-size in QSS (action_buttons area).
+    button.setStyleSheet(f"font-size: {scaled_area_px('action_buttons')}px;")
     button.setToolTip(
         "Find charts that exist only in your session and give each one a file.")
     button.clicked.connect(

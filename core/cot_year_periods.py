@@ -36,8 +36,7 @@ dangerous rather than merely wrong:
   the screen feels like a solar return. Residuals ``0,-1,0,+2,+3,+3,+1`` days.
 
 The evidence that settles it is 16 spreads / 112 boundaries across 8 charts,
-104 exact; see the spec. ``test/reference_charts/kala_cot_agen_2026-07-27/``
-holds the Lorris half.
+104 exact; see the spec.
 """
 
 from __future__ import annotations
@@ -177,7 +176,7 @@ def year_card(birth: date, age: int) -> str:
     sunrise. For a birth BEFORE sunrise the chart's birth card is the PREVIOUS
     day's card, so passing the raw calendar ``birth`` here reads one card too
     far along the retreating walk at EVERY age — the whole life is displaced,
-    not only age 0 (Kala, Alain Delon 1935-11-08 03:25, eleven ages). A caller
+    not only age 0 (Alain Delon 1935-11-08 03:25, eleven ages). A caller
     that has the chart's sunrise-aware birth card must pass
     :func:`year_card_anchor` ``(birth, birth_card)`` as ``birth`` here so the
     walk starts from the right card. After sunrise the anchor is ``birth`` and
@@ -199,7 +198,7 @@ def year_card_anchor(birth: date, birth_card: str) -> date:
     This returns the nearby day whose ``day_card`` equals the chart's own
     ``birth_card``, so ``year_card(anchor, 0) == birth_card`` structurally for
     every birth hour. The shift is zero after sunrise and one day earlier before
-    it (measured, Alain Delon: birth minus one day, 11 of 11 ages against Kala).
+    it (measured, Alain Delon: birth minus one day, 11 of 11 ages match the reference).
     The direction is TAKEN from the data, not assumed: the earlier days are
     tried first because sunrise only ever moves the card earlier, and if nothing
     in the small window matches, the pure-calendar ``birth`` stands — never

@@ -13,6 +13,7 @@ Features:
 - Planet image variation selection
 - Horizontal oscillation animation for planet icons
 """
+from apps.widgets.additional_body_glyphs import make_planet_item
 import math
 from pathlib import Path
 
@@ -23,7 +24,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem, QSplitter
 )
 from PySide6.QtCore import Qt, Signal, QTimer
-from PySide6.QtGui import QPixmap, QImage, QColor, QPainter
+from PySide6.QtGui import QPixmap, QImage, QColor, QPainter, QFont
 
 from ui.qt_theme import (
     TEXT_SECONDARY,
@@ -31,10 +32,11 @@ from ui.qt_theme import (
     get_theme_colors,
     STATUS,
     desat_hex,
-    scaled_area_font,
+    scaled_area_px,
     is_light_theme,
     desat_image,
 )
+from ui.popup_fonts import tier_point_px, tier_px, popup_title_px, popup_group_px
 
 # Import shared Aditya data
 from core.aditya_data import (
@@ -56,7 +58,7 @@ class RotatingPlanetWidget(QGraphicsView):
     Uses sine wave for smooth, natural-looking horizontal movement.
     """
 
-    def __init__(self, pixmap, rotation_speed=0.5, parent=None):
+    def __init__(self, pixmap, rotation_speed=0.5, parent=None, planet_name=None):
         """
         Args:
             pixmap: QPixmap of the planet image
@@ -89,7 +91,7 @@ class RotatingPlanetWidget(QGraphicsView):
         self.img_height = pixmap.height() / dpr
 
         # Add pixmap item
-        self.planet_item = QGraphicsPixmapItem(pixmap)
+        self.planet_item = make_planet_item(QGraphicsPixmapItem, planet_name, pixmap)
         self.planet_item.setTransformationMode(Qt.TransformationMode.SmoothTransformation)
 
         # Scene needs extra horizontal space for oscillation
@@ -277,6 +279,9 @@ class PlanetInfoDialog(QDialog):
             self.current_idx = self.variations.index(current_variation)
 
         self._setup_ui(planet_pixmap)
+        from apps.widgets.reading_controls import ReadingControls
+        self.reading_controls = ReadingControls(self.content_browser, self.toc_list, self)
+        self.layout().insertWidget(self.layout().count() - 1, self.reading_controls)
 
     def _get_planet_variations(self):
         """Get list of available image variations for this planet"""
@@ -377,9 +382,9 @@ class PlanetInfoDialog(QDialog):
         self.theme = get_theme_colors()
 
         self.setWindowTitle(f"{self.planet_name} Details")
-        self.setMinimumWidth(850)
-        self.setMinimumHeight(750)
-        self.resize(900, 800)  # Larger default size
+        self.setMinimumSize(600, 420)
+        from apps.widgets.reading_controls import fit_reading_dialog
+        fit_reading_dialog(self)
         self.setStyleSheet(f"""
             QDialog {{
                 background-color: {self.theme['secondary_dark']};
@@ -397,8 +402,8 @@ class PlanetInfoDialog(QDialog):
         """)
 
         main_layout = QVBoxLayout(self)
-        main_layout.setSpacing(10)
-        main_layout.setContentsMargins(15, 15, 15, 15)
+        main_layout.setSpacing(8)
+        main_layout.setContentsMargins(12, 12, 12, 12)
 
         # === TOP SECTION: Planet Name + Image ===
         top_widget = QWidget()
@@ -417,15 +422,16 @@ class PlanetInfoDialog(QDialog):
             nav_layout.setSpacing(5)
 
             self.left_btn = QPushButton("◀")
-            self.left_btn.setFont(scaled_area_font('buttons', bold=True))
             self.left_btn.setFixedSize(30, 30)
+            # O-6: font-size in the QSS (_get_arrow_style), not setFont — qt-material
+            # overrides setFont on QSS-styled buttons.
             self.left_btn.setStyleSheet(self._get_arrow_style())
             self.left_btn.clicked.connect(self._go_prev)
             nav_layout.addWidget(self.left_btn)
 
             self.rotating_planet = None
             self.planet_container = QWidget()
-            self.planet_container.setFixedSize(230, 230)
+            self.planet_container.setFixedSize(126, 126)
             self.planet_container.setStyleSheet("background: transparent;")
             self.planet_container_layout = QVBoxLayout(self.planet_container)
             self.planet_container_layout.setContentsMargins(0, 0, 0, 0)
@@ -433,7 +439,6 @@ class PlanetInfoDialog(QDialog):
             nav_layout.addWidget(self.planet_container)
 
             self.right_btn = QPushButton("▶")
-            self.right_btn.setFont(scaled_area_font('buttons', bold=True))
             self.right_btn.setFixedSize(30, 30)
             self.right_btn.setStyleSheet(self._get_arrow_style())
             self.right_btn.clicked.connect(self._go_next)
@@ -442,15 +447,16 @@ class PlanetInfoDialog(QDialog):
             icon_layout.addLayout(nav_layout)
 
             self.counter_label = QLabel()
-            self.counter_label.setFont(scaled_area_font('buttons'))
-            self.counter_label.setStyleSheet(f"color: {TEXT_SECONDARY};")
+            self.counter_label.setStyleSheet(
+                f"color: {TEXT_SECONDARY}; "
+                f"font-size: {tier_px('status', 10)}px;")
             self.counter_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             icon_layout.addWidget(self.counter_label)
 
             self._load_current_image()
         elif planet_pixmap:
             dpr = self._get_dpr()
-            target_size = 200
+            target_size = 96
             physical_size = int(target_size * dpr)
             img_path = PROJECT_ROOT / "img" / "planets" / f"{self._planet_filename}.webp"
             if img_path.exists():
@@ -468,7 +474,7 @@ class PlanetInfoDialog(QDialog):
                     scaled_pixmap = planet_pixmap
             else:
                 scaled_pixmap = planet_pixmap
-            self.single_rotating_planet = RotatingPlanetWidget(scaled_pixmap, rotation_speed=0.4)
+            self.single_rotating_planet = RotatingPlanetWidget(scaled_pixmap, rotation_speed=0.4, planet_name=self.planet_name)
             self.single_rotating_planet.setFixedSize(target_size + 10, target_size + 10)
             icon_layout.addWidget(self.single_rotating_planet, alignment=Qt.AlignmentFlag.AlignCenter)
 
@@ -482,8 +488,9 @@ class PlanetInfoDialog(QDialog):
 
         planet_color = PLANET_COLORS.get(self.planet_name, GOLD)
         name_label = QLabel(self.planet_name)
-        name_label.setFont(scaled_area_font('panel_titles', bold=True))
-        name_label.setStyleSheet(f"color: {planet_color};")
+        name_label.setStyleSheet(
+            f"color: {planet_color}; "
+            f"font-size: {popup_title_px(14)}px; font-weight: bold;")
         info_layout.addWidget(name_label)
 
         # Dignity badge - uses theme primary color
@@ -495,10 +502,11 @@ class PlanetInfoDialog(QDialog):
                 "debilitation": "▼ DEBILITATED",
             }.get(self.dignity, "")
             dignity_label = QLabel(dignity_text)
-            dignity_label.setFont(scaled_area_font('buttons', bold=True))
             dignity_label.setStyleSheet(f"color: {self.theme['primary_text']}; "
                                          f"background-color: {self.theme['primary']}; "
-                                         f"padding: 4px 12px; border-radius: 4px;")
+                                         f"padding: 4px 12px; border-radius: 4px; "
+                                         f"font-size: {tier_px('status', 10)}px; "
+                                         f"font-weight: bold;")
             info_layout.addWidget(dignity_label, alignment=Qt.AlignmentFlag.AlignLeft)
 
         # Position info
@@ -506,21 +514,25 @@ class PlanetInfoDialog(QDialog):
         mins = self.planet_info.get("minutes", 0)
         full_deg = self.planet_info.get("decimal_degrees", 0)
         pos_label = QLabel(f"{deg}° {mins}' {self.display_sign}")
-        pos_label.setFont(scaled_area_font('tables'))
-        pos_label.setStyleSheet(f"color: {self.theme['secondary_text']};")
+        pos_label.setStyleSheet(
+            f"color: {self.theme['secondary_text']}; "
+            f"font-size: {scaled_area_px('tables')}px;")
         info_layout.addWidget(pos_label)
 
         # Element
         element_info = self.PLANET_ELEMENTS.get(self.planet_name, ("Unknown", ""))
         element_label = QLabel(f"Element: {element_info[0]}")
-        element_label.setFont(scaled_area_font('buttons'))
-        element_label.setStyleSheet(f"color: {self.theme['secondary_text']};")
+        element_label.setStyleSheet(
+            f"color: {self.theme['secondary_text']}; "
+            f"font-size: {tier_px('status', 10)}px;")
         info_layout.addWidget(element_label)
 
         # Retrograde
         if self.planet_info.get("retrograde"):
             retro_label = QLabel("⟲ Retrograde")
-            retro_label.setStyleSheet(f"color: {desat_hex(STATUS['error'])}; font-weight: bold;")
+            retro_label.setStyleSheet(
+                f"color: {desat_hex(STATUS['error'])}; font-weight: bold; "
+                f"font-size: {tier_px('status', 10)}px;")
             info_layout.addWidget(retro_label)
 
         info_layout.addStretch()
@@ -545,12 +557,15 @@ class PlanetInfoDialog(QDialog):
         toc_layout.setSpacing(5)
 
         toc_header = QLabel("Contents")
-        toc_header.setFont(scaled_area_font('panel_titles', bold=True))
-        toc_header.setStyleSheet(f"color: {self.theme['primary']};")
+        toc_header.setStyleSheet(
+            f"color: {self.theme['primary']}; "
+            f"font-size: {popup_group_px(14)}px; font-weight: bold;")
         toc_layout.addWidget(toc_header)
 
         self.toc_list = QListWidget()
-        self.toc_list.setFont(scaled_area_font('tables'))
+        self.toc_list.setWordWrap(True)
+        self.toc_list.setTextElideMode(Qt.TextElideMode.ElideNone)
+        self.toc_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._toc_default_fg = self.theme['secondary_text']
         self.toc_list.setStyleSheet(f"""
             QListWidget {{
@@ -558,6 +573,7 @@ class PlanetInfoDialog(QDialog):
                 border: 1px solid {self.theme['primary']};
                 border-radius: 6px;
                 padding: 5px;
+                font-size: {tier_px('sidebar', 11)}px;
             }}
             QListWidget::item {{
                 padding: 6px 8px;
@@ -584,7 +600,6 @@ class PlanetInfoDialog(QDialog):
 
         self.content_browser = QTextBrowser()
         self.content_browser.setOpenExternalLinks(False)
-        self.content_browser.setFont(scaled_area_font('tables'))
         self.content_browser.setStyleSheet(f"""
             QTextBrowser {{
                 background-color: {self.theme['secondary']};
@@ -592,6 +607,7 @@ class PlanetInfoDialog(QDialog):
                 border: 1px solid {self.theme['primary']};
                 border-radius: 8px;
                 padding: 15px;
+                font-size: {scaled_area_px('info_text')}px;
                 selection-background-color: {self.theme['primary']};
             }}
         """)
@@ -639,17 +655,22 @@ class PlanetInfoDialog(QDialog):
             item.setData(Qt.ItemDataRole.UserRole, anchor)
             display = f"  • {title}" if level == 'h3' else title
             item.setText(display)
-            if level == 'h3':
-                item.setFont(scaled_area_font('tables'))
+            # Preserve the old item point-size tiers at defaults while routing
+            # both through Sidebar for future scaling.
+            item_font = QFont()
+            item_font.setPixelSize(tier_point_px(
+                'sidebar', 11 if level == 'h3' else 9))
+            item.setFont(item_font)
             self.toc_list.addItem(item)
             if colors_pair:
                 _, fg_hex = colors_pair
                 item.setText("")
                 label = QLabel(display)
-                label.setFont(scaled_area_font('tables'))
+                label.setWordWrap(True)
                 label.setStyleSheet(
                     f"color: {fg_hex}; font-weight: bold; "
-                    f"padding: 4px 8px;"
+                    f"padding: 4px 8px; "
+                    f"font-size: {tier_px('sidebar', 11)}px;"
                 )
                 label.setProperty("toc_title", display)
                 self.toc_list.setItemWidget(item, label)
@@ -679,8 +700,7 @@ class PlanetInfoDialog(QDialog):
 
         if len(self.variations) > 1:
             apply_btn = QPushButton("Change Icon")
-            apply_btn.setFont(scaled_area_font('buttons', bold=True))
-            # Use theme primary color for apply button
+            # Use theme primary color for apply button (O-6: font-size in QSS)
             apply_btn.setStyleSheet(f"""
                 QPushButton {{
                     background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
@@ -689,6 +709,8 @@ class PlanetInfoDialog(QDialog):
                     border: none;
                     padding: 12px 24px;
                     border-radius: 8px;
+                    font-size: {tier_px('action_buttons', 10)}px;
+                    font-weight: bold;
                 }}
                 QPushButton:hover {{
                     background: {self.theme['primary']};
@@ -709,8 +731,7 @@ class PlanetInfoDialog(QDialog):
             button_layout.addWidget(apply_btn)
 
         close_btn = QPushButton("Close")
-        close_btn.setFont(scaled_area_font('buttons'))
-        # Use theme secondary button style with dynamic theme colors
+        # Use theme secondary button style with dynamic theme colors (O-6: QSS font)
         close_btn.setStyleSheet(f"""
             QPushButton {{
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
@@ -719,6 +740,7 @@ class PlanetInfoDialog(QDialog):
                 border: 1px solid {self.theme['primary']};
                 padding: 12px 24px;
                 border-radius: 8px;
+                font-size: {tier_px('action_buttons', 10)}px;
             }}
             QPushButton:hover {{
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
@@ -826,10 +848,16 @@ class PlanetInfoDialog(QDialog):
         min_val = int((self.deg_in_sign - deg_int) * 60)
         degree_text = f"{deg_int}°{min_val:02d}'"
 
+        # Section headers -> tables (matches the sector dialog's Hora/Trimsamsa
+        # headers); intro narrative -> info_text. NB: NOT <h2>/<h3> — Qt's rich
+        # text engine multiplies a heading's font-size ON TOP of the styled px
+        # (h2 19px rendered 29px), so the setting never lands; neutral bold <p>
+        # blocks carry the px exactly (see _section_header_html).
+        intro_px = scaled_area_px('info_text')
         parts = []
-        parts.append(f'<h2>Hora</h2>')
+        parts.append(self._section_header_html("Hora"))
         parts.append(
-            f'<p style="color: {text_color};">'
+            f'<p style="color: {text_color}; font-size: {intro_px}px;">'
             'Every being in this sign adds meaning to understanding the Aditya. '
             'A planet does not need to fall directly in a specific zone for that '
             'description to be relevant. However, when a planet does fall in a '
@@ -852,7 +880,7 @@ class PlanetInfoDialog(QDialog):
             else:
                 parts.append(self._render_inactive_block(title, desc, text_color))
 
-        parts.append(f'<h2>Trimsamsa</h2>')
+        parts.append(self._section_header_html("Trimsamsa"))
 
         for _, being_type, display_label in self._TRIMSAMSA_BEINGS:
             desc = get_being_description(self.aditya_sign, "trimsamsa", being_type)
@@ -874,8 +902,10 @@ class PlanetInfoDialog(QDialog):
     @staticmethod
     def _render_active_block(title, desc, bg, fg, planet_name,
                              degree_text, sign_name, ring_label):
+        p_px = scaled_area_px('info_text')
+        h_px = tier_px('info_text', 12)   # card title: info_text bold (§3.2)
         annotation = (
-            f'<p style="color: {GOLD}; font-style: italic;">'
+            f'<p style="color: {GOLD}; font-style: italic; font-size: {p_px}px;">'
             f'{planet_name} at {degree_text} {sign_name} falls directly in this '
             f'{ring_label}. This description is especially relevant in your chart.</p>'
         )
@@ -885,30 +915,56 @@ class PlanetInfoDialog(QDialog):
                                ("afflicted", "Afflicted Expression")]:
                 value = desc.get(key, "")
                 if value:
-                    content += f'<p style="color: {fg};"><b>{label}:</b> {value}</p>'
+                    content += (f'<p style="color: {fg}; font-size: {p_px}px;">'
+                                f'<b>{label}:</b> {value}</p>')
         else:
-            content += f'<p style="color: {fg}; font-style: italic;">Description not available</p>'
+            content += (f'<p style="color: {fg}; font-style: italic; '
+                        f'font-size: {p_px}px;">Description not available</p>')
         return (
             f'<table width="100%" cellpadding="10" '
             f'style="background-color: {bg}; margin-top: 6px; margin-bottom: 6px;">'
             f'<tr><td style="border-left: 4px solid {fg};">'
-            f'<h3><span style="color: {fg};">{title}</span></h3>'
+            f'<p style="font-size: {h_px}px; font-weight: bold; '
+            f'margin: 6px 0 2px 0;"><span style="color: {fg};">{title}</span></p>'
             f'{content}'
             f'</td></tr></table>'
         )
 
     @staticmethod
     def _render_inactive_block(title, desc, text_color):
+        # Same content class as sector_structure_widget -> same areas, so one
+        # font knob drives both dialogs. HTML mechanism: font-size goes into the
+        # element style. NB: the title is a neutral bold <p>, NOT <h3> — Qt
+        # multiplies a heading's styled font-size (h3 17px rendered 23px); a <p>
+        # lands exactly. A bare <p> with no font-size still tracks nothing.
+        p_px = scaled_area_px('info_text')
+        h_px = tier_px('info_text', 12)   # card title: info_text bold (§3.2)
         content = ""
         if desc:
             for key, label in [("theme", "Theme"), ("healthy", "Healthy Expression"),
                                ("afflicted", "Afflicted Expression")]:
                 value = desc.get(key, "")
                 if value:
-                    content += f'<p style="color: {text_color};"><b>{label}:</b> {value}</p>'
+                    content += (f'<p style="color: {text_color}; '
+                                f'font-size: {p_px}px;"><b>{label}:</b> {value}</p>')
         else:
-            content += f'<p style="color: {text_color}; font-style: italic;">Description not available</p>'
-        return f'<h3>{title}</h3>{content}'
+            content += (f'<p style="color: {text_color}; font-style: italic; '
+                        f'font-size: {p_px}px;">Description not available</p>')
+        return (f'<p style="font-size: {h_px}px; font-weight: bold; '
+                f'margin: 6px 0 2px 0;">{title}</p>{content}')
+
+    @staticmethod
+    def _section_header_html(text):
+        """A Hora/Trimsamsa section header as a neutral bold block following
+        Info text with its historical default size (SPEC-FONT-001 §3.2).
+
+        NOT <h2>: Qt's rich-text engine applies a heading size multiplier on top
+        of the styled font-size, so the setting is lost (h2 19px -> 29px). A <p>
+        carrying the px lands exactly.
+        """
+        px = popup_group_px(11)
+        return (f'<p style="font-size: {px}px; font-weight: bold; '
+                f'margin: 10px 0 4px 0;">{text}</p>')
 
     def _get_arrow_style(self):
         """Arrow navigation button style using dynamic theme colors"""
@@ -919,6 +975,8 @@ class PlanetInfoDialog(QDialog):
                 color: {theme['secondary_text']};
                 border: 2px solid {theme['primary']};
                 border-radius: 15px;
+                font-size: {scaled_area_px('buttons')}px;
+                font-weight: bold;
             }}
             QPushButton:hover {{
                 background-color: {theme['primary']};
@@ -964,7 +1022,7 @@ class PlanetInfoDialog(QDialog):
             if not qimage.isNull():
                 # High-DPI: Scale to physical pixels
                 dpr = self._get_dpr()
-                target_size = 200
+                target_size = 96
                 physical_size = int(target_size * dpr)
 
                 scaled = qimage.scaled(
@@ -978,12 +1036,18 @@ class PlanetInfoDialog(QDialog):
 
                 # Create or update rotating widget
                 if self.rotating_planet is None:
-                    self.rotating_planet = RotatingPlanetWidget(pixmap, rotation_speed=0.4)
+                    self.rotating_planet = RotatingPlanetWidget(pixmap, rotation_speed=0.4, planet_name=self.planet_name)
                     self.rotating_planet.setFixedSize(target_size + 20, target_size + 20)
                     self.planet_container_layout.addWidget(self.rotating_planet)
                 else:
                     self.rotating_planet.update_pixmap(pixmap)
 
+        from apps.widgets.planet_icon_style import selected_pack
+        if selected_pack(self.planet_name):
+            self.counter_label.setText('SVG appearance — artwork variations retained')
+            self.left_btn.setEnabled(False)
+            self.right_btn.setEnabled(False)
+            return
         # Update counter
         self.counter_label.setText(f"Variation {self.current_idx + 1} of {len(self.variations)}")
 
@@ -1005,6 +1069,10 @@ class PlanetInfoDialog(QDialog):
 
     def _apply_and_close(self):
         """Save selected variation and close"""
+        from apps.widgets.planet_icon_style import selected_pack
+        if selected_pack(self.planet_name):
+            self.accept()
+            return
         selected_var = self.variations[self.current_idx]
         self.variation_applied.emit(self.planet_name, selected_var)
         self.accept()

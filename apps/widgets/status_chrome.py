@@ -52,6 +52,13 @@ class _StatusPill(QWidget):
 
     PAD_X = 12
     PAD_Y = 5
+    _BORDER = 1.0            # the hairline paintEvent insets by (width-1.0)
+    _MAX_PREF_WIDTH = 260    # deliberate preferred-width cap: past this a large
+                             # font degrades to elide+tooltip, not a wide pill
+    # Text captions elide to the available width and grow a full-text tooltip
+    # when clipped; a glyph subclass (fullscreen) sets this False — a symbol is
+    # one cell wide, must never be elided, and owns a fixed help tooltip.
+    ELIDE = True
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -59,6 +66,7 @@ class _StatusPill(QWidget):
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setMouseTracking(True)
+        self._apply_min_height()
 
     # -- subclass hooks ---------------------------------------------------
 
@@ -71,22 +79,69 @@ class _StatusPill(QWidget):
     # -- typography / sizing ---------------------------------------------
 
     def _font(self):
-        from ui.qt_theme import get_scale_factor
+        # SPEC-FONT-001 B7-a4: the pill is a text caption — exactly what the
+        # 'status' area governs — so it follows that area, not a bare scale
+        # literal. scaled_tier_size preserves the 10px default at 1.0/defaults
+        # (parity) while scaling with the status-area setting AND global scale.
+        # (The fullscreen SUBCLASS overrides this with a glyph-only font that
+        # stays scale-only — a symbol renders as an icon, not text: SKIP.)
+        from ui.qt_theme import scaled_tier_size
         f = QFont("Inter")
-        f.setPixelSize(max(6, int(round(10.0 * get_scale_factor()))))
+        f.setPixelSize(max(6, scaled_tier_size(10.0, 'status')))
         f.setWeight(QFont.Weight.Bold)
         f.setCapitalization(QFont.Capitalization.AllUppercase)
         f.setLetterSpacing(QFont.SpacingType.PercentageSpacing, 112)
         return f
 
+    def _text_avail(self, total_width):
+        """Inner width available to the DRAWN caption at a given widget width.
+
+        THE single width computation — paintEvent, sizeHint and the fit oracle
+        all route through it, so the 1px painted-border inset (paintEvent draws
+        into ``width-1``) can never disagree between measure and paint. That
+        disagreement was the round-2 bug: sizeHint omitted the border, so at
+        defaults paint had 1px less than the text and elided "…" with a tooltip.
+        """
+        return (total_width - self._BORDER) - 2 * self.PAD_X
+
+    def _pref_width(self):
+        """Preferred pill width: exactly wide enough for the full caption at
+        defaults (so `_text_avail(_pref_width) == full text`, no elision), but
+        DELIBERATELY capped so a large font degrades to bounded-width + elide +
+        tooltip rather than a bar-eating 500px+ pill (FIX-1, B7-a round-3)."""
+        full = QFontMetrics(self._font()).horizontalAdvance(self._text())
+        natural = full + 2 * self.PAD_X + self._BORDER + 1  # +1 slack: no elision at fit
+        if self.ELIDE:
+            return min(natural, self._MAX_PREF_WIDTH)
+        return natural
+
     def sizeHint(self):
         fm = QFontMetrics(self._font())
-        width = fm.horizontalAdvance(self._text()) + 2 * self.PAD_X
-        height = fm.height() + 2 * self.PAD_Y
-        return QSize(int(width), int(height))
+        return QSize(int(self._pref_width()), int(fm.height() + 2 * self.PAD_Y))
 
     def minimumSizeHint(self):
-        return self.sizeHint()
+        # Full HEIGHT (the bar must accommodate the font — never clip the glyph
+        # vertically) but a MINIMAL width: the caption elides horizontally in a
+        # width-constrained status bar rather than forcing a wide pill that eats
+        # the bar (FIX-1). Width floor = one ellipsis + pads + border.
+        fm = QFontMetrics(self._font())
+        min_w = fm.horizontalAdvance("…") + 2 * self.PAD_X + self._BORDER
+        return QSize(int(min_w), int(fm.height() + 2 * self.PAD_Y))
+
+    def _apply_min_height(self):
+        """Force the status bar to give at least the font's height so the glyph
+        is never vertically clipped (FIX-1: updateGeometry alone did not make
+        the bar honor the taller sizeHint). Re-called whenever the font changes."""
+        fm = QFontMetrics(self._font())
+        self.setMinimumHeight(fm.height() + 2 * self.PAD_Y)
+
+    def _elided_text(self, avail_width):
+        """The caption as it will actually be drawn at the given inner width —
+        elided with a trailing ellipsis when the full text does not fit. The
+        single source both paintEvent and the fit-or-elide oracle read."""
+        fm = QFontMetrics(self._font())
+        return fm.elidedText(self._text(), Qt.TextElideMode.ElideRight,
+                             max(0, int(avail_width)))
 
     # -- painting ---------------------------------------------------------
 
@@ -111,17 +166,35 @@ class _StatusPill(QWidget):
         p.drawRoundedRect(rect, radius, radius)
         p.setFont(self._font())
         p.setPen(QPen(ink))
-        p.drawText(rect, Qt.AlignmentFlag.AlignCenter, self._text())
+        text = self._text()
+        if self.ELIDE:
+            # Fit-or-elide (FIX-1): draw as much of the caption as the width
+            # holds; when clipped, show the full caption in a tooltip instead of
+            # slicing a glyph mid-stroke. A caption pill never has its own
+            # tooltip, so setting/clearing it here is safe. _text_avail is THE
+            # shared width computation sizeHint and the oracle also use.
+            shown = self._elided_text(self._text_avail(self.width()))
+            self.setToolTip(text if shown != text else "")
+            text = shown
+        p.drawText(rect, Qt.AlignmentFlag.AlignCenter, text)
         p.end()
 
     def refresh_theme(self):
-        """Repaint under the new palette.
+        """Repaint under the new palette (and re-lay-out for a new font size).
 
         Colours are read live in ``paintEvent`` (SPEC-THM-001 live-read
-        pattern), so a theme switch needs only a repaint — no cached stylesheet
-        to re-apply.
+        pattern), so a theme switch needs only a repaint. The font is also read
+        live from ``_font()`` (B7-a4, now the 'status' area), so when this is
+        called from the FONT fan-out the glyph size changes too. We re-assert the
+        minimum HEIGHT from the new font (so the bar accommodates it — FIX-1:
+        updateGeometry alone did not) and invalidate the cached geometry; the
+        WIDTH is elided in paintEvent, so a width-constrained bar clips cleanly to
+        a tooltip rather than slicing the caption (the td-2o8u fixed-geometry
+        lesson, hardened after the B7-a review).
         """
         try:
+            self._apply_min_height()
+            self.updateGeometry()
             self.update()
         except RuntimeError:
             pass
@@ -221,6 +294,7 @@ class StatusFullscreenButton(_StatusPill):
     """
 
     GLYPH = "⛶"        # SQUARE FOUR CORNERS — the fullscreen convention
+    ELIDE = False       # a single symbol is never elided; keeps its help tooltip
 
     def __init__(self, on_toggle, parent=None):
         super().__init__(parent)

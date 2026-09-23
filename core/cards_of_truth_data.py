@@ -16,15 +16,15 @@ Contract notes that are easy to get wrong
   ``planet_order``; importing ``symbols`` or reaching for ``birth_card_order``
   would be the first step toward re-deriving a face in app code.
 * **INV-2 — the default order is ``solar_system``, NOT the library's ``vedic``.**
-  Kala uses ``solar_system`` (SPEC-COT-001 §2.6, verified). Passing
+  ``solar_system`` is the verified order (SPEC-COT-001 §2.6). Passing
   ``vedic`` silently mislabels three of the seven main cards and moves their
   occupants. Do not "restore" the library default.
 * **INV-5/INV-6 — the grid is normative.** Row 2 runs RIGHT TO LEFT (index 1 =
   Sun = rightmost) and rows 3/5 are centre-anchored, not left-packed. Taken from
-  the engine's own ``richDrawing()`` and confirmed against Kala.
-* **D-4 — Earth and Chiron are omitted.** The engine returns them; Kala does not
-  draw them, including on a card whose only occupant is Chiron (which Kala draws
-  empty). Filtering here also closes the missing-icon gap.
+  the engine's own ``richDrawing()`` and confirmed on the reference charts.
+* **D-4 — Earth and Chiron are omitted.** The engine returns them; the spread
+  does not show them, so a card whose only occupant is Chiron is drawn empty.
+  Filtering here also closes the missing-icon gap.
 * **INV-9 — defect transparency.** Whatever the engine returns is what ships,
   including the known-wrong November card (E-4) and the date-rollover card (E-6).
   No corrections live here.
@@ -84,7 +84,7 @@ GRID = {
 GRID_ROWS = 5
 GRID_COLS = 7
 
-#: D-4 — Kala omits both; the engine returns them.
+#: D-4 — the spread omits both; the engine returns them.
 OMITTED_BODIES = frozenset({"Earth", "Chiron"})
 
 #: INV-2 — the verified order. The library's own default is ``vedic`` and is wrong here.
@@ -221,7 +221,7 @@ def card_descriptor(code: str) -> dict:
     (SPEC-COT-002 INV-5).
 
     ``rank_display`` is what makes a ten render as ``10`` rather than the
-    engine's internal ``T`` — Kala renders tens as ``10`` and three of the five
+    engine's internal ``T`` — a ten reads as ``10`` and three of the five
     reference charts exercise it, all of them in the pips.
 
     **``symbol`` is the engine's and is NOT display-safe.** ``Card.symbol()``
@@ -272,7 +272,7 @@ def _period_year(index: int, birth_year):
     """The calendar year this position's 52-year period opens, or ``None``.
 
     Keyed on the spread POSITION, never on the planet name (INV-8). The position
-    order is a user setting on our side and a Kala setting on theirs, and
+    order is a user setting, and
     ``solar_system`` is a later addition — the same seat is called
     Mercury under one order and Mars under the other. Binding the year to a name
     would make the years follow the wrong cards the moment the order is flipped.
@@ -376,7 +376,7 @@ def assemble_spread(chart, order: str = DEFAULT_ORDER, varga_code=None) -> dict:
 
     Args:
         chart: a libaditya ``Chart``.
-        order: ``"solar_system"`` (Kala parity, the default) or ``"vedic"``.
+        order: ``"solar_system"`` (the default) or ``"vedic"``.
         varga_code: a **libaditya** varga code (``core.varga_codes
             .to_libaditya_varga_code``), or ``None``/``1`` for the natal rashi.
             The spread is then bound to ``chart.varga(code)`` and the occupants
@@ -603,10 +603,9 @@ def progression_blocks(birth_code: str, birth_year) -> list:
 def year_cells(block_index: int, birth_year) -> list:
     """The seven one-year cells of one progression block (INV-3).
 
-    Kala already draws these and already labels them BY AGE: the "Ages 0 - 6"
-    screen reads ``6 5 4 3 2 1 0`` left to right and "Ages 7 - 13" reads
-    ``13 12 11 10 9 8 7``. So descending a level reads a number off a cell; it
-    does not derive one.
+    The cells are labelled BY AGE: "Ages 0 - 6" reads ``6 5 4 3 2 1 0`` left
+    to right and "Ages 7 - 13" reads ``13 12 11 10 9 8 7``. So descending a
+    level reads a number off a cell; it does not derive one.
 
     Returned in TIME order (youngest age first) carrying an explicit ``col``,
     because row 2 is drawn RIGHT TO LEFT with the Sun rightmost
@@ -1153,7 +1152,7 @@ def assemble_quadration_spread(chart, order: str = DEFAULT_ORDER,
     # chart cast for the CALENDAR BIRTHDAY of age N, at the birth time and
     # place -- NOT the solar return. §3.3 is the proof: at age 2 a solar return
     # puts the Ascendant in the Mars card and the MC in the Sun card, while the
-    # birthday chart and Kala both put them in the Mercury and Saturn cards
+    # birthday chart and the reference data both put them in the Mercury and Saturn cards
     # (13/13). ``anniversary_chart`` builds that chart with local-civil-date
     # arithmetic, one build, no return search.
     #

@@ -35,7 +35,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt
 
 from ui.qt_theme import (
-    get_theme_colors, scaled_area_px, scaled_area_font, elevation_table_style,
+    get_theme_colors, scaled_area_px, elevation_table_style,
 )
 from apps.delegates import AvasthaHighlightDelegate
 from apps.delegates.cell_depth import CellDepthMixin
@@ -131,8 +131,12 @@ class AvasthaFullscreenPage(QWidget):
         top.addWidget(self._compass)
         top.addStretch()
         self._view_label = QLabel()
-        self._view_label.setFont(scaled_area_font('table_headers', family="Inter", bold=True))
-        self._view_label.setStyleSheet(f"color: {theme['primary']};")
+        # O-6: font-size in QSS, not setFont (qt-material overrides setFont);
+        # keep the Inter family it had.
+        self._view_label.setStyleSheet(
+            f"color: {theme['primary']}; "
+            f"font-size: {scaled_area_px('table_headers')}px; "
+            f'font-family: "Inter"; font-weight: bold;')
         top.addWidget(self._view_label)
         layout.addLayout(top)
 
@@ -157,9 +161,10 @@ class AvasthaFullscreenPage(QWidget):
         # print {v:.0f} but contribute the unrounded float, so an eye-sum of a
         # row drifts (SPEC-AVA-002 INV-7 / D-9).
         self._reading = QLabel(" ")
-        self._reading.setFont(scaled_area_font('table_headers', family="Inter"))
         self._reading.setStyleSheet(
-            f"color: {theme['primary']}; padding: 4px 8px;")
+            f"color: {theme['primary']}; padding: 4px 8px; "
+            f"font-size: {scaled_area_px('table_headers')}px; "
+            f'font-family: "Inter";')
         self._reading.setMinimumHeight(int(scaled_area_px('table_headers') * 2.2))
         layout.addWidget(self._reading)
 

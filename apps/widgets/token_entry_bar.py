@@ -40,7 +40,7 @@ from PySide6.QtWidgets import (
 )
 
 from ui.qt_theme import (desat_hex, dim_text, get_theme_colors,
-                         is_light_theme)
+                         is_light_theme, scaled_area_factor)
 from ui.themed_style import ThemedStyleMixin
 from ui.image_paste_line_edit import ImagePasteLineEdit, AiToggleButton
 
@@ -79,10 +79,27 @@ SIDE_GUTTER = 16
 
 # ---- Chip metrics, ported from the mockup's `.tok` rules -------------------
 CHIP_RADIUS = 8           # .tok border-radius
-CHIP_FONT = "12px"        # .tok font
-CHIP_TAG_FONT = "8.5px"   # .tok small
-HINT_FONT = "10.5px"      # .smartline .hintk
-PROMPT_FONT = "14px"      # .prompt
+
+
+def _tier_px(base, area):
+    """QSS ``font-size`` for a base tier scaled by its area factor (G3b). Local
+    round-HALF-UP twin of ``qt_theme.scaled_tier_size`` (banker's round): Qt's
+    QSS parser renders ``font-size: 10.5px`` at pixelSize 11, so int(x+0.5) here
+    keeps the migration off the old fractional-px literals byte-identical at
+    defaults (area factor 1.0). Duplicated from new_edit_workspace rather than
+    imported to avoid a circular import (that module builds this bar)."""
+    return f"{max(1, int(base * scaled_area_factor(area) + 0.5))}px"
+
+
+# The mockup's frozen px literals, now scaled by role -> font area so the token
+# bar follows the resolution presets + Display Scale (matching the New & Edit
+# form it sits in). CHIP -> buttons, CHIP small tag -> status, HINT/PROMPT/typed
+# INPUT -> info_text (the input line's body text, INPUT == the form's BASE 13).
+def _chip_px():     return _tier_px(12,   "buttons")    # .tok font
+def _chip_tag_px(): return _tier_px(8.5,  "status")     # .tok small
+def _hint_px():     return _tier_px(10.5, "info_text")  # .smartline .hintk
+def _prompt_px():   return _tier_px(14,   "info_text")  # .prompt
+def _input_px():    return _tier_px(13,   "info_text")  # QLineEdit#smartInput typed line
 
 #: Alpha of the chip's own accent used as its fill. The chip TEXT is measured
 #: against this composited background, not against the bare bar.
@@ -656,13 +673,13 @@ class TokenChip(ThemedStyleMixin, QFrame):
     def _tag_style(self):
         return ("QLabel { color: %s; font-size: %s; font-weight: 800;"
                 " background: transparent; border: none; }"
-                % (_chip_ink(self.field), CHIP_TAG_FONT))
+                % (_chip_ink(self.field), _chip_tag_px()))
 
     def _value_style(self):
         return ("QLabel { color: %s; font-size: %s; font-weight: 500;"
                 " font-family: 'JetBrains Mono', 'DejaVu Sans Mono', monospace;"
                 " background: transparent; border: none; }"
-                % (_chip_ink(self.field), CHIP_FONT))
+                % (_chip_ink(self.field), _chip_px()))
 
     def _editor_style(self):
         """The editor wears the value label's clothes, plus a caret.
@@ -675,7 +692,7 @@ class TokenChip(ThemedStyleMixin, QFrame):
                 " font-family: 'JetBrains Mono', 'DejaVu Sans Mono', monospace;"
                 " background: transparent; border: none; padding: 0px;"
                 " selection-background-color: %s; }"
-                % (_chip_ink(self.field), CHIP_FONT,
+                % (_chip_ink(self.field), _chip_px(),
                    _rgba(_element_hex(self.field), 0.45)))
 
     def _clear_style(self):
@@ -696,7 +713,7 @@ class TokenChip(ThemedStyleMixin, QFrame):
                 "QToolButton:hover, QToolButton:focus {"
                 " background-color: %s; }"
                 % (_rgba(danger, 0.55), danger,
-                   _ink_on(danger), CHIP_TAG_FONT, _rgba(danger, 0.85)))
+                   _ink_on(danger), _chip_tag_px(), _rgba(danger, 0.85)))
 
     def _set_x_shown(self, shown):
         if shown != self._x_shown:
@@ -944,7 +961,7 @@ class TokenEntryBar(ThemedStyleMixin, QWidget):
         return ("QLabel { color: %s; font-size: %s; font-weight: 700;"
                 " font-family: 'JetBrains Mono', 'DejaVu Sans Mono', monospace;"
                 " background: transparent; }"
-                % (_accent_ink(), PROMPT_FONT))
+                % (_accent_ink(), _prompt_px()))
 
     def _input_style(self):
         """The typed line, plus an EXPLICIT placeholder colour.
@@ -963,14 +980,14 @@ class TokenEntryBar(ThemedStyleMixin, QWidget):
         theme = get_theme_colors()
         return ("QLineEdit#smartInput {"
                 " background: transparent; border: none;"
-                " color: %s; font-size: 13px; font-weight: 500;"
+                " color: %s; font-size: %s; font-weight: 500;"
                 " placeholder-text-color: %s;"
                 " min-height: 26px; }"
-                % (theme["secondary_text"], _muted_ink()))
+                % (theme["secondary_text"], _input_px(), _muted_ink()))
 
     def _muted_style(self):
         return ("QLabel { color: %s; font-size: %s;"
-                " background: transparent; }" % (_muted_ink(), HINT_FONT))
+                " background: transparent; }" % (_muted_ink(), _hint_px()))
 
     #: Below this the static keyboard hint is hidden: it is the one element on
     #: the row that carries no data and no control, so it is what should go

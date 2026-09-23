@@ -2,7 +2,7 @@
 # Copyright (C) 2026 Lorris Turpin / 360 Hearts in the Sky
 # Licensed under AGPL-3.0 — see LICENSE file for details.
 """
-Info Panel Dialog — Fullscreen popup showing all sub-tables side by side.
+Info Panel Dialog — Fullscreen popup with readable, navigable table pages.
 
 Double-click any info panel frame to open this dialog at ~90% screen size.
 Tables are cloned (not reparented) so the main window stays intact.
@@ -14,10 +14,10 @@ import json
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QTableWidget,
     QTableWidgetItem, QHeaderView, QPushButton, QTextEdit,
-    QApplication, QSplitter, QWidget, QFrame
+    QApplication, QSplitter, QWidget, QFrame, QScrollArea
 )
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QFont, QColor, QBrush
+from PySide6.QtGui import QFont, QColor, QBrush, QFontMetrics
 
 from ui.qt_theme import (
     get_theme_colors,
@@ -25,8 +25,11 @@ from ui.qt_theme import (
     is_light_theme,
     scaled_area_px,
     scaled_area_size,
-    scaled_area_font,
 )
+from ui.popup_fonts import tier_px, popup_title_px, popup_group_px
+
+
+from ui.dignity_colors import DIGNITY_COLORS, dignity_colors
 
 
 # Section registry: section_key -> list of (gui_attr_name, display_label)
@@ -93,6 +96,65 @@ _SUBTAB_ATTRS = {
 # these keep a stronger hairline than the list-like tables.
 _MATRIX_TABLES = {"avastha_table", "tajika_matrix_table", "tajika_rel_table",
                   "aspects_table"}
+
+
+class _FillOrGrowTable(QTableWidget):
+    """Popup table whose rows fill the viewport when the content fits, and
+    grow to the wrapped content (with a scrollbar) when it does not.
+
+    Plain vertical Stretch rows give the filled look on a desktop screen but
+    ignore wrapped text height: on a 1366x768 laptop with Tables at 20+ px the
+    Elements/Modality PLANETS cells were still clipped after word-wrap landed
+    (wrap happens at paint time; Stretch never asks the delegate for height).
+    """
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._fit_columns()
+        self._fit_rows()
+
+    def _fit_columns(self):
+        """Keep whole words, values and headers reachable, even on small screens."""
+        if not getattr(self, "content_columns", False) or getattr(self, "_fitting_columns", False):
+            return
+        self._fitting_columns = True
+        try:
+            widths = []
+            for col in range(self.columnCount()):
+                minimum = self.horizontalHeader().sectionSizeHint(col)
+                for row in range(self.rowCount()):
+                    item = self.item(row, col)
+                    if item is not None:
+                        metrics = QFontMetrics(item.font().resolve(self.font()))
+                        minimum = max(minimum, max((metrics.horizontalAdvance(word) + 24
+                                      for word in item.text().split()), default=0))
+                widths.append(minimum)
+            extra = max(0, self.viewport().width() - sum(widths)) // max(1, len(widths))
+            for col, width in enumerate(widths):
+                self.setColumnWidth(col, width + extra)
+        finally:
+            self._fitting_columns = False
+
+    def _fit_rows(self):
+        rows = self.rowCount()
+        if rows == 0:
+            return
+        vh = self.verticalHeader()
+        vh.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        self.resizeRowsToContents()
+        needed = sum(self.rowHeight(r) for r in range(rows))
+        avail = self.viewport().height()
+        if needed < avail:
+            # Content fits: hand the leftover space out evenly on top of each
+            # row's own wrapped height, so a tall row (Elements "Water" with
+            # five planets) is never squeezed below what its text needs
+            # while the table still fills the viewport like Stretch did.
+            heights = [self.rowHeight(r) for r in range(rows)]
+            vh.setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
+            extra = (avail - needed) // rows
+            for r in range(rows):
+                self.setRowHeight(r, heights[r] + extra)
+        # else: keep content heights; the table scrolls vertically.
 
 _SECTION_STACKS = {
     "aspects": "aspects_stack",
@@ -183,7 +245,7 @@ from core.avastha_totals import (  # noqa: F401
 
 
 class InfoPanelDialog(ThemedStyleMixin, QDialog):
-    """Near-fullscreen dialog showing all sub-tables of a section side by side."""
+    """Near-fullscreen dialog with a page for each sub-table of a section."""
 
     def __init__(self, gui, section_key, parent=None, initial_attr=None):
         super().__init__(parent or gui)
@@ -231,6 +293,14 @@ class InfoPanelDialog(ThemedStyleMixin, QDialog):
             page = self._initial_attr
         self._initial_attr = page
 
+        # Capture the cheap user state the rebuild would otherwise discard
+        # (selection, scroll offsets, splitter sizes) — FIX-2, B7-a review. The
+        # section is preserved, so the rebuilt tree has the same table order and
+        # split count; restore keys off position. This also repairs the same
+        # loss that already happened on THEME changes (the font fan-out just
+        # added a second trigger to a pre-existing rebuild).
+        _state = self._capture_ui_state()
+
         # Drop the old tree. Re-parenting the layout onto a throwaway widget is
         # the supported way to destroy a layout AND its children together —
         # deleting widgets one by one here races the pending paint events.
@@ -242,6 +312,80 @@ class InfoPanelDialog(ThemedStyleMixin, QDialog):
         self._page_attrs = []
 
         self._setup_ui()
+
+        # Restore the captured state. Selection and splitter sizes apply cleanly
+        # right after _setup_ui (they are model/layout-level, not paint-level).
+        # A table's scroll RANGE, however, is only known once its viewport has
+        # been sized, so setValue would clamp to 0 here; we force that sizing
+        # synchronously inside _restore_ui_state (activate the layout + set the
+        # row heights) rather than deferring — a singleShot scheduled from inside
+        # the font fan-out's own singleShot did not fire reliably.
+        self._restore_ui_state(_state)
+
+    def _page_table(self, page_widget):
+        """The primary QTableWidget a section page shows (itself if it IS one,
+        else its first table descendant), or None for a table-less page."""
+        from PySide6.QtWidgets import QTableWidget
+        if isinstance(page_widget, QTableWidget):
+            return page_widget
+        found = page_widget.findChild(QTableWidget)
+        return found
+
+    def _capture_ui_state(self):
+        """Snapshot selection / scroll / splitter sizes before a refresh_theme
+        rebuild (FIX-2). Keyed by the stable per-page `attr_name` (positional
+        findChildren is fragile — enriched pages nest extra tables), so it maps
+        cleanly onto the identically-structured rebuilt tree."""
+        from PySide6.QtWidgets import QSplitter
+        state = {"tables": {}}
+        try:
+            sp = self.findChild(QSplitter)
+            if sp is not None:
+                state["splitter"] = list(sp.sizes())
+            for attr_name, w in zip(getattr(self, "_page_attrs", []),
+                                    getattr(self, "_page_widgets", [])):
+                t = self._page_table(w)
+                if t is None:
+                    continue
+                state["tables"][attr_name] = {
+                    "row": t.currentRow(), "col": t.currentColumn(),
+                    "v": t.verticalScrollBar().value(),
+                    "h": t.horizontalScrollBar().value(),
+                }
+        except RuntimeError:
+            pass
+        return state
+
+    def _restore_ui_state(self, state):
+        """Re-apply a snapshot from _capture_ui_state onto the rebuilt tree.
+        Guarded: the dialog may have closed before this deferred call fires."""
+        if not state:
+            return
+        from PySide6.QtWidgets import QSplitter
+        try:
+            # Force the freshly-built tree to compute geometry now, so each
+            # table's scrollbar RANGE is known before we restore an offset into
+            # it (otherwise setValue clamps to 0 against a not-yet-sized viewport).
+            lay = self.layout()
+            if lay is not None:
+                lay.activate()
+            sp = self.findChild(QSplitter)
+            saved_sizes = state.get("splitter")
+            if sp is not None and saved_sizes and len(saved_sizes) == len(sp.sizes()):
+                sp.setSizes(saved_sizes)
+            saved = state.get("tables", {})
+            for attr_name, w in zip(getattr(self, "_page_attrs", []),
+                                    getattr(self, "_page_widgets", [])):
+                s = saved.get(attr_name)
+                t = self._page_table(w)
+                if s is None or t is None:
+                    continue
+                if 0 <= s["row"] < t.rowCount() and 0 <= s["col"] < t.columnCount():
+                    t.setCurrentCell(s["row"], s["col"])
+                t.verticalScrollBar().setValue(s["v"])
+                t.horizontalScrollBar().setValue(s["h"])
+        except RuntimeError:
+            pass
 
     def _setup_ui(self):
         theme = get_theme_colors()
@@ -278,21 +422,26 @@ class InfoPanelDialog(ThemedStyleMixin, QDialog):
 
         # Title
         title = QLabel(self.section_key.upper())
-        title.setFont(scaled_area_font('panel_titles', family="Inter", bold=True))
-        title.setStyleSheet(f"color: {theme['primary']};")
+        # O-6: font-size + weight + Inter family in QSS (setFont is inert here).
+        title.setStyleSheet(
+            f"color: {theme['primary']}; "
+            f"font-size: {popup_title_px(14)}px; font-weight: bold; "
+            f'font-family: "Inter";')
         title.setAlignment(Qt.AlignmentFlag.AlignLeft)
         layout.addWidget(title)
 
         # Build the panel widgets first; layout differs by section.
         panels = []  # list of (label, widget)
         self._page_attrs = []  # parallel to `panels`: the gui attr each page shows
+        self._page_widgets = []  # parallel: the built widget (FIX-2 state key)
         for attr_name, label in self.section_items:
             widget = self._build_section_widget(attr_name)
             if widget is not None:
                 panels.append((label, widget))
                 self._page_attrs.append(attr_name)
+                self._page_widgets.append(widget)
 
-        if self.section_key in ("aspects", "karakas"):
+        if self.section_key in ("aspects", "karakas", "strength"):
             # Too many panels for side-by-side — show ONE full-width
             # panel at a time with arrow/chip navigation.
             layout.addWidget(self._build_paged_area(panels), stretch=1)
@@ -332,9 +481,12 @@ class InfoPanelDialog(ThemedStyleMixin, QDialog):
                 container_layout.setSpacing(4)
 
                 sub_label = QLabel(label)
-                sub_label.setFont(scaled_area_font('table_headers', family="Inter", bold=True))
                 # SPEC-THM-001 G05: live theme color (was frozen TEXT_SECONDARY).
-                sub_label.setStyleSheet(f"color: {theme['secondary_text']};")
+                # O-6: font-size + weight + Inter family in QSS.
+                sub_label.setStyleSheet(
+                    f"color: {theme['secondary_text']}; "
+                    f"font-size: {popup_group_px(12)}px; font-weight: bold; "
+                    f'font-family: "Inter";')
                 container_layout.addWidget(sub_label)
                 container_layout.addWidget(widget)
                 splitter.addWidget(container)
@@ -459,7 +611,7 @@ class InfoPanelDialog(ThemedStyleMixin, QDialog):
                 color: {theme['secondary_text']};
                 border: 1px solid {theme['secondary_light']};
                 border-radius: 6px;
-                font-size: {scaled_area_px('table_headers')}px;
+                font-size: {tier_px('buttons', 12)}px;
                 font-weight: bold;
                 padding: 6px 18px;
             }}
@@ -489,7 +641,14 @@ class InfoPanelDialog(ThemedStyleMixin, QDialog):
         next_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         nav_layout.addWidget(next_btn)
 
-        area_layout.addWidget(nav)
+        # Scroll navigation rather than forcing a wide minimum window at large fonts.
+        nav_scroll = QScrollArea()
+        nav_scroll.setWidgetResizable(True)
+        nav_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        nav_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        nav_scroll.setWidget(nav)
+        nav_scroll.setFixedHeight(nav.sizeHint().height() + nav_scroll.horizontalScrollBar().sizeHint().height())
+        area_layout.addWidget(nav_scroll)
 
         self._page_stack = QStackedWidget()
         for _, widget in panels:
@@ -538,7 +697,8 @@ class InfoPanelDialog(ThemedStyleMixin, QDialog):
                         color: {theme['primary_text']};
                         border: 1px solid {theme['primary']};
                         border-radius: 6px;
-                        font-size: {scaled_area_px('table_headers')}px;
+                        font-size: {tier_px('buttons', 12)}px;
+                        font-family: "Inter";
                         font-weight: bold;
                         padding: 6px 14px;
                     }}
@@ -550,7 +710,8 @@ class InfoPanelDialog(ThemedStyleMixin, QDialog):
                         color: {theme['secondary_text']};
                         border: 1px solid {theme['secondary_light']};
                         border-radius: 6px;
-                        font-size: {scaled_area_px('table_headers')}px;
+                        font-size: {tier_px('buttons', 12)}px;
+                        font-family: "Inter";
                         padding: 6px 14px;
                     }}
                     QPushButton:hover {{
@@ -578,8 +739,10 @@ class InfoPanelDialog(ThemedStyleMixin, QDialog):
         rows = src.rowCount()
         cols = src.columnCount()
 
-        tbl = QTableWidget(rows, cols)
+        tbl = _FillOrGrowTable(rows, cols)
         tbl.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        # Let sizeHintForRow measure wrapped height at the column's width.
+        tbl.setWordWrap(True)
 
         # Copy horizontal headers
         h_labels = []
@@ -639,24 +802,36 @@ class InfoPanelDialog(ThemedStyleMixin, QDialog):
             QTableWidget::item { padding: 6px; }
         """)
 
+        is_matrix = attr_name in _MATRIX_TABLES
         for c in range(cols):
             tbl.horizontalHeader().setSectionResizeMode(c, QHeaderView.ResizeMode.Stretch)
-        tbl.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        if not is_matrix and cols > 1:
+            # Label column (planet / element / modality names) sizes to its
+            # text so "Mercury" / "Jupiter" never get cut; word-wrap cannot
+            # break a single word. Matrices keep uniform columns.
+            tbl.horizontalHeader().setSectionResizeMode(
+                0, QHeaderView.ResizeMode.ResizeToContents)
+        if self.section_key == "strength":
+            tbl.content_columns = True
+            tbl.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
+            tbl._fit_columns()
+        # Row heights: _FillOrGrowTable._fit_rows on every resize.
 
         return tbl
 
     def _clone_textedit(self, src: QTextEdit) -> QTextEdit:
-        """Clone a QTextEdit's HTML content with 1.5x font scaling."""
+        """Clone a QTextEdit's HTML content for the pop-out.
+
+        The copied HTML carries the docked panel's sizes inline, which would beat
+        the pane's own font. They are stripped so the note follows Info text like
+        every pop-up's prose (SPEC-FONT-001 §3.2, td-168ze; was a fixed x1.5)."""
         theme = get_theme_colors()
         te = QTextEdit()
         te.setReadOnly(True)
 
         html = src.toHtml()
         import re
-        def _scale_font(m):
-            size = float(m.group(1))
-            return f"font-size: {size * 1.5:.0f}px"
-        html = re.sub(r'font-size:\s*(\d+(?:\.\d+)?)px', _scale_font, html)
+        html = re.sub(r'font-size:\s*\d+(?:\.\d+)?(?:px|pt);?', '', html)
 
         te.setHtml(html)
         # SPEC-THM-001 G05: live theme color (was frozen BORDER).
@@ -765,17 +940,7 @@ class InfoPanelDialog(ThemedStyleMixin, QDialog):
 
     # Dignity codes: (dark_bg, dark_fg, light_bg, light_fg)
     # Dark pairs in the same jewel-tone family as the being-type colors.
-    _DIGNITY_COLORS_THEMED = {
-        "EX": ("#6B1A1A", "#FF8A80", "#FDDADA", "#B81414"),
-        "MT": ("#4A1A6B", "#CE93D8", "#F3DEFA", "#7A1AA8"),
-        "OH": ("#14406B", "#64B5F6", "#DCEFFD", "#0D5E9E"),
-        "GF": ("#1A5C2A", "#A5D6A7", "#DDF7DD", "#1A7A1A"),
-        "F":  ("#2A4D2A", "#C5E1A5", "#E8F5E8", "#3C6B3C"),
-        "N":  ("#3A3A42", "#B8B8C0", "#EFEFF2", "#666670"),
-        "E":  ("#5C4310", "#FFCC80", "#FDEEDA", "#9E5E0D"),
-        "GE": ("#5C2E10", "#FFAB91", "#FDE3D6", "#A8430F"),
-        "DB": ("#6B1010", "#FF6E6E", "#FBD9D7", "#C01810"),
-    }
+    _DIGNITY_COLORS_THEMED = DIGNITY_COLORS
 
     _DIGNITY_FULL_NAMES = {
         "EX": "Exalted", "MT": "Moolatrikona", "OH": "Own House",
@@ -1718,7 +1883,7 @@ class InfoPanelDialog(ThemedStyleMixin, QDialog):
                     break
 
         from apps.delegates import RetinueColorDelegate
-        dlg = RetinueColorDelegate(parent=clone)
+        dlg = RetinueColorDelegate(parent=clone, wrap=True)
         clone.setItemDelegate(dlg)
         clone._color_delegate = dlg
         return clone
@@ -1746,7 +1911,7 @@ class InfoPanelDialog(ThemedStyleMixin, QDialog):
                     break
 
         from apps.delegates import RetinueColorDelegate
-        dlg = RetinueColorDelegate(parent=clone)
+        dlg = RetinueColorDelegate(parent=clone, wrap=True)
         clone.setItemDelegate(dlg)
         clone._color_delegate = dlg
         return clone
@@ -1790,7 +1955,7 @@ class InfoPanelDialog(ThemedStyleMixin, QDialog):
                     ci.setForeground(QBrush(QColor(theme['primary_text'])))
 
         from apps.delegates import RetinueColorDelegate
-        dlg = RetinueColorDelegate(parent=clone)
+        dlg = RetinueColorDelegate(parent=clone, wrap=True)
         clone.setItemDelegate(dlg)
         clone._color_delegate = dlg
         return clone
@@ -1812,7 +1977,7 @@ class InfoPanelDialog(ThemedStyleMixin, QDialog):
                         ci.setFont(bold)
 
         from apps.delegates import RetinueColorDelegate
-        dlg = RetinueColorDelegate(parent=clone)
+        dlg = RetinueColorDelegate(parent=clone, wrap=True)
         clone.setItemDelegate(dlg)
         clone._color_delegate = dlg
         return clone
@@ -1856,7 +2021,7 @@ class InfoPanelDialog(ThemedStyleMixin, QDialog):
                     ci.setFont(bold)
 
         from apps.delegates import RetinueColorDelegate
-        dlg = RetinueColorDelegate(parent=clone)
+        dlg = RetinueColorDelegate(parent=clone, wrap=True)
         clone.setItemDelegate(dlg)
         clone._color_delegate = dlg
 
@@ -1878,7 +2043,7 @@ class InfoPanelDialog(ThemedStyleMixin, QDialog):
             f" &nbsp;·&nbsp; <span style='color:{mod_fg};'>&#8805;30 moderate</span>"
         )
         caption.setStyleSheet(
-            f"color: {theme['secondary_text']}; font-size: {scaled_area_px('status')}px;"
+            f"color: {theme['secondary_text']}; font-size: {tier_px('info_text', 9)}px;"
             f" background: transparent; border: none;"
         )
         wrap_layout.addWidget(caption)
@@ -1923,7 +2088,6 @@ class InfoPanelDialog(ThemedStyleMixin, QDialog):
 
     def _build_popup_dignities_table(self, src: QTableWidget):
         """Clone dignities-in-vargas table with theme-aware dignity colors."""
-        light = is_light_theme()
         theme = get_theme_colors()
         clone = self._clone_table(src, "dignities_table")
 
@@ -1939,17 +2103,17 @@ class InfoPanelDialog(ThemedStyleMixin, QDialog):
                 ci = clone.item(r, c)
                 if not ci:
                     continue
-                colors = self._DIGNITY_COLORS_THEMED.get(ci.text())
+                colors = dignity_colors(ci.text())
                 if not colors:
                     continue
-                dark_bg, dark_fg, light_bg, light_fg = colors
-                ci.setBackground(QBrush(QColor(light_bg if light else dark_bg)))
-                ci.setForeground(QBrush(QColor(light_fg if light else dark_fg)))
+                bg, fg = colors
+                ci.setBackground(QBrush(QColor(bg)))
+                ci.setForeground(QBrush(QColor(fg)))
                 if ci.text() in ("EX", "MT", "OH", "DB"):
                     ci.setFont(bold)
 
         from apps.delegates import RetinueColorDelegate
-        dlg = RetinueColorDelegate(parent=clone)
+        dlg = RetinueColorDelegate(parent=clone, wrap=True)
         clone.setItemDelegate(dlg)
         clone._color_delegate = dlg
         return clone
@@ -1957,7 +2121,6 @@ class InfoPanelDialog(ThemedStyleMixin, QDialog):
     def _build_dignity_legend(self):
         """Color-coded legend of dignity codes + current varga style."""
         theme = get_theme_colors()
-        light = is_light_theme()
 
         legend = QWidget()
         legend_layout = QHBoxLayout(legend)
@@ -1974,24 +2137,31 @@ class InfoPanelDialog(ThemedStyleMixin, QDialog):
         ctrl = getattr(self.gui, 'dignities_controller', None)
         style_label = ctrl.varga_style_label if ctrl is not None else "Classical"
         title = QLabel(f"DIGNITIES  —  varga style: {style_label}")
-        title.setFont(scaled_area_font('status', family="Inter", bold=True))
-        title.setStyleSheet(f"color: {theme['secondary_text']}; border: none; background: transparent;")
+        # O-6: font-size + weight + Inter family in QSS.
+        title.setStyleSheet(
+            f"color: {theme['secondary_text']}; border: none; background: transparent; "
+            f"font-size: {tier_px('info_text', 9)}px; font-weight: bold; "
+            f'font-family: "Inter";')
         legend_layout.addWidget(title)
 
         for code in ("EX", "MT", "OH", "GF", "F", "N", "E", "GE", "DB"):
-            dark_bg, dark_fg, light_bg, light_fg = self._DIGNITY_COLORS_THEMED[code]
-            bg = light_bg if light else dark_bg
-            fg = light_fg if light else dark_fg
+            bg, fg = dignity_colors(code)
             chip = QLabel(f"{code} {self._DIGNITY_FULL_NAMES[code]}")
             chip.setStyleSheet(
                 f"background-color: {bg}; color: {fg}; font-weight: bold;"
-                f" font-size: {scaled_area_px('status')}px;"
+                f" font-size: {tier_px('info_text', 9)}px;"
                 f" padding: 3px 8px; border-radius: 4px; border: none;"
             )
             legend_layout.addWidget(chip)
 
         legend_layout.addStretch()
-        return legend
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setWidget(legend)
+        scroll.setFixedHeight(legend.sizeHint().height() + scroll.horizontalScrollBar().sizeHint().height())
+        return scroll
 
     def _build_being_legend(self):
         """Build color-coded legend of the five being types for the karakas popup."""
@@ -2013,9 +2183,12 @@ class InfoPanelDialog(ThemedStyleMixin, QDialog):
 
         # Title
         title = QLabel("THE FIVE BEING TYPES  \u2014  Srimad Bhagavatam 12.11.33-44")
-        title.setFont(scaled_area_font('status', family="Inter", bold=True))
         # SPEC-THM-001 G05: live theme color (was frozen TEXT_PRIMARY).
-        title.setStyleSheet(f"color: {theme['secondary_text']}; border: none; background: transparent;")
+        # O-6: font-size + weight + Inter family in QSS.
+        title.setStyleSheet(
+            f"color: {theme['secondary_text']}; border: none; background: transparent; "
+            f"font-size: {tier_px('info_text', 9)}px; font-weight: bold; "
+            f'font-family: "Inter";')
         legend_layout.addWidget(title)
 
         # Being descriptions
@@ -2053,13 +2226,16 @@ class InfoPanelDialog(ThemedStyleMixin, QDialog):
             """)
 
             name_label = QLabel(f"{name}  ({planet_element})")
-            name_label.setFont(scaled_area_font('status', family="Inter", bold=True))
-            name_label.setStyleSheet(f"color: {fg_hex}; border: none; background: transparent;")
+            # O-6: font-size + weight + Inter family in QSS.
+            name_label.setStyleSheet(
+                f"color: {fg_hex}; border: none; background: transparent; "
+                f"font-size: {tier_px('info_text', 9)}px; font-weight: bold; "
+                f'font-family: "Inter";')
             item_layout.addWidget(name_label)
 
             desc_label = QLabel(desc)
             desc_label.setWordWrap(True)
-            desc_label.setStyleSheet(f"color: {fg_hex}; font-size: {scaled_area_px('status')}px; border: none; background: transparent;")
+            desc_label.setStyleSheet(f"color: {fg_hex}; font-size: {tier_px('info_text', 9)}px; border: none; background: transparent;")
             item_layout.addWidget(desc_label)
 
             row_layout.addWidget(item)
@@ -2072,11 +2248,11 @@ class InfoPanelDialog(ThemedStyleMixin, QDialog):
         sides_layout.setSpacing(20)
 
         aditya_label = QLabel("\u2609 ADITYA SIDE \u2014 Fire up your engines, actively express love")
-        aditya_label.setStyleSheet(f"color: #FFD54F; font-size: {scaled_area_px('status')}px; font-weight: bold; border: none; background: transparent;")
+        aditya_label.setStyleSheet(f"color: #FFD54F; font-size: {tier_px('info_text', 9)}px; font-weight: bold; border: none; background: transparent;")
         sides_layout.addWidget(aditya_label)
 
         naga_label = QLabel("\u263D NAGA SIDE \u2014 Take the brakes off, release what holds you back")
-        naga_label.setStyleSheet(f"color: #80DEEA; font-size: {scaled_area_px('status')}px; font-weight: bold; border: none; background: transparent;")
+        naga_label.setStyleSheet(f"color: #80DEEA; font-size: {tier_px('info_text', 9)}px; font-weight: bold; border: none; background: transparent;")
         sides_layout.addWidget(naga_label)
 
         sides_layout.addStretch()
@@ -2148,6 +2324,11 @@ def open_panel_dialog(gui, section_key, initial_attr=None):
     visibility. Ensure each one exists, then force a direct _refresh() so
     the cloned widgets are populated.
     """
+    if section_key == "strength":
+        for name in ("strength", "elements", "modality", "dignities"):
+            ctrl = getattr(gui, f'{name}_controller', None)
+            if ctrl is not None:
+                ctrl._refresh()
     if section_key == "aspects":
         for name in ("avastha", "shame", "interchange",
                      "tajika_matrix", "tajika_relationships", "tajika_yogas"):

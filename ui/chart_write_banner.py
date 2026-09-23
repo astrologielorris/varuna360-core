@@ -20,10 +20,9 @@ matches nothing in PySide6 and fails silently.
 """
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout
 
-from ui.qt_theme import hex_to_rgb_str
+from ui.qt_theme import hex_to_rgb_str, scaled_area_px
 from ui.themed_style import ThemedStyleMixin
 
 ERROR_RED = "#D9534F"
@@ -47,11 +46,10 @@ class ChartWriteBanner(ThemedStyleMixin, QFrame):
         outer.setContentsMargins(14, 12, 14, 12)
         outer.setSpacing(8)
 
+        # O-6: the headline font-size is composed into its registered themed
+        # style in _apply_theme (replayed on every theme switch); setFont is
+        # inert under qt-material's global stylesheet.
         self.headline = QLabel("Charts are not being saved to files")
-        f = QFont()
-        f.setPointSize(11)
-        f.setBold(True)
-        self.headline.setFont(f)
         self.headline.setWordWrap(True)
         outer.addWidget(self.headline)
 
@@ -62,9 +60,6 @@ class ChartWriteBanner(ThemedStyleMixin, QFrame):
             "already have have not been touched."
         )
         self.body.setWordWrap(True)
-        bf = QFont()
-        bf.setPointSize(9)
-        self.body.setFont(bf)
         outer.addWidget(self.body)
 
         # The folder and the raw error, selectable: the first thing anyone
@@ -72,9 +67,6 @@ class ChartWriteBanner(ThemedStyleMixin, QFrame):
         self.detail = QLabel("")
         self.detail.setWordWrap(True)
         self.detail.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        df = QFont("monospace")
-        df.setPointSize(8)
-        self.detail.setFont(df)
         outer.addWidget(self.detail)
 
         row = QHBoxLayout()
@@ -91,6 +83,27 @@ class ChartWriteBanner(ThemedStyleMixin, QFrame):
         row.addWidget(self.dismiss_button)
         outer.addLayout(row)
 
+        self._apply_fonts()
+
+    def _apply_fonts(self):
+        """Re-compose the font-size of the unregistered widgets (body, detail,
+        buttons) from the live settings. This banner is persistent (not rebuilt
+        on a font-setting change), so this runs at build AND from refresh_theme;
+        the headline font lives in its registered themed style (replayed by
+        _replay_themed). O-6: font-size in each widget's own QSS."""
+        self.body.setStyleSheet(f"font-size: {scaled_area_px('info_text')}px;")
+        self.detail.setStyleSheet(
+            f"font-family: monospace; font-size: {scaled_area_px('status')}px;")
+        _btn_css = f"font-size: {scaled_area_px('action_buttons')}px;"
+        self.check_button.setStyleSheet(_btn_css)
+        self.dismiss_button.setStyleSheet(_btn_css)
+
+    def refresh_theme(self):
+        """Theme/font-refresh hook: replay the registered styles (frame +
+        headline) and re-compose the unregistered widget fonts."""
+        self._replay_themed()
+        self._apply_fonts()
+
     def _apply_theme(self):
         # _register_themed takes a CALLABLE that re-reads the theme on every
         # replay — a pre-rendered string would freeze whatever palette was
@@ -101,8 +114,13 @@ class ChartWriteBanner(ThemedStyleMixin, QFrame):
                     f"border-left: 3px solid {ERROR_RED}; border-radius: 4px; }}")
 
         self._register_themed(self, frame_style)
+        # O-6: font-size + weight belong INSIDE the registered callable, else the
+        # theme-switch replay re-sets the headline QSS without them (refreeze@13).
         self._register_themed(
-            self.headline, lambda: f"QLabel {{ color: {ERROR_RED}; }}")
+            self.headline,
+            lambda: (f"QLabel {{ color: {ERROR_RED}; "
+                     f"font-size: {scaled_area_px('panel_titles')}px; "
+                     f"font-weight: bold; }}"))
 
     # -- state -----------------------------------------------------------
 

@@ -71,11 +71,46 @@ Planetary calculations use the Swiss Ephemeris library.
   License: AGPL-3.0 (compatible)
   https://github.com/astrorigin/pyswisseph
 
+### libaditya (calculation engine)
+
+The astrological calculation engine under libaditya/ is libaditya by
+Josh Harper, vendored into this project with small local fixes. It is
+Josh Harper's work, not ours.
+
+- Copyright (c) 2025 Josh Harper
+- License: AGPL-3.0-or-later (compatible)
+- Upstream: https://github.com/ninthhousestudios/libaditya
+  (also published at https://gitlab.com/ninthhouse/libaditya)
+
+### Aditya sign glyphs
+
+The twelve Aditya sign glyphs under img/aditya_glyph/ (shown when the
+sign display is set to the Josh glyphs) are Josh Harper's drawings.
+
+- Copyright (c) Josh Harper
+
 ### Vimshottari Dasha
 
 The Vimshottari Dasha implementation (core/vimshottari_dasha.py) is
 adapted from pydasha.py by Josh Harper, licensed under AGPL-3.0 (compatible).
 Original: https://github.com/joshharper/pydasha
+
+### Zodiacal Releasing (from Aries)
+
+The Zodiacal Releasing engine (core/zodiacal_releasing.py) is ported
+from zodiacalreleasing.py in Aries, the astrology software by Max Lange,
+which is built on the Morinus project. The period weights, level
+durations, Loosing of the Bond rule and releaser handling follow that
+code; this project reworked it onto Julian Day numbers and bound it to
+zodiac positions. The Aries code is not imported at run time.
+
+The lot formulas used as releasers (core/lots.py) were checked against
+the Arabic Parts table that Aries ships (Res/Opts/arabic_parts.json).
+
+- Copyright (c) Max Lange
+- License: AGPL-3.0-or-later, the same license as this project, so no
+  separate permission is needed; keeping this notice is what the license asks.
+- Upstream: https://github.com/primum-mobile/aries (https://aries.sh/)
 
 ### PySide6 / Qt6
 
@@ -99,6 +134,23 @@ Inter-BoldItalic).
 
 The OFL permits bundling and redistribution with the software provided the
 licence text ships alongside the fonts, which it does.
+
+### Noto Sans Symbols 2 (bundled font)
+
+fonts/NotoSansSymbols2/NotoSansSymbols2-Regular.ttf supplies the hexagram
+glyphs of the Human Design BodyGraph.
+
+- Copyright 2010, 2012-2020 Google Inc., 2015-2020 Google LLC
+  (https://github.com/notofonts/noto-fonts)
+- License: SIL Open Font License 1.1 (see fonts/NotoSansSymbols2/OFL.txt)
+
+### StellariumRC
+
+libaditya/stars/stellarium/remote_control/ is StellariumRC, vendored in
+libaditya with its main class renamed to RemoteControl.
+
+- Copyright (c) 2023 k96e (https://github.com/k96e/StellariumRC)
+- License: MIT (see libaditya/stars/stellarium/remote_control/LICENSE.txt)
 
 ### Additional Dependencies
 

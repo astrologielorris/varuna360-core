@@ -5,15 +5,6 @@
 North Indian Diamond Chart View Widget
 Diamond-style zodiac chart using PySide6 QGraphicsView.
 
-Features:
-- 12 diamond/triangular cells arranged in North Indian pattern
-- House 1 (Ascendant) at TOP CENTER (defining feature)
-- Fixed houses, movable signs (opposite of South Indian)
-- Zodiac icons rotate based on Ascendant sign
-- Planet icons with stacking for multiple planets in same house
-- Zoom and pan support
-- Click on planets for info dialog
-
 Layout Pattern:
     ┌────────┬────────┬────────┬────────┐
     │   12   │    1   │    2   │    3   │
@@ -31,6 +22,9 @@ Layout Pattern:
 
 North Indian: Houses are FIXED, Signs ROTATE with Ascendant.
 """
+from apps.widgets.additional_bodies import display_names, add_unavailable_notice
+from apps.widgets.planet_icon_loader import load_planet_icon
+from apps.widgets.additional_body_glyphs import make_planet_item
 from pathlib import Path
 
 from PySide6.QtWidgets import (
@@ -52,11 +46,13 @@ PROJECT_ROOT = Path(__file__).parent.parent.parent
 from .north_indian_items import (
     NorthIndianPlanetClickSignal, NorthIndianSignClickSignal,
     DiamondCellItem, NorthIndianZodiacItem,
+    badge_corners_inside, place_sign_icon,
     NorthIndianPlanetItem, PlanetDegreeLabel
 )
+from .north_indian_glyph_badges import draw_glyph_only_badges
 
 # Import theme
-from ui.qt_theme import GOLD, get_theme_colors, scaled_area_font, desat_image, sat_key
+from ui.qt_theme import GOLD, get_theme_colors, scaled_area_font, desat_image, sat_key, get_area_font_size, AREA_DEFAULTS
 from core.aditya_mode import displayed_sign_name, get_planet_display_name
 
 # SPEC-COT-001 §4.10 — the in-chart card index. The setting, the memoised
@@ -67,6 +63,19 @@ from apps.widgets.cot_index_item import CotIndexMixin, CotPlaque, scale_for_name
 #: UserRole tag on the card items, so a test or a later selective redraw can
 #: find them without pattern-matching on the rank text.
 TAG_COT_CARD = "ni.cot_card"
+
+
+def draw_sign_badges(view, geometry=None, tag=None):
+    from managers.settings_manager import get_settings
+    mode = get_settings().get('display.sign_display', 'zodiac')
+    if mode != 'josh_only':
+        return view._draw_sign_badge(geometry=geometry, tag=tag)
+    settings = view.display_settings.get('sign_name', {})
+    return draw_glyph_only_badges(
+        view.scene, geometry if geometry is not None else view.house_geometry,
+        view._get_sign_for_house, mode, settings.get('font_color', GOLD),
+        settings.get('offset_x', 0), settings.get('offset_y', 0), tag,
+        view.load_zodiac_icon, view._point_in_polygon_with_margin)
 
 
 class NorthIndianScene(QGraphicsScene):
@@ -1109,52 +1118,8 @@ class NorthIndianView(CotIndexMixin, QGraphicsView):
         self.zodiac_icons[cache_key] = pixmap
         return pixmap
 
-    def load_planet_image(self, planet_name: str, size: int = 100):
-        """Load planet image using Qt best practices."""
-        variation = self.get_planet_variation(planet_name)
-        # Cache key + saturation (SPEC-SAT-001 WI-4; sat_key is '' at 100)
-        cache_key = f"{planet_name}_v{variation}_{size}{sat_key()}"
-
-        if cache_key in self.planet_icons:
-            return self.planet_icons[cache_key]
-
-        icon_filename = self.PLANET_ICON_NAMES.get(planet_name, planet_name.lower())
-
-        if variation > 1:
-            icon_path = PROJECT_ROOT / f"img/planets/{icon_filename}{variation}.webp"
-        else:
-            icon_path = PROJECT_ROOT / f"img/planets/{icon_filename}.webp"
-
-        if not icon_path.exists():
-            icon_path = PROJECT_ROOT / f"img/planets/{icon_filename}.webp"
-
-        if not icon_path.exists():
-            print(f"[NORTH INDIAN] Warning: Planet icon not found: {icon_path}")
-            self.planet_icons[cache_key] = None
-            return None
-
-        try:
-            qimage = QImage(str(icon_path))
-            if qimage.isNull():
-                self.planet_icons[cache_key] = None
-                return None
-
-            qimage = qimage.scaled(
-                size, size,
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation
-            )
-
-            # Desaturate AFTER scale (SPEC-SAT-001 WI-4; no-op at 100)
-            qimage = desat_image(qimage)
-
-            pixmap = QPixmap.fromImage(qimage)
-            self.planet_icons[cache_key] = pixmap
-            return pixmap
-        except Exception as e:
-            print(f"[NORTH INDIAN] Error loading planet image {planet_name}: {e}")
-            self.planet_icons[cache_key] = None
-            return None
+    def load_planet_image(self, planet_name, size=100):
+        return load_planet_icon(planet_name, size, self.get_planet_variation(planet_name))
 
     def _get_ascendant_sign_index(self) -> int:
         """
@@ -1225,11 +1190,10 @@ class NorthIndianView(CotIndexMixin, QGraphicsView):
         self._draw_inner_diamond()
 
         # Layer 4+5: Sign badges (icon + label as single indivisible unit)
-        # Replaces the old separate _draw_zodiac_icons + _draw_sign_names
-        # passes. The badge drawer also writes geom['badge_rect'] which
+        # The badge drawer also writes geom['badge_rect'] which
         # _draw_planets_in_house reads to compute the non-overlapping
         # planet zone.
-        self._draw_sign_badge()
+        draw_sign_badges(self)
 
         # Layer 5.4: Cards of Truth index (SPEC-COT-001 §4.10). Before the
         # planets, because it writes geom['cot_rect'] and the planet zone
@@ -1327,9 +1291,9 @@ class NorthIndianView(CotIndexMixin, QGraphicsView):
         not fit at the anchor with safety margin, it is shifted along the
         anchor→centroid vector in discrete steps until it fits. If no
         position along that line fits at the current font size, the font
-        shrinks and the search repeats. If even MIN_FONT_SIZE does not
-        fit, the label is dropped and an icon-only badge is placed at
-        whichever position accommodates it.
+        shrinks and the search repeats. If even MIN_FONT_SIZE does not fit,
+        an icon badge drops the label for an icon-only badge; a names badge
+        (no icon) keeps the label.
 
         The resulting badge rectangle is stored on `geom['badge_rect']`
         so `_draw_planets_in_house` can compute a planet zone that does
@@ -1352,26 +1316,17 @@ class NorthIndianView(CotIndexMixin, QGraphicsView):
         qt_weight = QFont.Weight.Bold if font_weight == "bold" else QFont.Weight.Normal
         cjk_lang = self.sign_language in ("zh",)
 
+        from managers.settings_manager import get_settings
+        sign_display = get_settings().get('display.sign_display', 'zodiac')
+        # Anything but 'names' shows an icon (unknown -> zodiac, like the Wheel).
+        show_icon = sign_display != 'names'
+
         # Badge layout constants (scene units — scene is 2048px)
         ICON_LABEL_GAP = 4
         BADGE_MARGIN = 18
         SHIFT_STEP_PX = 10
         MAX_SHIFT_STEPS = 20
         MIN_FONT_SIZE = 10
-
-        def _badge_corners_in(bleft, btop, bw, bh, poly):
-            """True if all 4 corners of (bleft, btop, bw, bh) are inside
-            poly with BADGE_MARGIN clearance."""
-            corners = [
-                QPointF(bleft, btop),
-                QPointF(bleft + bw, btop),
-                QPointF(bleft, btop + bh),
-                QPointF(bleft + bw, btop + bh),
-            ]
-            for c in corners:
-                if not self._point_in_polygon_with_margin(c, poly, BADGE_MARGIN):
-                    return False
-            return True
 
         geo = geometry if geometry is not None else self.house_geometry
         for house_num in range(1, 13):
@@ -1382,13 +1337,16 @@ class NorthIndianView(CotIndexMixin, QGraphicsView):
             is_diamond = geom.get('shape') == 'diamond'
 
             icon_size = 140 if is_diamond else 90
+            # names mode carries no icon: the badge collapses to the label, and
+            # the fit machinery / badge_rect below must reflect that.
+            icon_h = icon_size if show_icon else 0
+            gap = ICON_LABEL_GAP if show_icon else 0
 
-            # Pick the sign name for this display mode
             sign_name = displayed_sign_name(sign_index, self.aditya_mode,
                                             self.use_western_names,
                                             self.sign_language)
 
-            base_font_size = font_size_diamond if is_diamond else font_size_triangle
+            base_font_size = max(1, round((font_size_diamond if is_diamond else font_size_triangle) * get_area_font_size('chart_labels') / AREA_DEFAULTS['chart_labels']))  # G2c §11.8: chart_labels preset only
 
             # Anchor: outer-edge-biased for triangles, inner-biased for diamonds
             anchor_x, anchor_y = geom['icon_position']
@@ -1419,7 +1377,8 @@ class NorthIndianView(CotIndexMixin, QGraphicsView):
             measure_item = QGraphicsTextItem(sign_name)
             measure_item.setDefaultTextColor(QColor(font_color))
 
-            current_size = base_font_size
+            # Clamp so the loop runs once even for a sub-MIN font (else 0x0 badge_rect).
+            current_size = max(base_font_size, MIN_FONT_SIZE)
             while current_size >= MIN_FONT_SIZE:
                 w = QFont.Weight.Light if cjk_lang else qt_weight
                 measure_item.setFont(QFont("Inter", current_size, w))
@@ -1427,8 +1386,8 @@ class NorthIndianView(CotIndexMixin, QGraphicsView):
                 text_w = mrect.width()
                 text_h = mrect.height()
 
-                bw = max(icon_size, text_w)
-                bh = icon_size + ICON_LABEL_GAP + text_h
+                bw = max(icon_h, text_w)
+                bh = icon_h + gap + text_h
 
                 # March from anchor toward centroid
                 for step in range(MAX_SHIFT_STEPS + 1):
@@ -1436,7 +1395,8 @@ class NorthIndianView(CotIndexMixin, QGraphicsView):
                     cy = anchor_y + shift_uy * step * SHIFT_STEP_PX
                     bl = cx - bw / 2
                     bt = cy - bh / 2
-                    if _badge_corners_in(bl, bt, bw, bh, polygon):
+                    if badge_corners_inside(self._point_in_polygon_with_margin,
+                                            bl, bt, bw, bh, polygon, BADGE_MARGIN):
                         badge_left = bl
                         badge_top = bt
                         badge_w = bw
@@ -1452,41 +1412,40 @@ class NorthIndianView(CotIndexMixin, QGraphicsView):
             draw_label = fitted
 
             if not fitted:
-                # Fall back to icon-only badge. Try to place it along the
-                # anchor→centroid line.
-                badge_w = icon_size
-                badge_h = icon_size
+                # Nothing fit at any font size. An icon badge falls back to an
+                # icon-only badge; names (no icon) keeps the label at MIN_FONT_SIZE
+                # so the sign is not dropped. Both march anchor→centroid and, if
+                # none clears, land centroid-centred with no margin guarantee.
+                if show_icon:
+                    badge_w = badge_h = icon_size
+                else:
+                    current_size = MIN_FONT_SIZE
+                    badge_w, badge_h = text_w, text_h
+                    draw_label = True
+                badge_left = centroid[0] - badge_w / 2
+                badge_top = centroid[1] - badge_h / 2
                 for step in range(MAX_SHIFT_STEPS + 1):
                     cx = anchor_x + shift_ux * step * SHIFT_STEP_PX
                     cy = anchor_y + shift_uy * step * SHIFT_STEP_PX
-                    bl = cx - badge_w / 2
-                    bt = cy - badge_h / 2
-                    if _badge_corners_in(bl, bt, badge_w, badge_h, polygon):
-                        badge_left = bl
-                        badge_top = bt
-                        fitted = True
+                    if badge_corners_inside(self._point_in_polygon_with_margin,
+                                            cx - badge_w / 2, cy - badge_h / 2,
+                                            badge_w, badge_h, polygon, BADGE_MARGIN):
+                        badge_left, badge_top = cx - badge_w / 2, cy - badge_h / 2
                         break
-                if not fitted:
-                    # Last resort: centroid-centered icon, no margin guarantee
-                    badge_left = centroid[0] - badge_w / 2
-                    badge_top = centroid[1] - badge_h / 2
 
             # Persist the badge rect on the geom so _draw_planets_in_house
             # can avoid it when computing the planet zone.
             geom['badge_rect'] = (badge_left, badge_top, badge_w, badge_h)
 
-            # ---- Draw the icon at badge top-center ----
-            icon_cx = badge_left + badge_w / 2
-            icon_cy = badge_top + icon_size / 2
-            pixmap = self.load_zodiac_icon(sign_index, size=icon_size)
-            if pixmap:
-                icon_item = NorthIndianZodiacItem(
-                    pixmap, icon_cx, icon_cy, sign_index
-                )
-                icon_item.setZValue(4.5)  # above cell fill, below label
-                if tag:
-                    icon_item.setData(Qt.ItemDataRole.UserRole, tag)
-                self.scene.addItem(icon_item)
+            # ---- Draw the accompaniment icon at badge top-center ----
+            # names mode draws none; zodiac -> symbol, josh -> Aditya glyph in
+            # the label ink. Delegated to keep this god-view from growing.
+            if show_icon:
+                place_sign_icon(self.scene, sign_display, sign_index,
+                                badge_left + badge_w / 2,
+                                badge_top + icon_size / 2,
+                                icon_size, font_color, tag,
+                                self.load_zodiac_icon)
 
             # ---- Draw the label at badge bottom-center ----
             if draw_label:
@@ -1495,12 +1454,11 @@ class NorthIndianView(CotIndexMixin, QGraphicsView):
                 w = QFont.Weight.Light if cjk_lang else qt_weight
                 label_item.setFont(QFont("Inter", current_size, w))
                 # Re-measure after font set (redundant but safe)
-                lbl_rect = label_item.boundingRect()
-                lbl_w = lbl_rect.width()
+                lbl_w = label_item.boundingRect().width()
                 label_x = badge_left + (badge_w - lbl_w) / 2
-                label_y = badge_top + icon_size + ICON_LABEL_GAP
+                label_y = badge_top + icon_h + gap
                 label_item.setPos(label_x, label_y)
-                label_item.setZValue(5)  # below planets (z=6)
+                label_item.setZValue(5); label_item.setVisible(sign_display != 'josh_only')  # below planets (z=6)
                 if tag:
                     label_item.setData(Qt.ItemDataRole.UserRole, tag)
                 self.scene.addItem(label_item)
@@ -1560,9 +1518,9 @@ class NorthIndianView(CotIndexMixin, QGraphicsView):
             centroid = geom['center']
             is_diamond = geom.get('shape') == 'diamond'
 
-            # The card tracks whatever size the sign name renders at in this
-            # cell shape, so a triangle's smaller label gets a smaller card.
-            name_pt = font_size_diamond if is_diamond else font_size_triangle
+            # Card tracks the BASE preset-scaled name (chart_labels, §11.8), NOT
+            # any fit-shrink below it: the plaque is DROPPED not overflowed, so safe.
+            name_pt = max(1, round((font_size_diamond if is_diamond else font_size_triangle) * get_area_font_size('chart_labels') / AREA_DEFAULTS['chart_labels']))
             plaque = CotPlaque(card, scale=scale_for_name(name_pt), dpr=dpr)
 
             half_w = plaque.width / 2.0
@@ -1704,7 +1662,7 @@ class NorthIndianView(CotIndexMixin, QGraphicsView):
 
         planets_by_house = {i: [] for i in range(1, 13)}
 
-        for planet_name in planets_to_draw:
+        for planet_name in display_names(planets_to_draw):
             if planet_name == "Ascendant":
                 continue
             try:
@@ -1720,6 +1678,7 @@ class NorthIndianView(CotIndexMixin, QGraphicsView):
                 "planet_obj": planet,
             })
 
+        add_unavailable_notice(self.scene, self._planets)
         # Draw planets in each house with stacking
         for house_num, planets in planets_by_house.items():
             if not planets:
@@ -1887,7 +1846,7 @@ class NorthIndianView(CotIndexMixin, QGraphicsView):
             if pixmap:
                 p_obj = planet.get("planet_obj")
                 click_dict = self._planet_to_click_dict(planet["name"], p_obj) if p_obj else planet
-                item = NorthIndianPlanetItem(
+                item = make_planet_item(NorthIndianPlanetItem, planet["name"],
                     pixmap, px_slot, py_slot,
                     planet["name"], click_dict,
                     self.planet_click_signal
@@ -2179,7 +2138,7 @@ class NorthIndianView(CotIndexMixin, QGraphicsView):
         geo = self._transit_geometry
 
         self._draw_house_cells(geometry=geo, tag=tag)
-        self._draw_sign_badge(geometry=geo, tag=tag)
+        draw_sign_badges(self, geometry=geo, tag=tag)
 
         planets_to_draw = [
             n for n in self._TRANSIT_PLANET_NAMES
@@ -2187,7 +2146,7 @@ class NorthIndianView(CotIndexMixin, QGraphicsView):
             or self.show_outer_planets
         ]
         planets_by_house = {i: [] for i in range(1, 13)}
-        for planet_name in planets_to_draw:
+        for planet_name in display_names(planets_to_draw):
             try:
                 planet = source.planets[planet_name]
                 sign_idx = planet.sign() - 1

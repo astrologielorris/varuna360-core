@@ -302,7 +302,6 @@ def load_chart_from_chtk(chtk_path, mode="aditya"):
     """
     from managers.birth_data_manager import BirthDataManager
     from core.chart_factory import build_chart_from_params
-    from libaditya import swe
 
     # SPEC-IMPORT-001 §6.1: format-agnostic dispatch (.chtk or .toml).
     bd = BirthDataManager.create_birth_data_from_file(str(chtk_path))
@@ -310,14 +309,11 @@ def load_chart_from_chtk(chtk_path, mode="aditya"):
     # SPEC-IMPORT-001 §5.3 ("jd wins"): a .toml carries an authoritative,
     # sub-second julian_day. Re-deriving JD from the integer civil fields would
     # truncate that precision, so prefer the stored value (mirrors chart_manager).
-    from core.planets_calculator import get_calendar_flag
-    _stored_jd = bd.get('julian_day')
-    if _stored_jd is not None:
-        jd = float(_stored_jd)
-    else:
-        hour_decimal = bd['utc_hour'] + bd['utc_minute'] / 60.0 + bd['utc_second'] / 3600.0
-        jd = swe.julday(bd['utc_year'], bd['utc_month'], bd['utc_day'], hour_decimal,
-                        get_calendar_flag(bd['utc_year'], bd['utc_month'], bd['utc_day']))
+    # Single birth-data -> JD home (td-7q5s.3 C1): honors the stored julian_day,
+    # else computes via the calendar-aware time_utils.julday. Same rule as
+    # chart_manager, so load-from-CHTK and load-from-file cannot drift.
+    from core.chart_factory import jd_from_birth_data
+    jd = jd_from_birth_data(bd)
 
     utcoffset = bd.get('utc_offset_hours', 0.0)
     chart = build_chart_from_params(

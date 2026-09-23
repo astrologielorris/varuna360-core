@@ -15,6 +15,9 @@ Features:
 
 Ported from visualizations/wheel_chart.py (Tkinter) to Qt.
 """
+from apps.widgets.additional_bodies import display_names, visible_items, add_unavailable_notice
+from apps.widgets.planet_icon_loader import load_planet_icon
+from apps.widgets.additional_body_glyphs import make_planet_item
 import math
 from pathlib import Path
 
@@ -65,6 +68,7 @@ from visualizations.wheel_geometry import (
 # Import constants (reuse from existing wheel)
 from visualizations.wheel_constants import WHEEL_RADII, ADITYA_NAMES, DISPLAY_PLANETS
 from core.aditya_mode import get_planet_display_name, displayed_sign_name
+from core.retinue_constants import HORA_COLORS, TRIMSAMSA_COLORS
 
 # SPEC-COT-001 §4.10 — the in-chart card index. The setting, the memoised
 # spread and the plaque art are shared with the South Indian and North Indian
@@ -547,80 +551,8 @@ class WheelView(CotIndexMixin, QGraphicsView):
         return _load_zodiac_icon(zodiac_index, size,
                                  self.variation_settings, self.zodiac_icons)
 
-    def load_planet_image(self, planet_name: str, size: int = 48):
-        """
-        Load planet image using Qt best practices for quality.
-
-        Mirrors SouthIndianView - exact same pattern for consistency.
-        Uses variation from settings.json.
-        """
-        from PySide6.QtGui import QImage, QPixmap
-
-        # Planet icon filename mapping (same as SouthIndianView)
-        PLANET_ICON_NAMES = {
-            "Sun": "sun", "Moon": "moon", "Mars": "Mars",
-            "Mercury": "Mercury", "Jupiter": "Jupiter", "Venus": "Venus",
-            "Saturn": "Saturn", "Rahu": "rahu", "Ketu": "ketu",
-            "Uranus": "uranus", "Neptune": "neptune", "Pluto": "pluto",
-        }
-
-        # Get selected variation for this planet
-        variation = self.get_planet_variation(planet_name)
-
-        # Cache key includes variation + saturation (SPEC-SAT-001 WI-4; sat_key
-        # is '' at 100 so keys stay byte-identical to today)
-        cache_key = f"{planet_name}_v{variation}_{size}{sat_key()}"
-
-        if not hasattr(self, 'planet_icons'):
-            self.planet_icons = {}
-
-        if cache_key in self.planet_icons:
-            return self.planet_icons[cache_key]
-
-        icon_filename = PLANET_ICON_NAMES.get(planet_name, planet_name.lower())
-
-        # Try variation-specific file first (e.g., sun2.png for variation 2)
-        if variation > 1:
-            icon_path = PROJECT_ROOT / f"img/planets/{icon_filename}{variation}.webp"
-        else:
-            icon_path = PROJECT_ROOT / f"img/planets/{icon_filename}.webp"
-
-        # Fallback to default if variation doesn't exist
-        if not icon_path.exists():
-            icon_path = PROJECT_ROOT / f"img/planets/{icon_filename}.webp"
-
-        if not icon_path.exists():
-            print(f"[WHEEL] Warning: Planet icon not found: {icon_path}")
-            self.planet_icons[cache_key] = None
-            return None
-
-        try:
-            # Step 1: Load with QImage (best for I/O)
-            qimage = QImage(str(icon_path))
-            if qimage.isNull():
-                print(f"[WHEEL] Warning: Failed to load image: {icon_path}")
-                self.planet_icons[cache_key] = None
-                return None
-
-            # Step 2: Scale to LOGICAL size with smooth transformation
-            qimage = qimage.scaled(
-                size, size,
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation
-            )
-
-            # Step 2b: Desaturate AFTER scale (SPEC-SAT-001 WI-4; no-op at 100)
-            qimage = desat_image(qimage)
-
-            # Step 3: Convert to QPixmap
-            pixmap = QPixmap.fromImage(qimage)
-
-            self.planet_icons[cache_key] = pixmap
-            return pixmap
-        except Exception as e:
-            print(f"[WHEEL] Error loading planet image {planet_name}: {e}")
-            self.planet_icons[cache_key] = None
-            return None
+    def load_planet_image(self, planet_name, size=48):
+        return load_planet_icon(planet_name, size, self.get_planet_variation(planet_name))
 
     def _setup_view(self):
         """Configure view settings."""
@@ -765,6 +697,15 @@ class WheelView(CotIndexMixin, QGraphicsView):
     def showEvent(self, event):
         """On first show: defer auto-fit via timer. On tab switch: re-apply current zoom."""
         super().showEvent(event)
+        # td-u53i: a decoration toggle (F5/F6/F9) fired while this wheel was
+        # hidden only sets the flags and marks it dirty (redrawing hidden
+        # wheels is the td-sy9e waste class). Catch up the moment the wheel
+        # is actually shown — this covers every path that reveals a wheel:
+        # tab switch, Predictive subpage nav, dual-stack index switch.
+        # draw_wheel() is empty-safe (guards on self._chart).
+        if self._retinue_dirty:
+            self._retinue_dirty = False
+            self.draw_wheel()
         if not self._fit_zoom_applied:
             from PySide6.QtCore import QTimer
             QTimer.singleShot(0, self._apply_fit_zoom)
@@ -1246,6 +1187,11 @@ class WheelView(CotIndexMixin, QGraphicsView):
 
     def draw_wheel(self):
         """Main drawing method - draws all wheel components."""
+        # td-u53i: ANY full draw renders the decorations from the current
+        # flags, so it absorbs a pending deferred decoration redraw — clear
+        # the mark up front or a later showEvent would draw a second time
+        # for nothing (e.g. M3 content flush + decoration dirt on one reveal).
+        self._retinue_dirty = False
         self._retinue_sectors = {}
         self._house_number_items = {}
         self._zodiac_sector_items = {}
@@ -1356,7 +1302,8 @@ class WheelView(CotIndexMixin, QGraphicsView):
     def _draw_background(self):
         """Draw the outer background circle."""
         # +26 scaled from original +10 (factor 2.56)
-        item = BackgroundCircleItem(self.cx, self.cy, self.r_outer + 26)
+        from apps.widgets.chart_glyph_theme import themed_wheel_background
+        item = themed_wheel_background(self.cx, self.cy, self.r_outer + 26)
         self.scene.addItem(item)
 
     def _draw_ascendant_glow(self):
@@ -1379,8 +1326,36 @@ class WheelView(CotIndexMixin, QGraphicsView):
                              self.rotation_offset)
 
     def _draw_zodiac_symbols(self):
-        """Draw zodiac icons on the outer ring (same pattern as SouthIndianView)."""
+        """Draw the sign-accompaniment ring, honouring display.sign_display.
+
+        The sign-NAME text ring (_draw_sign_names) is drawn except in
+        ``josh_only``; this ring is
+        the "+ zodiac icons" / "+ Josh glyphs" accompaniment, matching the South
+        Indian option labels (names / zodiac / josh / josh_only):
+          names  -> nothing here (name text only)
+          zodiac -> the zodiac symbol icons (the default, unchanged look)
+          josh   -> the Aditya (Josh) division glyphs in the theme text ink
+          josh_only -> the same glyphs, with the separate name ring suppressed
+        Every South Indian finish follows this same display.sign_display since
+        td-iaqm.5 (CP5 wood, CP6 standard): names hides the icons, zodiac shows
+        the zodiac symbols, josh shows the Aditya glyphs — carved on the wood
+        finishes (south_indian_material.glyph_svg_passes), inked flat in the
+        cell's text colour on the standard finish
+        (south_indian_sign_glyph.accompaniment_item).
+        """
+        from managers.settings_manager import get_settings
+        mode = get_settings().get('display.sign_display', 'zodiac')
+        if mode == 'names':
+            return
         symbol_radius = (self.r_outer + self.r_middle) / 2 + 20
+        if mode in ('josh', 'josh_only'):
+            from apps.widgets.aditya_glyph_render import draw_aditya_glyphs
+            from apps.widgets.chart_glyph_theme import theme_glyph_ink
+            ink = theme_glyph_ink()
+            draw_aditya_glyphs(self.scene, self.cx, self.cy,
+                               symbol_radius, size=192,
+                               rotation_offset=self.rotation_offset, ink_hex=ink)
+            return
         draw_zodiac_icons(self.scene, self.cx, self.cy,
                           symbol_radius, icon_size=192,
                           rotation_offset=self.rotation_offset,
@@ -1441,6 +1416,8 @@ class WheelView(CotIndexMixin, QGraphicsView):
         sector's arc. The PAIR stays centred on the sector, so the ring of names
         does not visibly drift when the setting is toggled.
         """
+        from managers.settings_manager import get_settings
+        show_names = get_settings().get('display.sign_display', 'zodiac') != 'josh_only'
         name_radius = (self.r_middle + self.r_inner) / 2 + 26
         _mode = self._aditya_mode
         faces = self._cot_faces() if self._cot_enabled() else None
@@ -1450,7 +1427,9 @@ class WheelView(CotIndexMixin, QGraphicsView):
                         self.display_settings,
                         cot_faces=faces,
                         cot_dpr=self.devicePixelRatioF() or 1.0,
-                        cot_tag=TAG_COT_CARD)
+                        cot_tag=TAG_COT_CARD,
+                        scale_sign_labels=True,
+                        show_names=show_names)  # G2c §11.8: wheel follows chart_labels preset
 
     def _draw_center(self):
         """Draw the center circle."""
@@ -1471,8 +1450,16 @@ class WheelView(CotIndexMixin, QGraphicsView):
                        else cusp.real_in_sign_longitude()
                 cusp_angles.append((cusp.sign() - 1) * 30 + risl)
 
+        # td-cyap: house-number size is a live setting (was hardcoded 23). The
+        # Wheel renders the configured value 1:1. Canonical path shared with the
+        # SI view and the ChartDisplaySection control.
+        from managers.settings_manager import get_settings, HOUSE_NUMBER_FONT_MAX
+        _stored = get_settings().get_chart_display_section('house_number')['font_size']
+        # sol F5: clamp at the read-site, not only in the spinbox — a stored /
+        # legacy value above the cap must never paint (it would collide).
+        hn_size = min(HOUSE_NUMBER_FONT_MAX, _stored)
         items = draw_house_numbers(self.scene, self.cx, self.cy,
-                           self.r_center * 0.65, font_size=23,
+                           self.r_center * 0.65, font_size=hn_size,
                            rotation_offset=self.rotation_offset,
                            asc_degrees=asc_deg,
                            hover_signal=hover_signal,
@@ -1520,7 +1507,7 @@ class WheelView(CotIndexMixin, QGraphicsView):
             planets_to_draw.extend(["Uranus", "Neptune", "Pluto"])
 
         all_planets = []
-        for planet_name in planets_to_draw:
+        for planet_name in display_names(planets_to_draw):
             if planet_name == "Ascendant":
                 continue
             try:
@@ -1538,6 +1525,7 @@ class WheelView(CotIndexMixin, QGraphicsView):
                 "planet_obj": planet,
             })
 
+        add_unavailable_notice(self.scene, self._planets)
         # Calculate positions with collision avoidance
         planet_positions = self._calculate_planet_positions(all_planets)
 
@@ -1608,7 +1596,7 @@ class WheelView(CotIndexMixin, QGraphicsView):
                 click_dict = self._planet_to_click_dict(planet["name"], p_obj) if p_obj else dict(planet)
                 click_dict["sign_index"] = planet["sign_index"]
                 click_dict["deg_in_sign"] = planet["deg_in_sign"]
-                icon = PlanetItem(pixmap, x, y, planet["name"], click_dict,
+                icon = make_planet_item(PlanetItem, planet["name"], pixmap, x, y, planet["name"], click_dict,
                                  self.planet_click_signal)
                 self.scene.addItem(icon)
 
@@ -1872,8 +1860,8 @@ class WheelView(CotIndexMixin, QGraphicsView):
         Odd signs: 0-15° = Sun (Fire), 15-30° = Moon (Water)
         Even signs: 0-15° = Moon (Water), 15-30° = Sun (Fire)
         """
-        SUN_COLOR = desat_hex("#E57373")   # Fire red
-        MOON_COLOR = desat_hex("#1E4D8C")  # Water blue
+        SUN_COLOR = desat_hex(HORA_COLORS["sun_bg"])    # Fire red
+        MOON_COLOR = desat_hex(HORA_COLORS["moon_bg"])  # Water blue
         _r = _get_retinue()
         aditya_name = self._get_aditya_for_sector(sign_index)
         sign_data = _r.ADITYA_RETINUE.get(aditya_name)
@@ -1889,10 +1877,7 @@ class WheelView(CotIndexMixin, QGraphicsView):
     def _get_trimsamsa_element_color(self, sign_index: int, deg_in_sign: float) -> str:
         """Get the Trimsamsa (D30) element color for a planet at a given degree within its sign."""
         _r = _get_retinue()
-        ELEMENT_BG = {
-            "Fire": desat_hex("#E57373"), "Earth": desat_hex("#8B6340"), "Air": desat_hex("#F0C75E"),
-            "Water": desat_hex("#1E4D8C"), "Ether": desat_hex("#3D1A5C"),
-        }
+        ELEMENT_BG = {el: desat_hex(c["bg"]) for el, c in TRIMSAMSA_COLORS.items()}
         aditya_name = self._get_aditya_for_sector(sign_index)
         sign_data = _r.ADITYA_RETINUE.get(aditya_name)
         if not sign_data:
@@ -1939,8 +1924,8 @@ class WheelView(CotIndexMixin, QGraphicsView):
         hora_outer = self.r_outer + 130     # 130px wide
 
         # Hora colors — reuse rasi element colors: Fire = Sun, Water = Moon
-        SUN_BG, SUN_TEXT = desat_hex("#E57373"), "#1a1a1a"   # Fire red, dark text
-        MOON_BG, MOON_TEXT = desat_hex("#1E4D8C"), "#FFFFFF"  # Water blue, white text
+        SUN_BG, SUN_TEXT = desat_hex(HORA_COLORS["sun_bg"]), HORA_COLORS["sun_text"]    # Fire red, dark text
+        MOON_BG, MOON_TEXT = desat_hex(HORA_COLORS["moon_bg"]), HORA_COLORS["moon_text"]  # Water blue, white text
 
         # Load Sun/Moon planet icons for sector labels
         sun_icon = self.load_planet_image("Sun", size=60)
@@ -2000,7 +1985,7 @@ class WheelView(CotIndexMixin, QGraphicsView):
                 icon_pixmap = sun_icon if is_sun else moon_icon
                 if icon_pixmap:
                     from PySide6.QtWidgets import QGraphicsPixmapItem
-                    icon_item = QGraphicsPixmapItem(icon_pixmap)
+                    icon_item = make_planet_item(QGraphicsPixmapItem, "Sun" if is_sun else "Moon", icon_pixmap)
                     icon_item.setOffset(-icon_pixmap.width() / 2,
                                         -icon_pixmap.height() / 2)
                     icon_item.setPos(ix, iy)
@@ -2036,14 +2021,10 @@ class WheelView(CotIndexMixin, QGraphicsView):
         trim_outer = self.r_outer + 300     # 170px wide
 
         # Element colors — matching rasi sectors; Earth darkened for flat fill; Ether = panel violet
-        ELEMENT_BG = {
-            "Fire": desat_hex("#E57373"), "Earth": desat_hex("#8B6340"), "Air": desat_hex("#F0C75E"),
-            "Water": desat_hex("#1E4D8C"), "Ether": desat_hex("#3D1A5C"),
-        }
-        ELEMENT_TEXT = {
-            "Fire": "#1a1a1a", "Earth": "#FFFFFF", "Air": "#1a1a1a",
-            "Water": "#FFFFFF", "Ether": desat_hex("#CE93D8"),
-        }
+        # (shared palette from core.retinue_constants; Ether text keeps its desaturation).
+        ELEMENT_BG = {el: desat_hex(c["bg"]) for el, c in TRIMSAMSA_COLORS.items()}
+        ELEMENT_TEXT = {el: c["text"] for el, c in TRIMSAMSA_COLORS.items()}
+        ELEMENT_TEXT["Ether"] = desat_hex(TRIMSAMSA_COLORS["Ether"]["text"])
 
         # Background annulus
         bg = TropicalOuterRimBackground(self.cx, self.cy, trim_inner, trim_outer)
@@ -2616,6 +2597,8 @@ class WheelView(CotIndexMixin, QGraphicsView):
             pixmap = self.load_zodiac_icon(icon_index, size=icon_size)
             if pixmap:
                 item = TropicalZodiacSymbolItem(pixmap, x, y, icon_index)
+                from apps.widgets.sign_shadow import apply_sign_shadow
+                apply_sign_shadow(item, icon_index)
                 self.scene.addItem(item)
 
     def _draw_transit_outer_rim(self):
@@ -2624,8 +2607,8 @@ class WheelView(CotIndexMixin, QGraphicsView):
             return
 
         positions = {}
-        for pn, p in self._transit_planets.items():
-            if pn in self._TRANSIT_PLANET_NAMES:
+        for pn, p in visible_items(self._transit_planets, self._TRANSIT_PLANET_NAMES):
+            if pn in display_names(self._TRANSIT_PLANET_NAMES):
                 positions[pn] = {"decimal_degrees": float(self._planet_effective_degrees(p))}
         if self._transit_cusps:
             try:
@@ -2653,8 +2636,8 @@ class WheelView(CotIndexMixin, QGraphicsView):
         """Draw custom outer rim (e.g., eclipse/transit chart overlay)."""
         if self._outer_rim_planets:
             positions = {}
-            for pn, p in self._outer_rim_planets.items():
-                if pn in self._OUTER_RIM_PLANET_NAMES:
+            for pn, p in visible_items(self._outer_rim_planets, self._OUTER_RIM_PLANET_NAMES):
+                if pn in display_names(self._OUTER_RIM_PLANET_NAMES):
                     positions[pn] = {"decimal_degrees": float(self._planet_effective_degrees(p))}
             if self._outer_rim_cusps:
                 try:
@@ -2852,7 +2835,7 @@ class WheelView(CotIndexMixin, QGraphicsView):
             planet_names.extend(["Uranus", "Neptune", "Pluto"])
 
         planets_list = []
-        for planet_name in planet_names:
+        for planet_name in display_names(planet_names):
             if planet_name not in planets_data:
                 continue
 
@@ -2910,7 +2893,7 @@ class WheelView(CotIndexMixin, QGraphicsView):
             # Load planet icon (half size)
             pixmap = self.load_planet_image(planet["name"], size=planet_size)
             if pixmap:
-                item = QGraphicsPixmapItem(pixmap)
+                item = make_planet_item(QGraphicsPixmapItem, planet["name"], pixmap)
                 item.setPos(planet_x - planet_size / 2, planet_y - planet_size / 2)
                 item.setZValue(base_z + 1)
                 item.setToolTip(f"{tooltip_prefix} {planet['name']}: {planet['degrees']:.1f}°")

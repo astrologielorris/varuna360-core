@@ -77,6 +77,11 @@ AREA_DEFAULTS = {
     "panel_titles": 14,
     "info_text": 11,
     "buttons": 10,
+    # Shared primary/secondary QPushButton helpers (get_primary_button_style /
+    # get_secondary_button_style). Default 12 = EXACT parity with the former
+    # hardcoded scaled_px(12); a separate area from 'buttons' (10) so migrating
+    # the shared helpers is not a size regression.
+    "action_buttons": 12,
     "sidebar": 10,
     "chart_memory": 10,
     "status": 9,
@@ -204,6 +209,41 @@ def scaled_area_font(area_id: str, family: str = None,
     return font
 
 
+def scaled_area_factor(area_id: str) -> float:
+    """Ratio of an area's EFFECTIVE size to its default, for scaling painted text
+    that must keep an intrinsic multi-tier hierarchy while still responding to
+    the per-area font setting AND the global display scale (SPEC-FONT-001 B5).
+
+    Painted wheel/scene labels carry deliberate size tiers (e.g. 13 / 14 / 10)
+    that a flat scaled_area_font() would collapse to one size. Scaling each tier
+    literal by this factor preserves the ratios. At defaults (live base ==
+    AREA_DEFAULTS, scale 1.0) the factor is EXACTLY 1.0 -> zero visual change on
+    migration day (the parity principle). Callers use max(1, round(literal*f)).
+    """
+    base_default = AREA_DEFAULTS.get(area_id)
+    if not base_default:
+        return 1.0
+    return scaled_area_size(area_id) / base_default
+
+
+def scaled_tier_size(base: float, area_id: str = "chart_labels") -> int:
+    """Tier-preserving painted point size: a base tier literal scaled by the
+    area factor, floored at 1 (never 0). Single source for painted wheel/scene
+    labels that carry intrinsic size tiers (SPEC-FONT-001 B5); at defaults the
+    factor is 1.0 so base is returned unchanged (parity)."""
+    return max(1, round(base * scaled_area_factor(area_id)))
+
+
+def inject_buttons_font_px(qss: str) -> str:
+    """Replace a hardcoded ``font-size: 10px`` in a semantic-hex pill/toggle
+    template with the live scaled ``buttons`` area size (SPEC-FONT-001 B5). Keeps
+    the template's on/off hex untouched; SINGLE home (was duplicated verbatim in
+    two panels — GLM B5 LOW) so the corruption class (a too-broad literal replace
+    matching the tail of a differently-indented line) is reasoned about once."""
+    return qss.replace("font-size: 10px",
+                       f"font-size: {scaled_area_px('buttons')}px")
+
+
 def detect_optimal_scale(screen=None) -> float:
     """Detect optimal scale factor from Qt screen metrics.
 
@@ -311,6 +351,9 @@ ACCENTS = {
     },
 }
 
+# Chart-memory multi-selection borders; shared tokens preserve the existing palette.
+MEMORY_SELECTION = {"base": "#FFA726", "hover": "#FFB74D"}
+
 # =============================================================================
 # STATUS (semantic colors)
 # =============================================================================
@@ -395,7 +438,7 @@ def get_button_style(accent_name="blue"):
             min-width: {scaled_px(22)}px; max-width: {scaled_px(22)}px; min-height: {scaled_px(22)}px; max-height: {scaled_px(22)}px;
         }}
         QPushButton:hover {{ background-color: {HOVER}; }}
-        QPushButton:checked {{ background-color: {accent["active"]}; color: {TEXT_PRIMARY}; }}
+        QPushButton:checked {{ background-color: {accent["active"]}; color: {get_theme_colors()["primary_text"] if accent_name == "blue" else TEXT_PRIMARY}; }}
     """
 
 def get_list_style(accent_name="blue"):
@@ -521,7 +564,7 @@ def get_primary_button_style():
                 stop:0 {accent["light"]},
                 stop:1 {accent["base"]});
             color: {theme["primary_text"]};
-            border: 1px solid {accent["hover"]}; border-radius: 4px; font-size: {scaled_px(12)}px;
+            border: 1px solid {accent["hover"]}; border-radius: 4px; font-size: {scaled_area_px('action_buttons')}px;
             font-weight: bold; padding: {scaled_px(8)}px {scaled_px(16)}px; min-height: {scaled_px(32)}px;
         }}
         QPushButton:hover {{
@@ -542,7 +585,7 @@ def get_secondary_button_style():
             QPushButton {{
                 background-color: {theme["secondary"]}; color: {theme["secondary_text"]};
                 border: 1px solid {theme["secondary_dark"]}; border-radius: 4px;
-                font-size: {scaled_px(12)}px; padding: {scaled_px(8)}px {scaled_px(16)}px; min-height: {scaled_px(32)}px;
+                font-size: {scaled_area_px('action_buttons')}px; padding: {scaled_px(8)}px {scaled_px(16)}px; min-height: {scaled_px(32)}px;
             }}
             QPushButton:hover {{ background-color: {theme["secondary_light"]}; border-color: {accent["base"]}; }}
             QPushButton:pressed {{ background-color: {theme["secondary_dark"]}; }}
@@ -552,7 +595,7 @@ def get_secondary_button_style():
         QPushButton {{
             background-color: {SURFACE}; color: {TEXT_PRIMARY};
             border: 1px solid {accent["hover"]}; border-radius: 4px;
-            font-size: {scaled_px(12)}px; padding: {scaled_px(8)}px {scaled_px(16)}px; min-height: {scaled_px(32)}px;
+            font-size: {scaled_area_px('action_buttons')}px; padding: {scaled_px(8)}px {scaled_px(16)}px; min-height: {scaled_px(32)}px;
         }}
         QPushButton:hover {{ background-color: {HOVER}; border-color: {accent["base"]}; }}
         QPushButton:pressed {{ background-color: {BG}; border-color: {accent["active"]}; }}
@@ -896,7 +939,14 @@ def desaturated_theme_path(theme_file, sat=None, deep=None):
         deep = get_deep_dark()
     # Deep dark is a DARK-theme option; a light theme passes through untouched.
     deep = bool(deep) and _is_dark_theme_file(theme_file)
-    if sat >= 100 and not deep:
+    try:
+        from ui.theme_palette import DARK_ACCENT_INK, transformed_palette, theme_override
+        palette_override = transformed_palette(theme_file, applied=True)
+        has_palette_override = bool(theme_override(theme_file, applied=True)) or os.path.basename(str(theme_file)) in DARK_ACCENT_INK
+    except Exception:
+        palette_override = {}
+        has_palette_override = False
+    if sat >= 100 and not deep and not has_palette_override:
         return theme_file
     try:
         # Resolve the source XML: a built-in name lives under qt_material/themes,
@@ -922,13 +972,21 @@ def desaturated_theme_path(theme_file, sat=None, deep=None):
         # otherwise generate to the same output and quietly serve each other's
         # palette.
         src_tag = hashlib.sha1(os.path.abspath(src).encode("utf-8")).hexdigest()[:8]
+        override_tag = hashlib.sha1(repr(sorted(palette_override.items())).encode("utf-8")).hexdigest()[:8]
         out_path = os.path.join(
             out_dir,
             f"{stem}_sat{int(sat)}{'_deep' if deep else ''}"
-            f"_{src_tag}{ext or '.xml'}")
+            f"_{src_tag}_{override_tag}{ext or '.xml'}")
 
         with open(src, "r", encoding="utf-8") as f:
             xml = f.read()
+        if has_palette_override:
+            for key, value in palette_override.items():
+                xml = re.sub(
+                    r'(<color\s+name="%s"\s*>)\s*(#[0-9a-fA-F]{3,8})\s*(</color>)'
+                    % re.escape(key),
+                    lambda m, replacement=value: m.group(1) + replacement + m.group(3),
+                    xml)
         if sat < 100:
             # Rewrite every #RRGGBB (and #RGB) hex through the pure desaturator.
             hex_re = re.compile(r"#(?:[0-9a-fA-F]{6}|[0-9a-fA-F]{3})\b")
@@ -1395,6 +1453,9 @@ def get_menu_bar_style():
     """
     Generate QMenuBar stylesheet matching the dark theme.
 
+    MUST NOT contain min-height/max-height rules — see apply_menu_bar_style,
+    which is the only supported way to style the app menubar.
+
     Returns:
         str: QMenuBar and QMenu stylesheet
     """
@@ -1440,6 +1501,48 @@ def get_menu_bar_style():
             margin: 4px 8px;
         }}
     """
+
+
+def apply_menu_bar_style(menubar):
+    """Apply the menubar stylesheet AND the td-1a24 height pin to a QMenuBar.
+
+    td-1a24: the unpinned qt-material menubar renders 2px shorter under one
+    theme than the other, and a live theme switch does not recompute it, so the
+    settings content area (window height - menubar) came out different sizes
+    boot-vs-switch (the size_mismatch on all 8 settings pages + nav list).
+    A theme-INDEPENDENT height derived from QApplication.font() gives ONE height
+    for every theme; callers re-apply on both the theme path (_on_theme_changed)
+    and the scale path (_apply_scale_refresh) so it stays consistent through
+    both. The app font is NOT changed by Display-Scale (that factor only feeds
+    scaled_area_*/scaled_px), so the derived height is effectively constant.
+
+    THE PIN MUST BE A WIDGET-LEVEL MINIMUM ONLY — never QSS min/max-height and
+    never setFixedHeight/setMaximumHeight. Constraining this menubar's maximum
+    height in the full app makes it paint its BACKGROUND but none of its items
+    (File/View/License/Help all had sane actionGeometry yet zero pixels were
+    drawn — the menu bar looked removed from the app, 2026-09-01 regression).
+    Verified empirically at any pin value, even taller than the item box; the
+    QSS min/max pin also blanked headless (offscreen) while the setFixedHeight
+    variant blanked only on the real display (xcb) — so a screen-true check is
+    required for any future change here. A bare QMainWindow does NOT reproduce
+    it; only the real ChartGUI/ProChartGUI does.
+
+    A MINIMUM alone still achieves td-1a24: fm+16 sits at/above the natural
+    qt-material heights of BOTH themes (~fm+14 vs ~fm+16 — the 2px mismatch),
+    so every theme lands exactly on the floor and the heights converge, while
+    the bar keeps the freedom to grow that Qt's item painting apparently
+    requires. The td-1a24 oracle (test_menubar_height_pin.py) passes with this
+    pin and it paints on both xcb and offscreen.
+    """
+    from PySide6.QtWidgets import QApplication
+    from PySide6.QtGui import QFontMetrics
+    menubar.setStyleSheet(get_menu_bar_style())
+    _app = QApplication.instance()
+    # QApplication.instance() may return a bare QCoreApplication (headless, no
+    # GUI) which has no font(); guard on the attribute, not just None.
+    _fm_h = (QFontMetrics(_app.font()).height()
+             if _app is not None and hasattr(_app, "font") else 17)
+    menubar.setMinimumHeight(_fm_h + 16)
 
 
 def get_panel_header_3d_style(accent_name="blue"):
@@ -1754,3 +1857,458 @@ def apply_elevation_shadow(widget, level):
     widget.setGraphicsEffect(effect)
     del effect          # Rule 18: Qt owns it now.
     return elevation_margin(level)
+
+
+# =============================================================================
+# ACTION BAR v2 — COLOR TOKENS  (SPEC-BAR-001, M0-5)
+# -----------------------------------------------------------------------------
+# ONE color table for the whole chart action bar. Every surface the bar paints
+# reads `bar_tokens()` at paint time; no hex literal may appear in the bar module
+# (Rule 20 / SPEC-BAR-001 AC-4). Geometry does NOT live here — sizes, radii and
+# hairline widths come from the controller's metrics table (INV-3).
+#
+# PROVENANCE. Each entry carries the CSS custom property it reproduces from the
+# binding mockup `proprietary_docs/spec_design/action_bar_v2/vibrancy_segmented.html`
+# (`:root[data-theme="dark"]` :17-78, `:root[data-theme="light"]` :80-138, plus the
+# rule-level literals in the bar stylesheet :195-440). Full commentary: token sheet
+# §2 (`05_opus_design_tokens.md`, T-111…T-166). The fidelity gate and the
+# divergence register walk these comments — keep them exact.
+#
+# THEME POLARITY, and why the two branches are not symmetric:
+#   * LIGHT — the mockup's light block IS qt-material `light_blue.xml` verbatim
+#     (primary #2979ff, primary_text #3c3c3c, secondary #f5f5f5, secondary_light
+#     #ffffff, secondary_dark #e6e6e6, secondary_text #555555). So the eight pure
+#     keys are read LIVE from get_theme_colors() and the mockup is reproduced for
+#     free (D-60: faithful to the derivations, not the literals).
+#   * DARK — the mockup's dark block is this module's FROZEN constant set (BLUE,
+#     ACCENTS, BACKGROUNDS, TEXT), NOT the app's shipped dark theme. The app boots
+#     `dark_blue.xml` (primary #448aff, secondary #232629, secondary_dark #31363b,
+#     secondary_text #ffffff) — reading it live would repaint the bar in a
+#     different blue on a lighter ground, and would collapse the idle/hover label
+#     hierarchy entirely (dark_blue's secondary_text == primary_text == #ffffff,
+#     so every idle label would already be at its hover color). The dark branch
+#     therefore resolves the eight keys from the frozen constants that the mockup
+#     was drawn from. They still pass through desat_hex(), so the saturation
+#     slider moves them (SPEC-SAT-001 — one application point, and these never
+#     travel through the qt-material XML, so this is the correct side of the
+#     double-desat trap).
+#
+# NOT COVERED: there is no disabled token, and none is needed. The mockup
+# defines no disabled state; spec decision D-12 (SPEC-BAR-001 §5) defines it as
+# a PATTERN over existing tokens — label and glyph at the dim_text 0.45-alpha
+# treatment over the idle fill, hover/press/focus paint suppressed — so the
+# disabled painter composes tokens from this table rather than reading a
+# dedicated one. (Register row 07/D-13's "open DECIDE" predates spec D-12.)
+# =============================================================================
+from PySide6.QtGui import QColor  # noqa: E402  (section-local, paint-path type)
+
+
+def gold_accent():
+    """``(gold, gold_hi)`` hex pair for the current theme polarity.
+
+    The bar's champagne-gold family: the title-well stripe gradient
+    (`gold_hi` → `gold`), the lit zodiac segment's glyph and accent hairline, and
+    the `+ TROPICAL` modifier's checked tint. Dark is the existing
+    ``ACCENTS["gold"]`` pair (#DAA520 base / #FFD700 active) — the mockup was drawn
+    from it. Light has no counterpart in this module yet, so its pair is declared
+    here: #B8860B / #8A6508 (mockup :90).
+
+    Note the deliberate inversion: in dark `gold_hi` is BRIGHTER than `gold`; in
+    light it is DARKER. The roles are what carry over, not the luminance direction
+    — reusing #FFD700 on a #f5f5f5 ground makes every gold accent illegible
+    (register D-59).
+
+    Both branches pass through ``desat_hex`` — these hexes never travel through the
+    qt-material XML, so this is their single desaturation point (SPEC-SAT-001).
+    """
+    if is_light_theme():
+        return desat_hex("#B8860B"), desat_hex("#8A6508")   # --gold / --gold-hi light
+    return (desat_hex(ACCENTS["gold"]["base"]),             # --gold      dark #DAA520
+            desat_hex(ACCENTS["gold"]["active"]))           # --gold-hi   dark #FFD700
+
+
+# --- private color arithmetic (CSS semantics, exact) -------------------------
+
+def _bar_over(white, alpha):
+    """A pure white or pure black overlay at a CSS alpha — the whole derived
+    surface layer of this design is one of these two (register D-60)."""
+    c = QColor(255, 255, 255) if white else QColor(0, 0, 0)
+    c.setAlphaF(float(alpha))
+    return c
+
+
+def _bar_rgba(r, g, b, alpha=1.0):
+    """A literal ``rgba()`` from the mockup that is not derivable from the eight
+    keys (the two bar-gradient stops and the thumb wafer)."""
+    c = QColor(int(r), int(g), int(b))
+    c.setAlphaF(float(alpha))
+    return c
+
+
+def _bar_tint(hex_color, alpha=1.0):
+    """A THEMED hex at a CSS alpha — i.e. ``color-mix(in srgb, X n%, transparent)``,
+    which in sRGB is exactly X carrying n% alpha. Degrades to mid-grey rather than
+    raising: this runs inside paintEvent."""
+    c = QColor(hex_color)
+    if not c.isValid():
+        c = QColor(128, 128, 128)
+    c.setAlphaF(float(alpha))
+    return c
+
+
+# The eight pure keys as the mockup froze them for DARK (see the polarity note
+# above). Every value is an existing module constant except --primary_light, which
+# has no counterpart here (get_theme_colors()'s frozen fallback is #5EADFF).
+_BAR_PURE_DARK = {
+    "primary":         BLUE,                        # --primary        dark  :18
+    "primary_dark":    ACCENTS["blue"]["active"],   # --primary_dark   dark  :19
+    "primary_light":   "#4DA2FF",                   # --primary_light  dark  :20
+    "primary_text":    TEXT_PRIMARY,                # --primary_text   dark  :21
+    "secondary":       SURFACE,                     # --secondary      dark  :22
+    "secondary_dark":  BG,                          # --secondary_dark dark  :23
+    "secondary_light": HOVER,                       # --secondary_light dark :24
+    "secondary_text":  TEXT_SECONDARY,              # --secondary_text dark  :25
+}
+
+# Semantic accents — the second, non-8-key layer the design adds. Rule 20's
+# semantic exemption covers green/red (state meaning, not chrome); gold is routed
+# through gold_accent() instead of being repeated here.
+_BAR_ACCENT_DARK = {
+    "green":     ACCENTS["green"]["base"],          # --green      dark  :29
+    "green_hi":  "#7CD182",                         # --green-hi   dark  :29
+    "red":       STATUS["error"],                   # --red        dark  :30
+    "red_press": "#D0281F",                         # --red-press  dark  :30
+    "muted":     TEXT_TERTIARY,                     # --muted      dark  :31
+}
+_BAR_ACCENT_LIGHT = {
+    "green":     "#2E7D32",                         # --green      light :91
+    "green_hi":  "#1B5E20",                         # --green-hi   light :91
+    "red":       "#D70015",                         # --red        light :92
+    "red_press": "#A5000F",                         # --red-press  light :92
+    "muted":     "#8A8A8E",                         # --muted      light :93
+}
+
+_BAR_TOKEN_CACHE = None      # (signature, dict) — rebuilt whenever the palette moves
+
+
+def _bar_signature():
+    """Everything bar_tokens() reads. Cheap to compute, so the cache can never
+    serve a stale palette after a theme switch, a saturation change or a
+    deep-dark toggle."""
+    return (bool(is_light_theme()), get_ui_saturation(), get_deep_dark(),
+            tuple(sorted(get_theme_colors().items())))
+
+
+def _build_bar_tokens():
+    """Resolve the whole bar palette for the current theme. See bar_tokens()."""
+    light = bool(is_light_theme())
+    gold, gold_hi = gold_accent()
+
+    if light:
+        # light_blue.xml == the mockup's light block, so the live palette IS the
+        # design (D-60). Read it through the eight REAL keys, nothing else exists.
+        t = get_theme_colors()
+        pure = {k: t[k] for k in _BAR_PURE_DARK}
+        acc = {k: desat_hex(v) for k, v in _BAR_ACCENT_LIGHT.items()}
+    else:
+        pure = {**{k: desat_hex(v) for k, v in _BAR_PURE_DARK.items()}, "primary_text": get_theme_colors()["primary_text"]}
+        acc = {k: desat_hex(v) for k, v in _BAR_ACCENT_DARK.items()}
+
+    green = acc["green"]
+    red = acc["red"]
+    primary = pure["primary"]
+    secondary = pure["secondary"]
+
+    tok = {}
+
+    # --- 1. the eight pure keys (mirror get_theme_colors()) ------------------
+    for k, v in pure.items():
+        tok[k] = QColor(v)                          # --primary … --secondary_text
+
+    # --- 2. semantic accents -------------------------------------------------
+    tok["gold"] = QColor(gold)                      # --gold        :28 / :90
+    tok["gold_hi"] = QColor(gold_hi)                # --gold-hi     :28 / :90
+    tok["green"] = QColor(green)                    # --green       :29 / :91
+    tok["green_hi"] = QColor(acc["green_hi"])       # --green-hi    :29 / :91
+    tok["red"] = QColor(red)                        # --red         :30 / :92
+    tok["red_press"] = QColor(acc["red_press"])     # --red-press   :30 / :92
+    tok["muted"] = QColor(acc["muted"])             # --muted       :31 / :93
+
+    # --- 3. the vibrancy stack (bar surface) ---------------------------------
+    # The two gradient stops are the only surface literals: dark bar-a is
+    # secondary_light with +2 blue, bar-b is secondary with -2 on every channel —
+    # near the palette but not derivable from it (token sheet T-126/T-127).
+    # The bar OWNS its backdrop (integration decision at CP-1): nothing renders
+    # behind the bar in the app (report 02 §1), the goldens composite the
+    # translucent gradient over a flat --canvas-core field, and leaving the
+    # backdrop to whatever palette the parent window has washed every surface
+    # ~dE 9-17 at the gate. Opaque base under bar_a/bar_b = token sheet T-319's
+    # flatten, kept as a separate token so the T-317 live-blur upgrade can
+    # replace the base without touching the gradient.
+    tok["canvas_core"] = (QColor(desat_hex("#FBFBFD")) if light  # --canvas-core :128
+                          else QColor(desat_hex("#0B0B0D")))     # --canvas-core :67
+    tok["bar_a"] = (_bar_rgba(253, 253, 254, .86) if light      # --bar-a  :97
+                    else _bar_rgba(58, 58, 62, .78))            # --bar-a  :36
+    tok["bar_b"] = (_bar_rgba(234, 234, 238, .88) if light      # --bar-b  :98
+                    else _bar_rgba(26, 26, 29, .80))            # --bar-b  :37
+    tok["bar_gloss"] = _bar_over(True, .95 if light else .10)   # --bar-gloss :99 / :38
+    tok["bar_under"] = _bar_over(False, .16 if light else .85)  # --bar-under :100 / :39
+    tok["bar_lip"] = _bar_over(True, .55 if light else .045)    # --bar-lip   :101 / :40
+    tok["bar_drop"] = _bar_over(False, .55)                     # #bar shadow 4 :208 (both themes)
+
+    # --- 4. control surfaces --------------------------------------------------
+    tok["ctl"] = _bar_over(True, .90 if light else .055)        # --ctl      :103 / :42
+    tok["ctl_h"] = _bar_over(True, 1.0 if light else .105)      # --ctl-h    :104 / :43
+    tok["ctl_a"] = (_bar_over(False, .075) if light             # --ctl-a    :105
+                    else _bar_over(True, .15))                  # --ctl-a    :44  (polarity flips)
+    tok["ctl_on"] = (_bar_over(False, .075) if light            # --ctl-on   :106
+                     else _bar_over(True, .155))                # --ctl-on   :45
+    tok["ctl_on_h"] = (_bar_over(False, .105) if light          # --ctl-on-h :107
+                       else _bar_over(True, .20))               # --ctl-on-h :46
+    # --thumb is a 180deg gradient; split into its two stops (:108 / :47).
+    tok["thumb_top"] = (_bar_rgba(255, 255, 255) if light
+                        else _bar_over(True, .21))
+    tok["thumb_bottom"] = (_bar_rgba(250, 250, 251) if light
+                           else _bar_over(True, .145))
+    tok["hair"] = _bar_over(not light, .17 if light else .13)        # --hair      :110 / :49
+    tok["hair_soft"] = _bar_over(not light, .085 if light else .075)  # --hair-soft :111 / :50
+    tok["gloss"] = _bar_over(True, .85 if light else .09)            # --gloss     :112 / :51
+    tok["drop"] = _bar_over(False, .18 if light else .50)            # --drop      :113 / :52
+    tok["well"] = _bar_over(False, .055 if light else .30)           # --well      :114 / :53
+    tok["zodtray"] = _bar_over(False, .085 if light else .36)        # --zodtray   :115 / :54
+    tok["well_h"] = _bar_over(False, .035 if light else .22)         # --well-h    :116 / :55
+    tok["well_line"] = (_bar_over(False, .14) if light               # --well-line :117
+                        else _bar_over(True, .10))                   # --well-line :56
+
+    # --- 5. recess inner shadows (hard-coded, identical in both themes) -------
+    tok["recess"] = _bar_over(False, .28)        # .zodunit / .title inset :332, :386
+    tok["recess_hover"] = _bar_over(False, .22)  # .title:hover inset      :389
+
+    # --- 6. checked identities (tints) ---------------------------------------
+    tok["tint_blue"] = (QColor(primary) if light                # --tint-blue    :119 (opaque)
+                        else _bar_tint(primary, .90))           # --tint-blue    :58
+    tok["tint_blue_fg"] = QColor(pure["primary_text"])         # --tint-blue-fg :120 / :59
+    tok["tint_green"] = _bar_tint(green, .14 if light else .22)  # --tint-green   :121 / :60
+    tok["tint_green_fg"] = QColor(acc["green_hi"])              # --tint-green-fg :122 / :61
+    tok["tint_gold"] = _bar_tint(gold, .16 if light else .22)   # --tint-gold    :123 / :62
+    # light is NOT gold_hi — a bespoke value one step lighter than #8A6508.
+    tok["tint_gold_fg"] = (QColor(desat_hex("#7A5A08")) if light  # --tint-gold-fg :124
+                           else QColor(gold_hi))                 # --tint-gold-fg :63
+
+    # --- 7. rule-level derived colors (color-mix precomputed) -----------------
+    tok["ring"] = _bar_tint(primary, .55)              # --ring                  :126 / :65
+    tok["fg_on_accent"] = QColor(255, 255, 255)        # literal #fff on accent  :415, :434
+    tok["acc_blue"] = _bar_over(True, .62)             # .tint-blue.on .acc      :291
+    tok["tint_green_h"] = _bar_tint(green, .30)        # .tint-green.on:hover    :293
+    tok["acc_green_glow"] = _bar_tint(green, .60)      # .tint-green.on .acc glow :294
+    tok["tint_gold_h"] = _bar_tint(gold, .32)          # .tint-gold.on:hover     :296
+    tok["acc_gold_glow"] = _bar_tint(gold, .60)        # .tint-gold.on .acc glow :297
+    tok["primary_action"] = QColor(                    # .btn.primary label      :301
+        _mix(primary, pure["primary_text"], 0.55))     # = color-mix(primary 45%, primary_text)
+    tok["live_glow"] = _bar_tint(green, .85)           # .btn .live glow         :309
+    tok["thumb_acc_glow"] = _bar_tint(gold, .55)       # .zod > .btn.on .acc glow :347
+    tok["mod_rim_on"] = _bar_tint(gold, .55)           # .btn.mod.on inner rim   :368
+    tok["mod_rim_on_outer"] = _bar_tint(gold, .22)     # .btn.mod.on outer rim   :369
+    tok["stripe_glow"] = _bar_tint(gold, .45)          # .title .stripe glow     :393
+    tok["close_rim_h"] = _bar_tint(red, .60)           # .xbtn:hover rim         :415
+    tok["menu_fill"] = _bar_tint(secondary, .88)       # .menu background        :425
+    tok["menu_drop"] = _bar_over(False, .60)           # .menu drop shadow       :427
+
+    return tok
+
+
+def bar_tokens():
+    """The chart action bar's complete color table for the CURRENT theme.
+
+    Returns a ``dict[str, QColor]`` — 60 keys, the same key set in both themes,
+    named after the mockup's CSS custom properties (``--hair-soft`` → ``hair_soft``)
+    so a token can be traced to the design in one grep. Alpha is carried ON the
+    QColor (the painter composites it directly); every alpha is the mockup's
+    authored value, not Chromium's 8-bit re-serialisation.
+
+    Read it at PAINT TIME, never cached in a widget: construction and refresh then
+    share one code path, so a theme switch, a saturation change or a deep-dark
+    toggle repaints correctly with no per-widget invalidation (SPEC-BAR-001 INV-4,
+    the ThemedStyleMixin principle applied to painted widgets). The call is cheap —
+    the table is memoized here against a palette signature and rebuilt only when
+    that signature moves.
+
+    Geometry is NOT here. Sizes, radii, paddings and hairline widths come from the
+    controller's metrics table (INV-3, single sizing truth); this function is the
+    single COLOR truth (INV-4 / Rule 20 / AC-4: no hex in the bar module).
+
+    The QColor values are shared between callers — copy before mutating.
+    """
+    global _BAR_TOKEN_CACHE
+    sig = _bar_signature()
+    if _BAR_TOKEN_CACHE is None or _BAR_TOKEN_CACHE[0] != sig:
+        _BAR_TOKEN_CACHE = (sig, _build_bar_tokens())
+    return dict(_BAR_TOKEN_CACHE[1])
+
+
+# ===========================================================================
+# Human Design BodyGraph palette (SPEC-HD-001)
+# ===========================================================================
+#
+# THE ONE APPROVED RULE 20 EXCEPTION, and it is narrow. Human Design's nine
+# centres carry FIXED colours that identify them the way a planet's glyph
+# identifies a planet: a reader recognises the Sacral because it is red, and a
+# Throat tinted with the app's accent would simply be a different diagram. The
+# two activation colours are semantic in the same way -- one side is Design, the
+# other Personality, everywhere they appear.
+#
+# So those hues do not come from get_theme_colors(). They are declared ONCE
+# here, as light and dark tokens, and never as literals in painter code. Board,
+# chrome, text and every other surface still come from the theme like the rest
+# of the app.
+#
+# PROVENANCE. The four centre hues were sampled pixel by pixel from the
+# reference charts (ref_single_mybodygraph.png dark, ref_full_curvy_mybodygraph
+# .png light), not invented and not a designer's spectrum:
+#
+#     yellow  Head, G          green  Ajna
+#     brown   Throat, Spleen, Solar Plexus, Root
+#     red     Will, Sacral
+#
+# The "lift" twins are for outlines, halos and auras, because brown and green do
+# not read against a dark ground at hairline widths. The "mid" twins are for the
+# hover breath: a centre lifts a little from inside rather than being spotlit.
+# The identity always stays the base hue.
+#
+# ACTIVATION COLOURS (Lorris, 2026-08-28): Design is the WARM side and
+# Personality the cool one, because a printed Jovian chart puts Design in red.
+# One colour per side, everywhere -- graph, gate pads, both planet columns,
+# toolbar dots, legend.
+
+#: Centre fills and their outline / hover twins. Dark theme.
+_HD_DARK = {
+    "yellow": "#FBF7AD", "green": "#669A8D", "brown": "#58423E", "red": "#D04A4A",
+    "yellow_lift": "#FFFCC9", "green_lift": "#8FC7B8",
+    "brown_lift": "#B48A78", "red_lift": "#EE7C77",
+    "yellow_mid": "#FCF9BB", "green_mid": "#6EA396",
+    "brown_mid": "#634B45", "red_mid": "#D75552",
+    # an undefined centre: near white, with a clear outline
+    "open_fill": "rgba(240,244,252,.085)",
+    "open_fill_hover": "rgba(240,244,252,.24)",
+    "open_edge": "#E6EBF5",
+    # activation
+    "personality": "#2FD9E8", "design": "#FFB13D",
+    "personality_casing": "#1E94A0", "design_casing": "#C07D21",
+    "casing_off": "#A79FAE", "core_off": "#141020",
+    # channel rendering
+    "dead_trace": "#3F5750",     # an unactivated trace, thin copper
+    "plate": "#0D0B16",          # fill behind a via or a gate pad
+    "disc": "#100D0C",           # the disc under an activated numeral
+    "disc_ink": "#FBFCFF",
+    # the travelling pulse
+    "pulse_personality": "#D9FBFF", "pulse_design": "#FFF0D2", "pulse_both": "#FFFFFF",
+    # board and chrome
+    "bg0": "#05040A", "bg1": "#0D0B16", "bg2": "#15111D",
+    "ink": "#F2EEE6", "ink2": "#B6ADBF", "ink3": "#7C7488",
+    "warn": "#FFC46B",
+    # An UNLIT numeral sits straight on the centre fill, so its ink follows that fill
+    # rather than the theme: dark on the two yellow centres, light on green, brown and
+    # red, theme ink on an open one. Each is drawn over a halo of the opposite value so
+    # it survives a trace or a via passing underneath. These three pairs are the same in
+    # both themes -- they are keyed to the CENTRE's colour, which does not flip.
+    "gate_ink_yellow": "#4A3F14", "gate_halo_yellow": "rgba(251,247,173,.92)",
+    "gate_ink_solid": "#F7F9FF", "gate_halo_solid": "rgba(16,11,10,.55)",
+    "halo": "rgba(6,5,11,.93)",
+}
+
+#: The same tokens for the light theme. The reference's light print uses the
+#: same four hues a shade cooler; the lifts DARKEN instead of lightening,
+#: because on a white ground a lifted yellow disappears.
+_HD_LIGHT = {
+    "yellow": "#F8F4B2", "green": "#72A195", "brown": "#64514E", "red": "#D14B49",
+    "yellow_lift": "#E8D24A", "green_lift": "#4E7E71",
+    "brown_lift": "#4A3733", "red_lift": "#B03A38",
+    "yellow_mid": "#F6EFA5", "green_mid": "#6D9B8F",
+    "brown_mid": "#604C49", "red_mid": "#CC4745",
+    "open_fill": "#FFFFFF",
+    "open_fill_hover": "#FFFFFF",
+    "open_edge": "#B7BDC9",
+    "personality": "#00808F", "design": "#C56B00",
+    "personality_casing": "#005B66", "design_casing": "#8A4B00",
+    "casing_off": "#B7BCC9", "core_off": "#FFFFFF",
+    "dead_trace": "#9AA79D",
+    "plate": "#F6F4F0",
+    "disc": "#221E1D",
+    "disc_ink": "#FBFCFF",
+    "pulse_personality": "#004B56", "pulse_design": "#7A3D00", "pulse_both": "#2B2B2B",
+    "bg0": "#E9E7E2", "bg1": "#F6F4F0", "bg2": "#FFFFFF",
+    "ink": "#241D1B", "ink2": "#5C5350", "ink3": "#8D8582",
+    "warn": "#A86A00",
+    "gate_ink_yellow": "#4A3F14", "gate_halo_yellow": "rgba(251,247,173,.92)",
+    "gate_ink_solid": "#F7F9FF", "gate_halo_solid": "rgba(16,11,10,.55)",
+    "halo": "rgba(255,255,255,.95)",
+}
+
+#: Which of the four hues each centre wears. Not a style choice -- this is how
+#: Human Design charts are printed, and a reader identifies a centre by it.
+HD_CENTER_HUE = {
+    "head": "yellow", "ajna": "green", "throat": "brown", "g": "yellow",
+    "will": "red", "spleen": "brown", "solar": "brown", "sacral": "red",
+    "root": "brown",
+}
+
+#: Which ink an unlit numeral takes, by the hue of the centre it sits on.
+HD_GATE_INK_KIND = {hue: ("yellow" if hue == "yellow" else "solid")
+                    for hue in ("yellow", "green", "brown", "red")}
+
+#: Stroke widths, in canvas units. Geometry, so they do not vary with the theme.
+HD_STROKE = {
+    "dead": 2.4,        # an unactivated trace
+    "core": 3.2,        # a defined half
+    "glow": 8.0,        # the blurred twin behind a core, drawn as a wide pen
+    "pulse": 1.6,       # the travelling dash
+    "outline": 1.2,     # a centre's edge
+}
+
+_HD_TOKEN_CACHE = None      # (signature, dict) — rebuilt whenever the palette moves
+
+
+def _hd_signature():
+    """Everything hd_palette() reads, so the cache cannot serve a stale theme."""
+    return (bool(is_light_theme()), get_ui_saturation(), get_deep_dark())
+
+
+def hd_palette():
+    """The Human Design semantic palette for the current theme.
+
+    Returns a flat ``{token: value}`` dict -- the tokens above, plus a resolved
+    ``center_fill`` / ``center_edge`` / ``center_hover`` entry per centre, and
+    ``glow_alpha`` for how strongly a lit trace blooms.
+
+    Read it AT PAINT TIME, never cached in a widget: construction and refresh
+    then share one code path, so a theme switch or a saturation change repaints
+    correctly with no per-widget invalidation. The call is cheap -- memoized
+    against the palette signature and rebuilt only when that moves.
+
+    Values are hex strings (or ``rgba(...)`` for the two translucent fills), to
+    be handed to QColor by the caller; the module deliberately does not import
+    Qt colour types so it stays usable from a headless test.
+    """
+    global _HD_TOKEN_CACHE
+    sig = _hd_signature()
+    if _HD_TOKEN_CACHE is None or _HD_TOKEN_CACHE[0] != sig:
+        light = bool(is_light_theme())
+        base = dict(_HD_LIGHT if light else _HD_DARK)
+
+        # SPEC-SAT-001: these are authored constants, never read back from
+        # qt-material env vars, so they are desaturated here exactly once.
+        tokens = {k: (v if v.startswith("rgba") else desat_hex(v))
+                  for k, v in base.items()}
+
+        for centre, hue in HD_CENTER_HUE.items():
+            tokens[f"fill_{centre}"] = tokens[hue]
+            tokens[f"edge_{centre}"] = tokens[f"{hue}_lift"]
+            tokens[f"hover_{centre}"] = tokens[f"{hue}_mid"]
+
+        # A lit trace blooms less on a light ground: the same alpha that reads as
+        # a glow on near black reads as a smudge on near white.
+        tokens["glow_alpha"] = 0.34 if light else 0.62
+        tokens["is_light"] = light
+
+        _HD_TOKEN_CACHE = (sig, tokens)
+    return dict(_HD_TOKEN_CACHE[1])

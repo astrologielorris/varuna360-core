@@ -13,6 +13,8 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QBrush, QPalette
 
 from state import PanelControllerBase
+from ui.dignity_colors import dignity_colors
+from ui.qt_theme import get_theme_colors
 
 
 class DignityColorDelegate(QStyledItemDelegate):
@@ -28,29 +30,13 @@ class DignityColorDelegate(QStyledItemDelegate):
         fg = index.data(Qt.ItemDataRole.ForegroundRole)
         if fg:
             option.palette.setColor(QPalette.ColorRole.Text, fg.color())
-            option.palette.setColor(QPalette.ColorRole.HighlightedText, fg.color())
+        option.palette.setColor(
+            QPalette.ColorRole.HighlightedText,
+            QColor(get_theme_colors()['primary_text']))
         super().paint(painter, option, index)
 
 _PLANET_HEADERS = ["Su", "Mo", "Ma", "Me", "Ju", "Ve", "Sa"]
 
-_DIGNITY_FG = {
-    "EX": QBrush(QColor("#FF4444")),
-    "MT": QBrush(QColor("#DD66FF")),
-    "OH": QBrush(QColor("#44AAFF")),
-    "GF": QBrush(QColor("#44DD44")),
-    "F":  QBrush(QColor("#77CC77")),
-    "N":  QBrush(QColor("#999999")),
-    "E":  QBrush(QColor("#FFAA33")),
-    "GE": QBrush(QColor("#FF7744")),
-    "DB": QBrush(QColor("#FF3333")),
-}
-
-_DIGNITY_BG = {
-    "EX": QBrush(QColor(255, 68, 68, 35)),
-    "MT": QBrush(QColor(221, 102, 255, 30)),
-    "OH": QBrush(QColor(68, 170, 255, 25)),
-    "DB": QBrush(QColor(255, 51, 51, 35)),
-}
 
 
 class DignitiesController(PanelControllerBase):
@@ -82,6 +68,9 @@ class DignitiesController(PanelControllerBase):
     def _on_chart_changed(self):
         self._refresh()
 
+    def _on_theme_changed(self):
+        self._refresh()
+
     def _on_mode_changed(self):
         self._refresh()
 
@@ -110,12 +99,11 @@ class DignitiesController(PanelControllerBase):
                 for j, dignity in enumerate(row["dignities"]):
                     item = QTableWidgetItem(dignity)
                     item.setTextAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
-                    fg = _DIGNITY_FG.get(dignity)
-                    if fg:
-                        item.setData(Qt.ItemDataRole.ForegroundRole, fg)
-                    bg = _DIGNITY_BG.get(dignity)
-                    if bg:
-                        item.setData(Qt.ItemDataRole.BackgroundRole, bg)
+                    colors = dignity_colors(dignity)
+                    if colors:
+                        bg, fg = colors
+                        item.setForeground(QBrush(QColor(fg)))
+                        item.setBackground(QBrush(QColor(bg)))
                     gui.dignities_table.setItem(i, j + 1, item)
 
         except Exception:

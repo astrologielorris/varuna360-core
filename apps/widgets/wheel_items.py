@@ -45,7 +45,7 @@ from PySide6.QtGui import (
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 
 # Import theme for consistent colors
-from ui.qt_theme import scaled_area_font, desat_hex
+from ui.qt_theme import scaled_area_font, scaled_tier_size, desat_hex
 from core.aditya_mode import displayed_sign_name
 
 
@@ -306,7 +306,14 @@ class TrimsamshaDegreeTick(QGraphicsLineItem):
         self.setZValue(3.9)
         if degree_text:
             self._label = QGraphicsSimpleTextItem(degree_text, self)
-            self._label.setFont(scaled_area_font('tables', family='Inter'))
+            # B7-c re-anchor: this is a WHEEL chart label (a Trimsamsha boundary
+            # degree on the wheel edge), a sibling of the other chart_labels wheel
+            # text — NOT a data-grid table cell. Keep its intrinsic 11pt tier
+            # (parity-exact at defaults) but let it follow the 'chart_labels' area
+            # like its neighbours, via scaled_tier_size (SPEC-FONT-001 B5 painted).
+            _tri_font = QFont('Inter')
+            _tri_font.setPointSize(scaled_tier_size(11, 'chart_labels'))
+            self._label.setFont(_tri_font)
             self._label.setBrush(QBrush(QColor("#AAAAAA")))
             br = self._label.boundingRect()
             self._label.setPos(
@@ -950,8 +957,12 @@ class OuterRimAscendantLabel(QGraphicsTextItem):
         # Set text
         self.setPlainText(f"ASC {deg_in_sign:.0f}° {sign_name}")
 
-        # Style
-        font = scaled_area_font('tables', family='Arial', bold=True)
+        # Style — B7-c re-anchor: the ASC marker is a WHEEL chart label, so it
+        # follows 'chart_labels' with its neighbours (was mis-bound to 'tables').
+        # Intrinsic 11pt tier kept (parity-exact at defaults) via scaled_tier_size.
+        font = QFont('Arial')
+        font.setPointSize(scaled_tier_size(11, 'chart_labels'))
+        font.setBold(True)
         self.setFont(font)
         self.setDefaultTextColor(QColor(color))
 
@@ -1172,7 +1183,13 @@ class RetinueRingLabel(QGraphicsTextItem):
 
         self.setPlainText(text)
 
-        font = QFont("Inter", font_size, QFont.Weight.Bold)
+        # B7-c FIX 1 (coherence): the Hora/Trimsamsa retinue rim scales with its
+        # rim neighbours (the Trimsamsha boundary ticks + the outer-rim ASC
+        # marker, both re-anchored to 'chart_labels'). Re-anchor the caller-passed
+        # tier the same way so the whole rim moves together; parity-exact at
+        # defaults (factor 1.0 keeps the caller's 13/15pt).
+        font = QFont("Inter", scaled_tier_size(font_size, 'chart_labels'),
+                     QFont.Weight.Bold)
         self.setFont(font)
         self.setDefaultTextColor(QColor(color))
 

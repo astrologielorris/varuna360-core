@@ -39,10 +39,32 @@ from PySide6.QtWidgets import (
     QSizePolicy,
 )
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QFont, QFontMetrics
 
 from ui.qt_theme import (
-    get_theme_colors, is_light_theme, scaled_area_font, get_primary_button_style,
+    get_theme_colors, is_light_theme, scaled_area_px, get_primary_button_style,
 )
+from ui.popup_fonts import tier_px, popup_title_px
+
+
+def _fm_min_height(area, pad=8):
+    """Vertical floor for a migrated text widget at the CURRENT font size
+    (td-2o8u). This dialog is rebuilt on every open, so computing the floor here
+    re-derives it with the live font size. Dropping the fixed height is not
+    enough under qt-material: its QSS pins sizeHint().height() to the font px
+    (~38 at composed max), still below fontMetrics().height() (~50)."""
+    f = QFont()
+    f.setPixelSize(scaled_area_px(area))
+    return QFontMetrics(f).height() + pad
+
+
+def _fm_advance(text, area, pad=24):
+    """Horizontal need for `text` at the CURRENT font size + button padding
+    (td-2o8u). A QPushButton neither scrolls nor elides, so a width below this
+    clips. Used as max(legacy, advance) so defaults keep the pristine width."""
+    f = QFont()
+    f.setPixelSize(scaled_area_px(area))
+    return QFontMetrics(f).horizontalAdvance(text) + pad
 from core.aditya_data import ADITYA_NAMES
 from core.avastha_sign_summary import (
     LAYERS, LAYER_LABEL, VIEW_POPUP_LABEL, layer_display,
@@ -135,6 +157,7 @@ class SectorInfoDialog(QDialog):
                 border: 1px solid {border_color};
                 padding: 3px 9px;
                 margin: 0px;
+                font-size: {scaled_area_px('buttons')}px;
             }}
             QPushButton:checked {{
                 background: {primary};
@@ -150,10 +173,11 @@ class SectorInfoDialog(QDialog):
 
         # ---- title (sign · western, one line) ------------------------------ #
         header = QLabel(title)
-        hfont = scaled_area_font('panel_titles')
-        hfont.setBold(True)
-        header.setFont(hfont)
-        header.setStyleSheet(f"color: {gold};")
+        # O-6: font-size in QSS (the dialog's `QLabel {}` rule + qt-material
+        # override setFont). Same treatment for every label below.
+        header.setStyleSheet(
+            f"color: {gold}; "
+            f"font-size: {popup_title_px(14)}px; font-weight: bold;")
         main.addWidget(header)
 
         self._view_group = None
@@ -171,7 +195,7 @@ class SectorInfoDialog(QDialog):
             line_row = QHBoxLayout()
             line_row.setSpacing(6)
             self._line = QLabel()
-            self._line.setFont(scaled_area_font('tables'))
+            self._line.setStyleSheet(f"font-size: {scaled_area_px('info_text')}px;")
             self._line.setTextFormat(Qt.TextFormat.RichText)
             self._line.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
             self._line.setWordWrap(True)
@@ -184,12 +208,15 @@ class SectorInfoDialog(QDialog):
             self._details_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
             self._details_btn.setArrowType(Qt.ArrowType.RightArrow)
             self._details_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            self._details_btn.setFont(scaled_area_font('status'))
             self._details_btn.setStyleSheet(
                 f"QToolButton {{ border: none; background: transparent; "
-                f"color: {muted}; padding: 1px 4px; }} "
+                f"color: {muted}; padding: 1px 4px; "
+                f"font-size: {tier_px('buttons', 9)}px; }} "
                 f"QToolButton:hover {{ color: {text_color}; }}")
-            self._details_btn.setFixedHeight(max(22, self._details_btn.sizeHint().height()))
+            # td-2o8u: fm-derived floor, not sizeHint — under qt-material
+            # sizeHint().height() tracks the font px (below fontMetrics), so the
+            # old max(22, sizeHint) still clipped "Details" at large status sizes.
+            self._details_btn.setFixedHeight(max(22, _fm_min_height('buttons')))
             self._details_btn.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
             self._details_btn.toggled.connect(self._on_details_toggled)
             line_row.addWidget(self._details_btn, 0, Qt.AlignmentFlag.AlignTop)
@@ -217,15 +244,15 @@ class SectorInfoDialog(QDialog):
                 self._layer, self._on_depth_clicked)
             switch_row.addStretch(1)
             det.addLayout(switch_row)
+            self._switch_row = switch_row
 
             self._status = QLabel()
-            sfont = scaled_area_font('tables')
-            sfont.setBold(True)
-            self._status.setFont(sfont)
+            self._status.setStyleSheet(
+                f"font-size: {scaled_area_px('tables')}px; font-weight: bold;")
             det.addWidget(self._status)
 
             self._table = QLabel()
-            self._table.setFont(scaled_area_font('tables'))
+            self._table.setStyleSheet(f"font-size: {scaled_area_px('tables')}px;")
             self._table.setTextFormat(Qt.TextFormat.RichText)
             self._table.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
             self._table.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
@@ -256,7 +283,11 @@ class SectorInfoDialog(QDialog):
         btn_row = QHBoxLayout()
         btn_row.addStretch(1)
         close_btn = QPushButton("Close")
-        close_btn.setFixedWidth(80)
+        # td-2o8u: FIX-H. Width floor = max(legacy 80, advance) so it stays 80 at
+        # defaults (parity) and grows only when "Close" needs more at large
+        # action_buttons sizes. Height is left to get_primary_button_style's QSS
+        # (a primary button's sizeHint is already tall — no vertical clip).
+        close_btn.setMinimumWidth(max(80, _fm_advance("Close", 'action_buttons')))
         close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         close_btn.setStyleSheet(get_primary_button_style())
         close_btn.clicked.connect(self.accept)
@@ -309,6 +340,39 @@ class SectorInfoDialog(QDialog):
         self._details_btn.setArrowType(
             Qt.ArrowType.DownArrow if on else Qt.ArrowType.RightArrow)
         self._details.setVisible(on)
+        if on:
+            self._fit_switch_row()
+
+    def _fit_switch_row(self):
+        """Opening Details must not squash the View / Depth segments. The
+        explicit minimum width taken while Details was hidden stops the layout
+        from widening the dialog, so at Buttons 24 the segments cut their
+        labels (td-168ze sweep). Raise the minimum to the row's real width
+        only when it needs more; defaults keep 420 / 480."""
+        row = getattr(self, "_switch_row", None)
+        if row is None:
+            return
+        for i in range(row.count()):
+            w = row.itemAt(i).widget()
+            if w is not None:
+                w.ensurePolished()
+        row.invalidate()
+        need = row.sizeHint().width()
+        node = row
+        while node is not None and node is not self:
+            if hasattr(node, "contentsMargins"):
+                m = node.contentsMargins()
+                need += m.left() + m.right()
+            node = node.parent()
+        if self.layout() is not None:
+            m = self.layout().contentsMargins()
+            need += m.left() + m.right()
+        target = max(480, need)
+        previous = getattr(self, "_switch_fit_width", None)
+        self.setMinimumWidth(target)
+        if target > self.width() or (previous is not None and target < previous):
+            self.resize(target, self.height())
+        self._switch_fit_width = target
 
     def details_open(self):
         return bool(self._details is not None and self._details_btn.isChecked())

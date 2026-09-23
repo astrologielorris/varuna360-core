@@ -147,12 +147,12 @@ class CoT:
     def seat_rows(birthcard, decks=None):
         """The same fourteen SEATS read in the jack, queen and king quadrations.
 
-        Kala's Cards of Truth screen draws three cards per cell: a small one at
-        the bottom left, the card face in the middle, and a small one at the top
-        right. They are not three calculations. The birth spread occupies
+        Each cell of the spread carries three cards: a small one at the bottom
+        left, the card face in the middle, and a small one at the top right.
+        They are not three calculations. The birth spread occupies
         fourteen consecutive seats of the queen quadration, and the two small
         cards are simply what the OTHER two quadrations hold at those same
-        seats. The screen is headed "Queen Quadration" because that names which
+        seats. The spread is headed "Queen Quadration" because that names which
         of the three the faces come from.
 
         Returns ``(jack_row, queen_row, king_row)``, each a list of fourteen

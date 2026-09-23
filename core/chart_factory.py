@@ -18,7 +18,7 @@ from libaditya import swe
 from core.house_systems import HOUSE_SYSTEM_CODES, get_house_system_code
 
 
-def mode_to_circle_sysflg(mode):
+def mode_to_circle_sysflg(mode, ayanamsa=None):
     """Map ChartState aditya_mode → (Circle, sysflg, sign_names) tuple.
 
     Mode is baked at construction so downstream consumers do not branch.
@@ -31,7 +31,7 @@ def mode_to_circle_sysflg(mode):
     if mode == "tropical_classic":
         return Circle.ZODIAC, const.TROP, "zodiac"
     if mode == "sidereal":
-        return Circle.ZODIAC, const.SID, "zodiac"
+        return Circle.ZODIAC, (const.TROP if ayanamsa == 999 else const.SID), "zodiac"
     raise ValueError(f"Unknown aditya_mode: {mode!r}")
 
 
@@ -52,7 +52,7 @@ def build_chart_from_params(*, jd, lat, lon, mode, name="", utcoffset=0.0,
     Returns:
         Chart with context.circle/sysflg matching `mode`.
     """
-    circle, sysflg, sign_names = mode_to_circle_sysflg(mode)
+    circle, sysflg, sign_names = mode_to_circle_sysflg(mode, ayanamsa)
     timeJD = JulianDay(jd, utcoffset=utcoffset)
     location = Location(lat=lat, long=lon, alt=0, placename=name, utcoffset=utcoffset)
     ctx = EphContext(
@@ -161,7 +161,8 @@ def rebuild_chart(chart, **overrides):
 
     if "mode" in overrides:
         mode = overrides.pop("mode")
-        circle, sysflg, sign_names = mode_to_circle_sysflg(mode)
+        circle, sysflg, sign_names = mode_to_circle_sysflg(
+            mode, overrides.get("ayanamsa", chart.context.ayanamsa))
         overrides.setdefault("circle", circle)
         overrides.setdefault("sysflg", sysflg)
         overrides.setdefault("sign_names", sign_names)
@@ -498,7 +499,8 @@ def jd_from_recipe_civil(recipe):
     after a time edit. Two copies of this expression would drift, and a drift
     here moves the chart.
     """
-    return swe.julday(
+    from core.time_utils import julday
+    return julday(
         recipe['year'], recipe['month'], recipe['day'],
         recipe['timedec'] - recipe['utcoffset']
     )

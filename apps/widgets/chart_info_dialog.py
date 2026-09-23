@@ -32,8 +32,9 @@ from PySide6.QtGui import QPixmap
 # Import centralized theme
 from ui.qt_theme import (
     TEXT_PRIMARY, TEXT_SECONDARY, SURFACE, BG, BORDER, HOVER,
-    get_theme_accent, scaled_area_px, scaled_area_font, desat_hex
+    get_theme_accent, scaled_area_px, desat_hex
 )
+from ui.popup_fonts import tier_px, popup_group_px
 
 
 # =============================================================================
@@ -438,7 +439,8 @@ class ChartInfoDialog(QDialog):
         # Copy button (copies whatever bio text is currently shown)
         self.copy_btn = QPushButton("📋 Copy to Clipboard")
         self.copy_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.copy_btn.setStyleSheet(self._accent_button_style())
+        self.copy_btn.setStyleSheet(self._accent_button_style(
+            area='action_buttons', base_px=10))
         self.copy_btn.clicked.connect(
             lambda: self._copy_to_clipboard(self.text_edit.toPlainText()))
         button_layout.addWidget(self.copy_btn)
@@ -453,7 +455,7 @@ class ChartInfoDialog(QDialog):
                 border: none;
                 border-radius: 6px;
                 padding: 10px 20px;
-                font-size: {scaled_area_px('buttons')}px;
+                font-size: {tier_px('action_buttons', 10)}px;
             }}
             QPushButton:hover {{
                 background-color: #666;
@@ -493,7 +495,7 @@ class ChartInfoDialog(QDialog):
         section_title.setStyleSheet(f"""
             QLabel {{
                 color: {TEXT_PRIMARY};
-                font-size: {scaled_area_px('panel_titles')}px;
+                font-size: {popup_group_px(14)}px;
                 font-weight: bold;
             }}
         """)
@@ -575,7 +577,6 @@ class ChartInfoDialog(QDialog):
         self.notes_edit.setObjectName("notesEdit")
         self.notes_edit.setReadOnly(False)
         self.notes_edit.setFixedHeight(90)
-        self.notes_edit.setFont(scaled_area_font('info_text', family="Segoe UI"))
         # Placeholder (not real text) so an empty notes field is NOT saved as the
         # literal string "No notes".
         self.notes_edit.setPlaceholderText("No notes")
@@ -588,6 +589,8 @@ class ChartInfoDialog(QDialog):
                 border: 1px solid {BORDER};
                 border-radius: 6px;
                 padding: 8px;
+                font-size: {scaled_area_px('info_text')}px;
+                font-family: "Segoe UI";
             }}
         """)
         frame_layout.addWidget(self.notes_edit)
@@ -627,7 +630,7 @@ class ChartInfoDialog(QDialog):
                 border: 1px solid {BORDER};
                 border-radius: 6px;
                 padding: 4px 8px;
-                font-size: {scaled_area_px('info_text')}px;
+                font-size: {tier_px('buttons', 11)}px;
                 font-weight: bold;
             }}
             QComboBox QAbstractItemView {{
@@ -646,7 +649,7 @@ class ChartInfoDialog(QDialog):
                 border: 1px solid {BORDER};
                 border-radius: 6px;
                 padding: 6px 8px;
-                font-size: {scaled_area_px('info_text')}px;
+                font-size: {tier_px('buttons', 11)}px;
             }}
         """
 
@@ -686,7 +689,7 @@ class ChartInfoDialog(QDialog):
         x.setStyleSheet(f"""
             QPushButton {{ color: {TEXT_SECONDARY}; background: transparent;
                            border: none; font-weight: bold;
-                           font-size: {scaled_area_px('info_text')}px; }}
+                           font-size: {tier_px('buttons', 11)}px; }}
             QPushButton:hover {{ color: {desat_hex(RODDEN_RED)}; }}
         """)
         x.clicked.connect(lambda _checked=False, t=tag: self._remove_tag(t))
@@ -895,7 +898,8 @@ class ChartInfoDialog(QDialog):
         return max(110, scaled_area_px('info_text') * 9)
 
     @staticmethod
-    def _accent_button_style(padding: str = "10px 20px") -> str:
+    def _accent_button_style(padding: str = "10px 20px", area: str = "buttons",
+                             base_px: int | None = None) -> str:
         """Shared stylesheet for the dialog's accent (blue) action buttons.
 
         Theme-driven (project theme rules): colors follow the selected theme
@@ -911,7 +915,7 @@ class ChartInfoDialog(QDialog):
                 border: none;
                 border-radius: 6px;
                 padding: {padding};
-                font-size: {scaled_area_px('buttons')}px;
+                font-size: {tier_px(area, base_px) if base_px is not None else scaled_area_px(area)}px;
                 font-weight: bold;
             }}
             QPushButton:hover {{
@@ -936,7 +940,7 @@ class ChartInfoDialog(QDialog):
         self.bio_title_label.setStyleSheet(f"""
             QLabel {{
                 color: {TEXT_PRIMARY};
-                font-size: {scaled_area_px('panel_titles')}px;
+                font-size: {popup_group_px(14)}px;
                 font-weight: bold;
             }}
         """)
@@ -962,7 +966,6 @@ class ChartInfoDialog(QDialog):
         hint = (f'Click "Search Wikipedia" to load a biography'
                 + (f' for {person_name}.' if person_name else '.'))
         self.text_edit.setPlainText(hint)
-        self.text_edit.setFont(scaled_area_font('info_text', family="Segoe UI"))
         accent = get_theme_accent()
         self.text_edit.setStyleSheet(f"""
             QTextEdit {{
@@ -971,6 +974,8 @@ class ChartInfoDialog(QDialog):
                 border: 1px solid {BORDER};
                 border-radius: 8px;
                 padding: 12px;
+                font-size: {scaled_area_px('info_text')}px;
+                font-family: "Segoe UI";
                 selection-background-color: {accent["base"]};
             }}
             QScrollBar:vertical {{

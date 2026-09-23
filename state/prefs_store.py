@@ -5,7 +5,7 @@ PrefsStore — Layer-B persistence protocol (Phase 4 W3).
 
 JSON-backed dict store with atomic writes. Used by ChartState to persist
 aditya_mode + chart_view_style across restarts, and by core_gui_qt.py
-helpers (_save_setting / _load_setting) for boolean toggles like
+(via PrefsStore.update / get directly) for boolean toggles like
 show_retinue_rings, show_element_pies, cusp_glow_mode.
 
 Pre-mortem fixes embedded:
@@ -99,8 +99,8 @@ class PrefsStore:
     def update(self, key: str, value) -> None:
         """Convenience: load → mutate one key → save.
 
-        Used by core_gui_qt.py:_save_setting wrapper. Single-key writes preserve
-        all other keys in the file.
+        Used by core_gui_qt.py for single-key setting writes. Single-key writes
+        preserve all other keys in the file.
         """
         data = self.load()
         data[key] = value

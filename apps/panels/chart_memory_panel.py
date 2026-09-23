@@ -28,6 +28,8 @@ from PySide6.QtGui import QFont, QIcon
 # Import centralized theme - uses get_theme_colors() for theme-adaptive styling
 from ui.qt_theme import (
     STATUS,
+    MEMORY_SELECTION,
+    TEXT_PRIMARY,
     get_theme_colors,
     scaled_px,
     scaled_area_px,
@@ -458,22 +460,16 @@ class ChartMemoryPanel:
         )
 
     def _reset_dasha_state(self):
-        """Reset dasha level and parent chains for new chart."""
-        self.gui.vedanga_parent_chain = []
-        self.gui.vimshottari_parent_chain = []
-        self.gui.dasha_level_vedanga = 1
-        self.gui.dasha_level_vimshottari = 1
-        self.gui.dasha_level_nisarga = 1
-        if hasattr(self.gui, 'vedanga_level_buttons'):
-            for i, btn in enumerate(self.gui.vedanga_level_buttons):
-                btn.setChecked(i == 0)
-        if hasattr(self.gui, 'vimshottari_level_buttons'):
-            for i, btn in enumerate(self.gui.vimshottari_level_buttons):
-                btn.setChecked(i == 0)
-        if hasattr(self.gui, 'vedanga_delegate'):
-            self.gui.vedanga_delegate.update_selected_row(None)
-        if hasattr(self.gui, 'vimshottari_delegate'):
-            self.gui.vimshottari_delegate.update_selected_row(None)
+        """Reset dasha navigation for a new chart (decision 2, SPEC-DSH-002):
+        clear ALL navigation through the manager (both sides' levels/chains/
+        offsets, Nisarga level, ZR drill) — the wrapper also clears the two list
+        delegates' selection highlight. Only the level-button visuals are set
+        here."""
+        self.gui.dasha_manager.reset_for_chart()
+        # w3-2 D-W3-4: reset_for_chart() now resets the level buttons
+        # (sync_level_buttons, its last statement) AND clears both list delegates'
+        # selection highlight — the two loops and the two update_selected_row(None)
+        # writes that used to live here are gone (they duplicated it).
 
     def select_chart(self, index):
         """Select a chart from memory and load it (SPEC-MEM-002 S6)."""
@@ -524,18 +520,20 @@ class ChartMemoryPanel:
             ),
         ))
 
-        from state.events import SetZodiacMode, SetVarga
+        from state.events import SetZodiacMode, SetVarga, SetHumanDesignMode
         self.gui.state.dispatch(SetZodiacMode(mode=preserved_mode))
 
+        # Stage 2 td-ltha: is_human_design is owned by AppState — dispatch the
+        # restored HD flag instead of writing self.gui.is_human_design directly.
         _did_recalculate = False
         if preserved_hd and hasattr(self.gui, '_recalculate_chart'):
-            self.gui.is_human_design = True
+            self.gui.state.dispatch(SetHumanDesignMode(enabled=True))
             try:
                 _did_recalculate = bool(self.gui._recalculate_chart())
             except Exception:
-                self.gui.is_human_design = False
+                self.gui.state.dispatch(SetHumanDesignMode(enabled=False))
         else:
-            self.gui.is_human_design = preserved_hd
+            self.gui.state.dispatch(SetHumanDesignMode(enabled=bool(preserved_hd)))
 
         if not _did_recalculate:
             self.gui._finalize_chart_load(
@@ -548,8 +546,8 @@ class ChartMemoryPanel:
             except Exception:
                 self.gui.state.dispatch(SetVarga(varga_number=1))
 
-        if getattr(self.gui, 'right_dasha_mode', 'vimshottari') == 'nisarga':
-            self.gui._configure_right_panel_for_nisarga()
+        # Right panel keeps its shape; _finalize_chart_load above already
+        # re-listed it for the current mode via the dispatcher (SPEC-ZR-001 §3.6).
         self.refresh()
         if hasattr(self.gui, 'edit_chart_panel') and self.gui.edit_chart_panel:
             self.gui.edit_chart_panel.load_chart_from_memory(entry)
@@ -1203,7 +1201,7 @@ class ChartMemoryPanel:
                         QPushButton {{
                             background-color: {theme["secondary"]};
                             color: {theme["secondary_text"]};
-                            border: 2px solid {desat_hex('#FFA726')};
+                            border: 2px solid {desat_hex(MEMORY_SELECTION['base'])};
                             border-radius: 4px;
                             font-family: 'Inter', 'Segoe UI', 'Arial', sans-serif;
                             font-size: {mem_px}px;
@@ -1214,7 +1212,7 @@ class ChartMemoryPanel:
                         }}
                         QPushButton:hover {{
                             background-color: {theme["secondary_light"]};
-                            border-color: {desat_hex('#FFB74D')};
+                            border-color: {desat_hex(MEMORY_SELECTION['hover'])};
                         }}
                         QPushButton:pressed {{
                             background-color: {theme["secondary_dark"]};
@@ -1235,7 +1233,7 @@ class ChartMemoryPanel:
                         }}
                         QPushButton:hover {{
                             background-color: {theme["secondary_light"]};
-                            border: 1px dashed {desat_hex('#FFA726')};
+                            border: 1px dashed {desat_hex(MEMORY_SELECTION['base'])};
                         }}
                         QPushButton:pressed {{
                             background-color: {theme["secondary"]};
@@ -1384,7 +1382,7 @@ class ChartMemoryPanel:
         # SPEC-SAT-001: mute the semantic error red with the saturation slider
         # (no-op at 100). SPEC-THM-001 G07: white on red is correct on both themes.
         error_base = desat_hex(STATUS["error"])
-        self.clear_btn.setStyleSheet(self._get_3d_button_style(error_base, "#FFFFFF"))
+        self.clear_btn.setStyleSheet(self._get_3d_button_style(error_base, TEXT_PRIMARY))
 
     def _update_sort_button_style(self):
         """Update Sort button styling with 3D beveled square design.
@@ -1809,13 +1807,13 @@ class ChartMemoryPanel:
 
     def _update_select_button_active_style(self):
         self.select_btn.setStyleSheet(
-            self._get_3d_toolbutton_style(desat_hex("#4CAF50"), "#FFFFFF"))
+            self._get_3d_toolbutton_style(desat_hex(STATUS["success"]), TEXT_PRIMARY))
 
     def _update_delete_button_style(self):
         from ui.qt_theme import STATUS
         error_base = STATUS["error"]
         self.sort_btn.setStyleSheet(
-            self._get_3d_button_style(error_base, "#FFFFFF"))
+            self._get_3d_button_style(error_base, TEXT_PRIMARY))
 
     def _confirm_clear_all(self):
         """Show confirmation before clearing all charts."""

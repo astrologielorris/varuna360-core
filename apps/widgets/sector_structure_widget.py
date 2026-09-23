@@ -5,8 +5,9 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt
 
 from ui.qt_theme import (
-    get_theme_colors, is_light_theme, scaled_area_font, scaled_area_px,
+    get_theme_colors, is_light_theme, scaled_area_px,
 )
+from ui.popup_fonts import tier_px, popup_group_px
 from core.aditya_data import get_being_description, get_sign_expressions
 
 
@@ -75,14 +76,15 @@ class _CollapsibleSection(QFrame):
 
         self._arrow = QLabel("▶")
         self._arrow.setFixedWidth(20)
-        self._arrow.setStyleSheet(f"color: {p['text_tertiary']}; font-size: {scaled_area_px('table_headers')}px;")
+        self._arrow.setStyleSheet(f"color: {p['text_tertiary']}; font-size: {tier_px('info_text', 12)}px;")
         header.addWidget(self._arrow)
 
         title_label = QLabel(title)
-        font = scaled_area_font('table_headers')
-        font.setBold(True)
-        title_label.setFont(font)
-        title_label.setStyleSheet(f"color: {p['text']};")
+        # O-6: font-size in QSS (setFont is overridden by the dialog's
+        # `QLabel {}` rule + qt-material). Matches the _arrow above.
+        title_label.setStyleSheet(
+            f"color: {p['text']}; "
+            f"font-size: {tier_px('info_text', 12)}px; font-weight: bold;")
         header.addWidget(title_label, 1)
 
         header_widget = QWidget()
@@ -102,10 +104,9 @@ class _CollapsibleSection(QFrame):
         if planet_annotation and is_active:
             ann_label = QLabel(planet_annotation)
             ann_label.setWordWrap(True)
-            ann_font = scaled_area_font('info_text')
-            ann_font.setItalic(True)
-            ann_label.setFont(ann_font)
-            ann_label.setStyleSheet(f"color: {p['gold']}; padding: 4px 0;")
+            ann_label.setStyleSheet(
+                f"color: {p['gold']}; padding: 4px 0; "
+                f"font-size: {scaled_area_px('info_text')}px; font-style: italic;")
             content_layout.addWidget(ann_label)
 
         if content_text:
@@ -115,19 +116,22 @@ class _CollapsibleSection(QFrame):
                 if not value:
                     continue
                 section_label = QLabel(f"<b>{label_text}:</b>")
-                section_label.setFont(scaled_area_font('info_text'))
-                section_label.setStyleSheet(f"color: {p['text_secondary']};")
+                section_label.setStyleSheet(
+                    f"color: {p['text_secondary']}; "
+                    f"font-size: {scaled_area_px('info_text')}px;")
                 content_layout.addWidget(section_label)
 
                 text_label = QLabel(value)
                 text_label.setWordWrap(True)
-                text_label.setFont(scaled_area_font('info_text'))
-                text_label.setStyleSheet(f"color: {p['text']}; padding-left: 8px;")
+                text_label.setStyleSheet(
+                    f"color: {p['text']}; padding-left: 8px; "
+                    f"font-size: {scaled_area_px('info_text')}px;")
                 content_layout.addWidget(text_label)
         else:
             placeholder = QLabel("Description not available")
-            placeholder.setFont(scaled_area_font('info_text'))
-            placeholder.setStyleSheet(f"color: {p['text_tertiary']}; font-style: italic;")
+            placeholder.setStyleSheet(
+                f"color: {p['text_tertiary']}; font-style: italic; "
+                f"font-size: {scaled_area_px('info_text')}px;")
             content_layout.addWidget(placeholder)
 
         self._content.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
@@ -177,8 +181,9 @@ class SectorStructureWidget(QWidget):
                 "specific zone, that description becomes directly activated in the chart."
             )
             intro.setWordWrap(True)
-            intro.setFont(scaled_area_font('info_text'))
-            intro.setStyleSheet(f"color: {p['text_secondary']}; padding: 4px;")
+            intro.setStyleSheet(
+                f"color: {p['text_secondary']}; padding: 4px; "
+                f"font-size: {scaled_area_px('info_text')}px;")
             layout.addWidget(intro)
 
         # Sign section (SPEC-AVA-003 v1.3, D-30): the sign's healthy / afflicted
@@ -188,9 +193,9 @@ class SectorStructureWidget(QWidget):
         # the being cards use, so all three card kinds read the same. Missing
         # data resolves to the "Description not available" placeholder.
         sign_header = QLabel("Sign")
-        sign_header.setFont(scaled_area_font('tables'))
         sign_header.setStyleSheet(
             f"color: {p['text']}; font-weight: bold; "
+            f"font-size: {popup_group_px(11)}px; "
             f"border-bottom: 1px solid {p['border']}; padding: 4px 0 2px 0;"
         )
         layout.addWidget(sign_header)
@@ -202,9 +207,9 @@ class SectorStructureWidget(QWidget):
         layout.addWidget(sign_section)
 
         hora_header = QLabel("Hora")
-        hora_header.setFont(scaled_area_font('tables'))
         hora_header.setStyleSheet(
             f"color: {p['text']}; font-weight: bold; "
+            f"font-size: {popup_group_px(11)}px; "
             f"border-bottom: 1px solid {p['border']}; padding: 4px 0 2px 0;"
         )
         layout.addWidget(hora_header)
@@ -228,9 +233,9 @@ class SectorStructureWidget(QWidget):
             layout.addWidget(section)
 
         trim_header = QLabel("Trimsamsa")
-        trim_header.setFont(scaled_area_font('tables'))
         trim_header.setStyleSheet(
             f"color: {p['text']}; font-weight: bold; "
+            f"font-size: {popup_group_px(11)}px; "
             f"border-bottom: 1px solid {p['border']}; padding: 8px 0 2px 0;"
         )
         layout.addWidget(trim_header)

@@ -31,7 +31,7 @@ from PySide6.QtCore import Signal, Qt
 from PySide6.QtGui import QKeySequence, QGuiApplication, QAction
 from PySide6.QtWidgets import QLineEdit, QPushButton
 
-from ui.qt_theme import get_theme_colors, dim_text
+from ui.qt_theme import get_theme_colors, dim_text, scaled_area_px
 # One implementation of "is there an image on this clipboard" for every paste
 # entry point in the app.
 from ui.image_paste import extract_image as _extract_image
@@ -168,7 +168,7 @@ class AiToggleButton(QPushButton):
     """
 
     def __init__(self, settings_key, settings=None, tooltip=None, parent=None):
-        super().__init__("✨", parent)   # sparkle
+        super().__init__("✦", parent)   # monochrome sparkle follows QSS foreground
         self._settings_key = settings_key
         self._settings = settings
         self.setCheckable(True)
@@ -219,7 +219,7 @@ class AiToggleButton(QPushButton):
                 border: 1px solid {dim_text(theme["secondary_text"], 0.24)};
                 border-radius: 6px;
                 padding: 3px 8px;
-                font-size: 12px;
+                font-size: {scaled_area_px('buttons')}px;
                 min-width: 22px;
             }}
             QPushButton:hover {{

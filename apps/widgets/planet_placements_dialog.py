@@ -16,8 +16,9 @@ from PySide6.QtGui import QColor
 
 from ui.qt_theme import (
     FONT_MONO, get_theme_colors, get_secondary_button_style,
-    scaled_area_font, is_light_theme,
+    scaled_area_font, scaled_area_px, is_light_theme,
 )
+from ui.popup_fonts import popup_title_px, popup_group_px
 
 
 class PlanetPlacementsDialog(QDialog):
@@ -130,6 +131,73 @@ class PlanetPlacementsDialog(QDialog):
         h += table.frameWidth() * 2
         table.setFixedHeight(h)
 
+    # ── Chrome-label fonts (O-6: stylesheet is the only mechanism) ──────
+    def _label_qss(self, area, color, *, bold=False, italic=False,
+                   mono=False, extra=""):
+        parts = [f"color: {color};", f"font-size: {scaled_area_px(area)}px;"]
+        if bold:
+            parts.append("font-weight: bold;")
+        if italic:
+            parts.append("font-style: italic;")
+        if mono:
+            parts.append(f"font-family: {FONT_MONO};")
+        return " ".join(parts) + extra
+
+    def _apply_label_fonts(self):
+        """Set/replay the four chrome labels' stylesheet fonts from their area
+        bindings. Shared by construction and _refresh_fonts (B2 shared fragment)."""
+        c = self._colors
+        # Pop-up rule (SPEC-FONT-001 §3.2): the title and the group titles are
+        # multiples of info_text; the monospace birth / dasha lines are data
+        # (tables); the mode subtitle is a caption (status).
+        self._header_label.setStyleSheet(
+            f"color: {c['text']}; font-size: {popup_title_px(14)}px; "
+            f"font-weight: bold; padding: 5px;")
+        for group in self.findChildren(QGroupBox):
+            group.setStyleSheet(
+                f"QGroupBox {{ font-size: {popup_group_px(14)}px; font-weight: bold; }}")
+        self.birth_info_label.setStyleSheet(
+            self._label_qss('tables', c['text_dim'], mono=True))
+        self._mode_label.setStyleSheet(
+            self._label_qss('status', c['text_dim'], italic=True))
+        self.dasha_label.setStyleSheet(
+            self._label_qss('tables', c['text'], mono=True))
+
+    def _rescale_table_fonts(self, table):
+        """Re-scale the painted QTableWidgetItem fonts (their legitimate setFont
+        domain) preserving each item's bold/family, so a live font change updates
+        the cells without re-querying chart data."""
+        for r in range(table.rowCount()):
+            for col in range(table.columnCount()):
+                item = table.item(r, col)
+                if item is None:
+                    continue
+                f = item.font()
+                item.setFont(scaled_area_font('tables', bold=f.bold(),
+                                              family=f.family()))
+
+    def _refresh_fonts(self):
+        """Live-replay for a SPEC-FONT-001 font-size / Display-Scale change.
+
+        This dialog is NON-MODAL (setModal(False)) so it can sit open across a
+        settings Apply. It holds NO ChartGUI attribute (Rule 4b: no new blackboard
+        state) — ChartGUI._refresh_scaled_surfaces enumerates live instances from
+        the Qt parent-child tree (findChildren) and calls this on the visible ones.
+        Re-applies the 4 chrome label fonts and the group titles, re-scales the painted table item
+        fonts, and RE-FITS the fixed table heights so the now-taller rows are not
+        clipped (td-2o8u class: fixed geometry around a scaling surface)."""
+        self._apply_label_fonts()
+        for table in (getattr(self, 'table', None),
+                      getattr(self, 'cot_table', None)):
+            if table is None:
+                continue
+            self._rescale_table_fonts(table)
+            # resizeRowsToContents FIRST: a bare setFont leaves rowHeight() STALE
+            # (measured: stays 30 until resized), so _fit_table_height would sum
+            # old heights and clip. Same order the populate paths use (438/506).
+            table.resizeRowsToContents()
+            self._fit_table_height(table)
+
     def _setup_ui(self):
         """Setup dialog UI with theme-aware styling."""
         self.setWindowTitle("Planet Placements")
@@ -152,20 +220,18 @@ class PlanetPlacementsDialog(QDialog):
         layout.setSpacing(10)
 
         # === HEADER ===
-        header_label = QLabel(self.person_name)
-        header_label.setFont(scaled_area_font('panel_titles', bold=True))
-        header_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        header_label.setStyleSheet(f"color: {self._colors['text']}; padding: 5px;")
-        layout.addWidget(header_label)
+        # WIDGET CHROME: setFont(scaled_area_font(...)) on a QLabel is O-6-WIPED
+        # under qt-material; the size lives in the stylesheet (_apply_label_fonts).
+        self._header_label = QLabel(self.person_name)
+        self._header_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self._header_label)
 
         # === BIRTH DATA ===
         birth_group = QGroupBox("Birth Data")
         birth_layout = QVBoxLayout(birth_group)
         birth_layout.setSpacing(4)
 
-        self.birth_info_label = QLabel()
-        self.birth_info_label.setFont(scaled_area_font('tables', family=FONT_MONO))
-        self.birth_info_label.setStyleSheet(f"color: {self._colors['text_dim']};")
+        self.birth_info_label = QLabel()   # font via _apply_label_fonts (O-6)
         self.birth_info_label.setWordWrap(True)
         birth_layout.addWidget(self.birth_info_label)
 
@@ -186,13 +252,9 @@ class PlanetPlacementsDialog(QDialog):
         nak_ayan_name = get_ayanamsa_name(self._nak_ayanamsa_id)
         subtitle = f"System: {mode_text}  |  Nakshatras: {nak_ayan_name} ayanamsa"
 
-        mode_label = QLabel(subtitle)
-        mode_label.setFont(scaled_area_font('buttons'))
-        mode_label.setStyleSheet(
-            f"color: {self._colors['text_dim']}; font-style: italic;"
-        )
-        mode_label.setWordWrap(True)
-        planets_layout.addWidget(mode_label)
+        self._mode_label = QLabel(subtitle)   # font via _apply_label_fonts (O-6)
+        self._mode_label.setWordWrap(True)
+        planets_layout.addWidget(self._mode_label)
 
         self.table = QTableWidget()
         self.table.setColumnCount(5)
@@ -224,9 +286,7 @@ class PlanetPlacementsDialog(QDialog):
         dasha_layout = QVBoxLayout(self.dasha_group)
         dasha_layout.setSpacing(4)
 
-        self.dasha_label = QLabel()
-        self.dasha_label.setFont(scaled_area_font('tables', family=FONT_MONO))
-        self.dasha_label.setStyleSheet(f"color: {self._colors['text']};")
+        self.dasha_label = QLabel()   # font via _apply_label_fonts (O-6)
         self.dasha_label.setWordWrap(True)
         dasha_layout.addWidget(self.dasha_label)
 
@@ -281,6 +341,10 @@ class PlanetPlacementsDialog(QDialog):
         button_layout.addWidget(close_btn)
 
         outer.addLayout(button_layout)
+
+        # All four chrome labels exist now — apply their stylesheet fonts (O-6:
+        # the one mechanism qt-material honours for widget fonts).
+        self._apply_label_fonts()
 
     def _populate_data(self):
         """Populate birth data, planets table, and dasha info."""
@@ -425,7 +489,7 @@ class PlanetPlacementsDialog(QDialog):
             return
 
         from libaditya.cards.cards_constants import planet_order
-        # SPEC-COT-001 D-5: solar_system is the Kala-verified order, so it is
+        # SPEC-COT-001 D-5: solar_system is the verified order, so it is
         # also the right fallback for an unrecognised value.
         order = planet_order.get(self._cot_order, planet_order["solar_system"])
 

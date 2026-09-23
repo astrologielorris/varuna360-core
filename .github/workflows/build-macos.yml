@@ -20,8 +20,15 @@
 name: Build macOS
 
 on:
-  # Run it by hand from the Actions tab at any time.
+  # Run it by hand from the Actions tab at any time. Pick one architecture to
+  # build only that one (a tag always builds both).
   workflow_dispatch:
+    inputs:
+      arch:
+        description: "Architecture to build"
+        type: choice
+        options: [both, x86_64, arm64]
+        default: both
   # A v* tag builds and attaches both architectures to the GitHub Release.
   push:
     tags:
@@ -53,18 +60,19 @@ jobs:
       # One architecture failing must not cancel the other. A half-result is
       # more useful than none.
       fail-fast: false
+      # RUNNER LABELS ARE NOT INTERCHANGEABLE AND THEY EXPIRE.
+      # macos-13 was retired on 2025-12-04 and macos-14 is deprecated. A
+      # job on a retired label is never assigned a runner and fails at
+      # provisioning — BEFORE the arch guard below runs, so nothing in
+      # this file can detect it. Check the live list in
+      # actions/runner-images before changing these.
+      # macos-15 = Apple Silicon, macos-15-intel = Intel. A manual run with
+      # arch=x86_64 or arch=arm64 keeps only that entry; tags and "both" run both.
       matrix:
-        include:
-          # RUNNER LABELS ARE NOT INTERCHANGEABLE AND THEY EXPIRE.
-          # macos-13 was retired on 2025-12-04 and macos-14 is deprecated. A
-          # job on a retired label is never assigned a runner and fails at
-          # provisioning — BEFORE the arch guard below runs, so nothing in
-          # this file can detect it. Check the live list in
-          # actions/runner-images before changing these.
-          - runner: macos-15 # Apple Silicon
-            arch: arm64
-          - runner: macos-15-intel # Intel
-            arch: x86_64
+        include: ${{ fromJSON(
+          inputs.arch == 'x86_64' && '[{"runner":"macos-15-intel","arch":"x86_64"}]' ||
+          inputs.arch == 'arm64' && '[{"runner":"macos-15","arch":"arm64"}]' ||
+          '[{"runner":"macos-15","arch":"arm64"},{"runner":"macos-15-intel","arch":"x86_64"}]') }}
 
     steps:
       - name: Checkout

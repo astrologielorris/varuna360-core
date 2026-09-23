@@ -50,6 +50,12 @@ cryptography>=42.0.0
 # HTTP requests
 requests>=2.31.0
 
+# Chart image AI import (core/chart_image_extraction.py). Imported inside the
+# function, so a missing package only disables reading charts from an image
+# with an Anthropic model; declared so source installs and the macOS build
+# carry it.
+anthropic>=0.40.0
+
 # --- libaditya engine dependencies -------------------------------------
 # The vendored libaditya/ engine pulls these in; they are not imported by
 # Varuna360's own code, which is why a human reading this file cannot spot

@@ -1621,17 +1621,12 @@ class NewEditBinding(QObject):
                                      "Chart recalculation failed. Changes not saved.")
                 return False
 
-            # Canonical stores (mirrors chart_manager.load_chart).
-            from core.time_utils import julday
-            _stored_jd = birth_data.get("julian_day")
-            if _stored_jd is not None:
-                birth_jd = float(_stored_jd)
-            else:
-                hour_decimal = (birth_data["utc_hour"]
-                                + birth_data["utc_minute"] / 60.0
-                                + birth_data["utc_second"] / 3600.0)
-                birth_jd = julday(birth_data["utc_year"], birth_data["utc_month"],
-                                  birth_data["utc_day"], hour_decimal)
+            # Canonical stores: the single birth-data -> JD home, shared with
+            # chart_manager.load_chart so the create and load paths cannot drift
+            # (td-7q5s.3 C1). Honors a stored julian_day, else computes via the
+            # calendar-aware time_utils.julday.
+            from core.chart_factory import jd_from_birth_data
+            birth_jd = jd_from_birth_data(birth_data)
             self.gui.birth_jd = birth_jd
             self.gui.birth_lat = birth_data["latitude"]
             self.gui.birth_lon = birth_data["longitude"]
@@ -1782,7 +1777,6 @@ class NewEditBinding(QObject):
             from core.chart_factory import (
                 build_chart_from_params, make_recipe, timedec_to_hms,
             )
-            from core.time_utils import julday
             from managers.chart_creation_pipeline import persist_birth_data
 
             bd = BirthDataManager.create_from_form_data(data)
@@ -1815,9 +1809,10 @@ class NewEditBinding(QObject):
             if self._time_defaulted:
                 self._warn_no_time()
 
-            hour_decimal = (bd["utc_hour"] + bd["utc_minute"] / 60.0
-                            + bd["utc_second"] / 3600.0)
-            jd = julday(bd["utc_year"], bd["utc_month"], bd["utc_day"], hour_decimal)
+            # Single birth-data -> JD home (td-7q5s.3 C1). A fresh "create now"
+            # bd carries no stored julian_day, so this computes from UTC civil.
+            from core.chart_factory import jd_from_birth_data
+            jd = jd_from_birth_data(bd)
             mode = self.gui.state.aditya_mode
             chart = build_chart_from_params(
                 jd=jd, lat=bd.get("latitude", 0), lon=bd.get("longitude", 0),
@@ -2053,7 +2048,6 @@ class NewEditBinding(QObject):
         """Build a Chart from pre-converted birth_data and dispatch it."""
         try:
             from core.chart_factory import build_chart_from_params, make_source_params
-            from core.time_utils import julday
         except ImportError as e:
             QMessageBox.critical(self.host, "Import Error",
                                  f"Could not import chart_factory: {e}")
@@ -2069,14 +2063,10 @@ class NewEditBinding(QObject):
                     status_bar=self.gui.statusBar() if self.gui else None,
                     context="New & Edit")
 
-            stored_jd = birth_data.get("julian_day")
-            if stored_jd is not None:
-                jd = float(stored_jd)
-            else:
-                hour_decimal = (birth_data["utc_hour"] + birth_data["utc_minute"] / 60.0
-                                + birth_data["utc_second"] / 3600.0)
-                jd = julday(birth_data["utc_year"], birth_data["utc_month"],
-                            birth_data["utc_day"], hour_decimal)
+            # Single birth-data -> JD home (td-7q5s.3 C1): honors a stored
+            # julian_day, else computes via the calendar-aware time_utils.julday.
+            from core.chart_factory import jd_from_birth_data
+            jd = jd_from_birth_data(birth_data)
             mode = self.gui.state.aditya_mode
             _chart = build_chart_from_params(
                 jd=jd, lat=birth_data.get("latitude", 0),
