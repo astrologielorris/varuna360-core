@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Build and package the Intel (x86_64) macOS bundle.
 # Everything real happens in build_macos_nuitka.sh; this only pins the arch
-# and the Intel interpreter. Supported Python: 3.10 to 3.11 (see that script).
+# and the Intel interpreter. Supported Python: 3.12 (see that script).
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
   echo "This build script must be run on macOS."
