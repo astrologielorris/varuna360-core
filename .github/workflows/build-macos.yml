@@ -82,15 +82,16 @@ jobs:
           # here pushes, and the build installs third-party packages.
           persist-credentials: false
 
-      # SUPPORTED PYTHON IS 3.10-3.11, and this is not a style preference.
-      # pyswisseph's latest release (2.10.3.2, June 2023) publishes no wheels
-      # for 3.12+, so a newer interpreter forces a source build of a C
-      # extension inside CI. scripts/build_macos_nuitka.sh refuses 3.12+ for
-      # the same reason; pinning here keeps the two in agreement.
-      - name: Set up Python 3.11
+      # Python 3.12, the same version the Linux and development builds use.
+      # On 3.11 a 3.12-only syntax (a line break inside an f-string
+      # expression) passed every local check and crashed the 5.0.0 macOS app
+      # at startup. pyswisseph (2.10.3.2) has no 3.12 wheel, so pip compiles
+      # it from C source here; the runner images ship the Xcode command line
+      # tools that needs.
+      - name: Set up Python 3.12
         uses: actions/setup-python@v7
         with:
-          python-version: "3.11"
+          python-version: "3.12"
           cache: pip
 
       # setup-python resolves the runner's native architecture, but "native"

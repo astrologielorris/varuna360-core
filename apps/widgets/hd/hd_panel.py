@@ -764,9 +764,10 @@ class _PlanetColumn(_NarrowsItsPadding, QFrame):
             for widget in (name, value):
                 widget.setFont(_dense_font("info_text"))
             glyph.setFont(hd_symbol_font(round(scaled_area_px("info_text") * 0.86)))
+            glyph_rgb = hex_to_rgb_str(
+                colors['primary_text'] if strip.highlighted else colors['secondary_text'])
             glyph.setStyleSheet(
-                f"color: rgba({hex_to_rgb_str(colors['primary_text'] if strip.highlighted
-                                              else colors['secondary_text'])},"
+                f"color: rgba({glyph_rgb},"
                 f" {'1.0' if strip.highlighted else '0.75'}); {bare}"
                 + _font_css("info_text", ratio=0.86, families=HD_BODY_FAMILIES))
             value.setStyleSheet(

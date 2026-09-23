@@ -3,8 +3,9 @@ set -euo pipefail
 
 # Varuna360 Core - macOS app bundle build (Nuitka).
 #
-# SUPPORTED PYTHON: 3.10 to 3.11 (3.12+ works only if you can compile
-# pyswisseph from source; see the preflight below).
+# SUPPORTED PYTHON: 3.12, the version the other builds use. 3.12 compiles
+# pyswisseph from source, which needs the Xcode command line tools (see the
+# preflight below).
 #
 # Nuitka `--mode=app` on macOS means: standalone bundle, NOT onefile. The
 # compiled code and every --include-data-* payload land side by side in
@@ -71,8 +72,8 @@ if (( PY_MINOR > 11 )); then
 NOTE: building with Python $PY_VER.
       pyswisseph's latest release (2.10.3.2, June 2023) publishes wheels for
       cp36 to cp311 only. On Python 3.12+ pip has to build it from C source,
-      which needs the Xcode command line tools. Python 3.11 is the smoothest
-      environment for this build.
+      which needs the Xcode command line tools. That is expected: 3.12 is
+      the Python the other Varuna360 builds use.
 EOF
   if ! xcode-select -p >/dev/null 2>&1; then
     echo "      Xcode command line tools are NOT installed."
@@ -98,7 +99,7 @@ if (( ${#MISSING_MODULES[@]} > 0 )); then
       echo
       echo "swisseph comes from the pyswisseph package. On Python $PY_VER there is"
       echo "no wheel, so pip compiles it from C source and needs the Xcode command"
-      echo "line tools (xcode-select --install). Using Python 3.11 avoids this."
+      echo "line tools (xcode-select --install)."
     fi
   done
   exit 1
