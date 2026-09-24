@@ -21,7 +21,7 @@ support. It is the same calculation engine that powers the Pro edition.
 ## Built on libaditya
 
 Varuna360 Core is built on top of
-[**libaditya**](https://gitlab.com/ninthhouse/libaditya), an astrological
+[**libaditya**](https://gitlab.com/j0sh4rp3/libaditya), an astrological
 calculation library created by Josh
 ([ninthhouse](https://gitlab.com/ninthhouse)). His work on libaditya gave
 this project a solid, well-structured foundation for tropical, sidereal,

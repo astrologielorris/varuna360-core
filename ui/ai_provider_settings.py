@@ -1149,6 +1149,10 @@ class _AIProvidersSection(QWidget):
         if not probes:
             return
 
+        # The button shows the check is running: a login check takes a few
+        # seconds, and a row that merely flickers told the user nothing.
+        self._set_refresh_busy(True)
+
         # Finding 1: create the worker with NO Qt parent and hold only a Python
         # reference. A parented QThread would be destroyed by Qt when the
         # section is destroyed; if the probe is still running that aborts the
@@ -1187,6 +1191,15 @@ class _AIProvidersSection(QWidget):
         if self._refresh_pending:
             self._refresh_pending = False
             self.refresh_snapshots()
+            return
+        self._set_refresh_busy(False)
+
+    def _set_refresh_busy(self, busy):
+        btn = getattr(self, "_refresh_btn", None)
+        if btn is None:
+            return
+        btn.setEnabled(not busy)
+        btn.setText("Checking…" if busy else "Refresh Status")
 
     def _teardown_worker(self):
         """Stop the probe thread and block late signals (finding 1).
