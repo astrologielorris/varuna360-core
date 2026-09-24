@@ -1232,7 +1232,7 @@ class SessionManager:
                 self.app.state.dispatch(SetZodiacMode(mode=mode))
                 self.app.chart_zodiac = "sidereal" if mode == "sidereal" else "tropical"
                 self.app.chart_sidereal_ayanamsa_id = get_settings().get(
-                    "zodiac.ayanamsa_id", 100)
+                    "zodiac.ayanamsa_id", 27)
             self.app.background_num = ui_state.get('background_num', 1)
             self.app.planet_size = ui_state.get('planet_size', 60)
             for side, default in (("left", 100), ("right", 98)):
