@@ -3623,6 +3623,17 @@ class ChartDisplaySection(QWidget):
         self.si_theme_combo.setToolTip(tip)
         self.si_finish_combo.setToolTip(tip)
 
+    def showEvent(self, event):
+        # Re-read the chart view each time the page is shown, so the combo shows
+        # the view actually on screen (it changes from the Chart tab), unless the
+        # user already picked one here and has not applied it yet.
+        super().showEvent(event)
+        if not getattr(self, "_view_user_touched", False):
+            idx = self.view_combo.findData(get_settings().get("chart.view_type", "south_indian"))
+            self._view_representable = idx >= 0
+            if idx >= 0 and idx != self.view_combo.currentIndex():
+                self.view_combo.setCurrentIndex(idx)
+
     def _on_view_activated(self, *_):
         # Finding 6 P3-b: a user selection (even re-picking the item already shown)
         # is intent to set that view; the anti-clobber guard then writes it on Apply.
@@ -3733,10 +3744,15 @@ class ChartDisplaySection(QWidget):
         # view), OR the user actively changed the selection since load. Otherwise a
         # persisted view the combo cannot show (human_design today, any future view)
         # would be silently overwritten by the combo's fallback selection on Apply.
+        # Only an ACTIVE pick writes the view. The combo is read when the page is
+        # built, while the main window keeps chart.view_type current on every F2 /
+        # action-bar / HD-button change; writing an untouched combo put back the
+        # view shown at load time, and _on_chart_display_changed then switched the
+        # chart to it (e.g. back to Human Design after changing the SI finish).
         cur_view = self.view_combo.currentData()
-        if getattr(self, "_view_representable", True) or \
-                getattr(self, "_view_user_touched", False):
+        if getattr(self, "_view_user_touched", False):
             s.set("chart.view_type", cur_view)
+            self._view_user_touched = False
         s.set("display.south_indian_style", self.si_theme_combo.currentData())
         s.set("display.south_indian_vector_finish", self.si_finish_combo.currentData())
         s.set("display.sign_display", self.sign_display_combo.currentData())
