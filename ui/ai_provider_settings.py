@@ -807,9 +807,8 @@ class _AIProvidersSection(QWidget):
         vg_layout.setSpacing(8)
 
         vg_desc = QLabel(
-            "The keyed vision model used to read pasted images/screenshots "
-            "(reading-date extraction). Separate from the chat provider "
-            "above — session providers cannot take images.")
+            "The model that reads pasted images and screenshots (chart "
+            "import). Separate from the chat provider above.")
         vg_desc.setWordWrap(True)
         self._vision_desc = vg_desc
         vg_desc.setStyleSheet(f"color: {theme['secondary_text']};")
@@ -825,6 +824,11 @@ class _AIProvidersSection(QWidget):
         except Exception:
             stored_vision = self._settings.get("vision.provider", "")
         vnames = list(self._vision_configs.keys())
+        if any(c.get("kind") in ("claude_cli", "codex_cli")
+               for c in self._vision_configs.values()):
+            vg_desc.setText(vg_desc.text() + " The Claude Code and Codex "
+                            "entries use your installed subscription, no "
+                            "API key.")
         self._suppress_vision_save = True
         self.vision_combo.addItems(vnames)
         if stored_vision and stored_vision not in vnames:

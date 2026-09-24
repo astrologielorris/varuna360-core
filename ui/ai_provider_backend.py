@@ -11,10 +11,8 @@ only read the CLI's stored login; they never start a session or bill anything.
 """
 from __future__ import annotations
 
-import glob
 import json
 import os
-import shutil
 import subprocess
 import sys
 from dataclasses import dataclass, field
@@ -127,55 +125,7 @@ class ProviderAccountRow:
     models: tuple = ()
 
 
-# A desktop app does not inherit the shell PATH: launched from Finder, the Dock
-# or a desktop entry it sees only the system directories, so a CLI installed by
-# npm, Homebrew or its own installer is "not found" although it runs fine in a
-# terminal. These are the places those installers put it.
-def _cli_search_dirs():
-    home = os.path.expanduser("~")
-    dirs = [os.path.join(home, ".local", "bin"),
-            os.path.join(home, ".npm-global", "bin"),
-            os.path.join(home, ".bun", "bin"),
-            os.path.join(home, ".volta", "bin"),
-            os.path.join(home, ".cargo", "bin")]
-    dirs += sorted(glob.glob(os.path.join(home, ".nvm", "versions", "node", "*", "bin")),
-                   reverse=True)
-    if sys.platform == "win32":
-        for var in ("APPDATA", "LOCALAPPDATA"):
-            base = os.environ.get(var)
-            if base:
-                dirs.append(os.path.join(base, "npm"))
-    else:
-        dirs += ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"]
-    return [d for d in dirs if os.path.isdir(d)]
-
-
-def find_cli(binary):
-    """Full path of a session CLI, looking past the app's own PATH."""
-    return shutil.which(binary) or shutil.which(
-        binary, path=os.pathsep.join(_cli_search_dirs()))
-
-
-def _cli_env(path):
-    """Environment for running a CLI: its own directory and the usual install
-    directories go on PATH, because an npm-installed CLI is a node script that
-    must also find `node`, which the desktop PATH lacks too."""
-    env = dict(os.environ)
-    extra = [os.path.dirname(path)] + _cli_search_dirs()
-    env["PATH"] = os.pathsep.join(extra + [env.get("PATH", "")])
-    return env
-
-
-def _run_cli(path, args, timeout):
-    kwargs = {}
-    if sys.platform == "win32":
-        kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-    # UTF-8 explicitly: Node CLIs write UTF-8, and Windows would otherwise
-    # decode with the ANSI code page and fail on an accented org name.
-    return subprocess.run([path, *args], capture_output=True, text=True,
-                          encoding="utf-8", errors="replace",
-                          timeout=timeout, check=False, env=_cli_env(path),
-                          stdin=subprocess.DEVNULL, **kwargs)
+from core.session_cli import find_cli, run_cli as _run_cli  # noqa: E402,F401
 
 
 def _claude_login(path):
@@ -316,12 +266,23 @@ class LiteProviderBackend:
                      if c["name"] == canonical), None)
 
     def vision_provider_configs(self):
+        # Only what core.chart_image_extraction can route; anything else
+        # would be selectable here and then refused as "unavailable".
+        from core.chart_image_extraction import (LEGACY_VISION_NAMES,
+                                                 VISION_PROVIDERS)
+        routable = {c["name"] for c in VISION_PROVIDERS} | set(LEGACY_VISION_NAMES)
         configs = [dict(c, kind="openai") for c in _KEY_PROVIDERS
-                   if c.get("vision")]
+                   if c.get("vision") and c["name"] in routable]
         configs.append({"name": "Anthropic API", "env_key": "ANTHROPIC_API_KEY",
                         "model": "claude-haiku-4-5", "url": None,
                         "vision": True, "vision_model": "claude-haiku-4-5",
                         "kind": "anthropic"})
+        # Claude Code / Codex subscriptions read images through their CLI.
+        configs += [{"name": c["name"], "env_key": None, "model": c["model"],
+                     "url": None, "vision": True, "vision_model": c["model"],
+                     "kind": c["kind"]}
+                    for c in VISION_PROVIDERS
+                    if c["kind"] in ("claude_cli", "codex_cli")]
         return configs
 
     def builtin_accounts(self):
