@@ -166,7 +166,9 @@ for data_dir in img icon data docs libaditya/ephe core/data; do
   fi
 done
 
-for optional_file in VERSION app_settings.json settings.json map_tiles_cache.db; do
+# app_settings.json is never bundled: it is the developer's own settings
+# (chart paths, usage counts). Fresh installs build theirs from DEFAULT_SETTINGS.
+for optional_file in VERSION settings.json map_tiles_cache.db; do
   if [[ -f "$ROOT_DIR/$optional_file" ]]; then
     DATA_ARGS+=("--include-data-files=$ROOT_DIR/$optional_file=$optional_file")
   fi

@@ -1894,7 +1894,10 @@ class ZodiacCalculationTab(QWidget):
             "The ayanamsa is the angular difference between the Tropical and "
             "Sidereal zodiacs. It sets the Sidereal zodiac positions and the "
             "sidereal nakshatra frame used by Nakshatra Compatibility, so it stays "
-            "available in every zodiac mode. Default: Vedanga Jyotisha."
+            "available in every zodiac mode. Default: True Citra.\n"
+            "Students: with the Aditya Circle, use Vedanga Jyotisha; with the "
+            "classic Tropical zodiac, use Dhruva GC mid-Mula (galactic center "
+            "in the middle of Mula)."
         )
         ayan_desc.setWordWrap(True)
         ayan_desc.setStyleSheet(desc_style)
@@ -2328,7 +2331,7 @@ class ZodiacCalculationTab(QWidget):
         self.zodiac_combo.setCurrentIndex(self._find_combo_index(mode, western))
 
         for combo, key, default in (
-            (self.ayanamsa_combo, "zodiac.ayanamsa_id", 100),
+            (self.ayanamsa_combo, "zodiac.ayanamsa_id", 27),
             (self.house_combo, "zodiac.house_system", "campanus"),
             # G9b: wheel_house_display / calendar_convention / date_format read on
             # the Chart Display tab now (moved there).
@@ -2352,7 +2355,7 @@ class ZodiacCalculationTab(QWidget):
         # unconditionally, so without a read-back the panel opens UNCHECKED
         # whatever is stored and the next Apply turns the feature off.
         self.cot_in_chart_cb.setChecked(
-            bool(settings.get("cot.show_in_chart", False)))
+            bool(settings.get("cot.show_in_chart", True)))
 
         # SPEC-ZR-001 DD6: ZR releaser + options. Rebuild the releaser combo first
         # so its data roles exist, then select the stored value.
@@ -2382,7 +2385,7 @@ class ZodiacCalculationTab(QWidget):
             western = (mode != "aditya")
         old_mode = settings.get("zodiac.mode", "aditya")
         old_western = settings.get("zodiac.use_western_names", False)
-        old_ayanamsa = settings.get("zodiac.ayanamsa_id", 100)
+        old_ayanamsa = settings.get("zodiac.ayanamsa_id", 27)
         old_house = settings.get("zodiac.house_system", "campanus")
         old_left = settings.get("dasha.left.ayanamsa_id", 100)
         old_right_mode = settings.get("dasha.right.mode", "nisarga")
@@ -3311,31 +3314,6 @@ class ChartDisplaySection(QWidget):
                     self.sign_display_combo,
                     "How signs are marked: sign names only, sign names with zodiac icons, sign names with Josh's Aditya glyphs, or Josh glyph only. Applies to every chart view except Cards of Truth and Human Design.")
 
-        self.sign_shadows_cb = QCheckBox()
-        _locked_row(
-            form, "chart_display.element_shadows.enabled",
-            "Sign glyph/icon shadows:", self.sign_shadows_cb,
-            "Add element-coloured shadows to Josh glyphs and zodiac icons in "
-            "every supported chart view. Planet shadows are controlled separately.",
-        )
-        shadow_size_field = QWidget()
-        shadow_size_row = QHBoxLayout(shadow_size_field)
-        shadow_size_row.setContentsMargins(0, 0, 0, 0)
-        self.sign_shadow_size_slider = QSlider(Qt.Orientation.Horizontal)
-        self.sign_shadow_size_slider.setRange(0, 12)
-        self.sign_shadow_size_slider.setSingleStep(1)
-        self.sign_shadow_size_value_label = QLabel("6 px")
-        self.sign_shadow_size_value_label.setStyleSheet(
-            f"font-size: {scaled_area_px('buttons')}px;")
-        _tag_font(self.sign_shadow_size_value_label, 'buttons')
-        shadow_size_row.addWidget(self.sign_shadow_size_slider, 1)
-        shadow_size_row.addWidget(self.sign_shadow_size_value_label)
-        self.sign_shadow_size_slider.valueChanged.connect(
-            lambda value: self.sign_shadow_size_value_label.setText(f"{value} px"))
-        _locked_row(
-            form, "chart_display.element_shadows.blur_radius",
-            "Sign shadow size:", shadow_size_field,
-            "Increase or decrease the glyph and zodiac-icon shadow footprint.")
         # 2B: pointer to where the zodiac FRAME + name set are chosen (a calculation
         # choice that stays on Zodiac & Calculation, per Lorris's rule).
         sign_display_pointer = QLabel(
@@ -3358,40 +3336,6 @@ class ChartDisplaySection(QWidget):
             form, "chart.show_outer_planets", "Show outer planets:", self.outer_planets_cb,
             "Show Uranus, Neptune, and Pluto.",
         )
-
-        from libaditya.optional_bodies import BODIES
-        self.additional_body_checks = {}
-        for body in BODIES:
-            checkbox = QCheckBox(body.label)
-            # O-6: own-QSS font-size so the checkbox tracks the 'buttons' area
-            # instead of freezing at the universal qt-material 13px.
-            checkbox.setStyleSheet(f"font-size: {scaled_area_px('buttons')}px;")
-            _tag_font(checkbox, 'buttons')
-            checkbox.setToolTip('Show in chart views. Unavailable dates are reported on the chart.')
-            self.additional_body_checks[body.name] = checkbox
-            form.addRow(
-                _form_label('Additional bodies:') if len(self.additional_body_checks) == 1 else '',
-                checkbox)
-        # Appearance only: independent of which bodies are shown above.
-        self.additional_body_icon_combo = QComboBox()
-        self.additional_body_icon_combo.addItem('Current', 'current')
-        self.additional_body_icon_combo.addItem('Custom SVG', 'custom_svg')
-        self.additional_body_icon_combo.setMaximumWidth(220)
-        _locked_row(form, 'display.additional_body_icon_set',
-                    'Additional-body symbols:', self.additional_body_icon_combo)
-
-        self.planet_icon_combo = QComboBox()
-        self.planet_icon_combo.addItem('Artistic', 'artistic')
-        self.planet_icon_combo.addItem('Simple SVG', 'simple_svg')
-        # G9d (td-q43fm): cap the width like every sibling combo. G6 added the wide
-        # planet_icon_colors editor to this same QFormLayout column below, which
-        # stretched the field column; without a cap this combo grew to the full page
-        # width (2K capture) while every other combo stayed ~220px.
-        self.planet_icon_combo.setMaximumWidth(220)
-        _locked_row(form, 'display.planet_icon_set', 'Planet appearance:', self.planet_icon_combo)
-        from apps.widgets.planet_icon_colors import PlanetIconColors
-        self.planet_icon_colors = PlanetIconColors()
-        form.addRow(_form_label('SVG colors:'), self.planet_icon_colors)
 
         planet_label_widget = QWidget()
         planet_label_layout = QHBoxLayout(planet_label_widget)
@@ -3443,13 +3387,14 @@ class ChartDisplaySection(QWidget):
         self.cusp_glow_combo.setMaximumWidth(220)
         _locked_row(
             form, "chart.cusp_glow_mode", "Cusp glow:", self.cusp_glow_combo,
-            "Highlight house cusps. Angles only = 1/4/7/10; All = every cusp.",
+            "Highlight house cusps. Angles only = 1/4/7/10; All = every cusp "
+            "(the default).",
         )
 
         self.element_pies_cb = QCheckBox()
         _locked_row(
             form, "chart.show_element_pies", "Element pies:", self.element_pies_cb,
-            "Show the fire/earth/air/water balance as pie slices.",
+            "Show the fire/earth/air/water balance as pie slices. Off by default.",
         )
 
         self.retinue_rings_cb = QCheckBox()
@@ -3599,6 +3544,69 @@ class ChartDisplaySection(QWidget):
             ],
         )
 
+        # ===== Rarely changed appearance details, kept at the bottom (Lorris
+        # 2026-09-24): everyday choices above, fine-tuning below. =====
+        _group_header(form, "Advanced appearance")
+        self.sign_shadows_cb = QCheckBox()
+        _locked_row(
+            form, "chart_display.element_shadows.enabled",
+            "Sign glyph/icon shadows:", self.sign_shadows_cb,
+            "Add element-coloured shadows to Josh glyphs and zodiac icons in "
+            "every supported chart view. Planet shadows are controlled separately.",
+        )
+        shadow_size_field = QWidget()
+        shadow_size_row = QHBoxLayout(shadow_size_field)
+        shadow_size_row.setContentsMargins(0, 0, 0, 0)
+        self.sign_shadow_size_slider = QSlider(Qt.Orientation.Horizontal)
+        self.sign_shadow_size_slider.setRange(0, 12)
+        self.sign_shadow_size_slider.setSingleStep(1)
+        self.sign_shadow_size_value_label = QLabel("6 px")
+        self.sign_shadow_size_value_label.setStyleSheet(
+            f"font-size: {scaled_area_px('buttons')}px;")
+        _tag_font(self.sign_shadow_size_value_label, 'buttons')
+        shadow_size_row.addWidget(self.sign_shadow_size_slider, 1)
+        shadow_size_row.addWidget(self.sign_shadow_size_value_label)
+        self.sign_shadow_size_slider.valueChanged.connect(
+            lambda value: self.sign_shadow_size_value_label.setText(f"{value} px"))
+        _locked_row(
+            form, "chart_display.element_shadows.blur_radius",
+            "Sign shadow size:", shadow_size_field,
+            "Increase or decrease the glyph and zodiac-icon shadow footprint.")
+
+        from libaditya.optional_bodies import BODIES
+        self.additional_body_checks = {}
+        for body in BODIES:
+            checkbox = QCheckBox(body.label)
+            # O-6: own-QSS font-size so the checkbox tracks the 'buttons' area
+            # instead of freezing at the universal qt-material 13px.
+            checkbox.setStyleSheet(f"font-size: {scaled_area_px('buttons')}px;")
+            _tag_font(checkbox, 'buttons')
+            checkbox.setToolTip('Show in chart views. Unavailable dates are reported on the chart.')
+            self.additional_body_checks[body.name] = checkbox
+            form.addRow(
+                _form_label('Additional bodies:') if len(self.additional_body_checks) == 1 else '',
+                checkbox)
+        # Appearance only: independent of which bodies are shown above.
+        self.additional_body_icon_combo = QComboBox()
+        self.additional_body_icon_combo.addItem('Current', 'current')
+        self.additional_body_icon_combo.addItem('Custom SVG', 'custom_svg')
+        self.additional_body_icon_combo.setMaximumWidth(220)
+        _locked_row(form, 'display.additional_body_icon_set',
+                    'Additional-body symbols:', self.additional_body_icon_combo)
+
+        self.planet_icon_combo = QComboBox()
+        self.planet_icon_combo.addItem('Artistic', 'artistic')
+        self.planet_icon_combo.addItem('Simple SVG', 'simple_svg')
+        # G9d (td-q43fm): cap the width like every sibling combo. G6 added the wide
+        # planet_icon_colors editor to this same QFormLayout column below, which
+        # stretched the field column; without a cap this combo grew to the full page
+        # width (2K capture) while every other combo stayed ~220px.
+        self.planet_icon_combo.setMaximumWidth(220)
+        _locked_row(form, 'display.planet_icon_set', 'Planet appearance:', self.planet_icon_combo)
+        from apps.widgets.planet_icon_colors import PlanetIconColors
+        self.planet_icon_colors = PlanetIconColors()
+        form.addRow(_form_label('SVG colors:'), self.planet_icon_colors)
+
     def _sync_wood_controls(self, *_):
         # G9a (Finding 3B): the South-Indian theme + vector-finish rows do nothing
         # on a non-South-Indian view, so DISABLE (not hide — keep them discoverable)
@@ -3638,11 +3646,11 @@ class ChartDisplaySection(QWidget):
             self.view_combo.setCurrentIndex(idx)
 
         si_idx = self.si_theme_combo.findData(
-            s.get("display.south_indian_style", "classic"))
+            s.get("display.south_indian_style", "vector"))
         self.si_theme_combo.setCurrentIndex(si_idx if si_idx >= 0 else 0)
         from ui.south_indian_finishes import normalize_finish, normalize_sign_display
         self.si_finish_combo.setCurrentIndex(self.si_finish_combo.findData(
-            normalize_finish(s.get('display.south_indian_vector_finish', 'standard'))))
+            normalize_finish(s.get('display.south_indian_vector_finish', 'ash'))))
         self.sign_display_combo.setCurrentIndex(self.sign_display_combo.findData(
             normalize_sign_display(s.get('display.sign_display', 'zodiac'))))
         element_shadows = s.get_chart_display_section('element_shadows')
@@ -3668,11 +3676,11 @@ class ChartDisplaySection(QWidget):
         else:
             self.planet_label_degrees_rb.setChecked(True)
         self.retinue_rings_cb.setChecked(s.get("chart.show_retinue_rings", False))
-        self.element_pies_cb.setChecked(s.get("chart.show_element_pies", True))
+        self.element_pies_cb.setChecked(s.get("chart.show_element_pies", False))
         self.house_number_size_spin.setValue(
             int(s.get_chart_display_section('house_number')['font_size']))
 
-        glow = s.get("chart.cusp_glow_mode", 0)
+        glow = s.get("chart.cusp_glow_mode", 2)
         idx = self.cusp_glow_combo.findData(glow)
         if idx >= 0:
             self.cusp_glow_combo.setCurrentIndex(idx)
@@ -3812,8 +3820,9 @@ class ChartDisplaySection(QWidget):
         s.set_chart_display_section('house_number', hn)
         s.set_chart_display_section(
             'element_shadows', deepcopy(DEFAULT_CHART_DISPLAY['element_shadows']))
-        s.set("display.south_indian_style", "classic")
-        s.set("display.south_indian_vector_finish", "standard")
+        s.set("display.south_indian_style", DEFAULT_SETTINGS["display"]["south_indian_style"])
+        s.set("display.south_indian_vector_finish",
+              DEFAULT_SETTINGS["display"]["south_indian_vector_finish"])
         s.set("display.sign_display", "zodiac")
         s.set("display.additional_body_icon_set", "current")
         s.set("display.planet_icon_set", "artistic")

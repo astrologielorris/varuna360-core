@@ -19,7 +19,7 @@ class ZodiacSettingsManager(QObject):
 
     DEFAULTS = {
         "zodiac.mode": "aditya",
-        "zodiac.ayanamsa_id": 100,
+        "zodiac.ayanamsa_id": 27,
         "zodiac.house_system": "campanus",
         "zodiac.use_western_names": False,
         "zodiac.sign_language": "en",

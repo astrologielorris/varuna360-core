@@ -414,7 +414,7 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
         # Chart zodiac type: "tropical" (default) or "sidereal"
         self.chart_zodiac = "tropical"
         # Ayanamsa ID for sidereal chart display (tied to dasha ayanamsa selection)
-        self.chart_sidereal_ayanamsa_id = 100  # Vedanga Jyotisha default (SPEC-KUTA-AYA-001)
+        self.chart_sidereal_ayanamsa_id = 27  # True Citra default (2026-09-24)
         # Cached ayanamsa offset in degrees (computed from birth JD)
         self.chart_ayanamsa_offset = 0.0
 

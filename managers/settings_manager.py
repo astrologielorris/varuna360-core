@@ -526,7 +526,7 @@ DEFAULT_SETTINGS = {
         # get vector; existing settings files already carry their stored choice
         # and the boot deep-merge (:773) never overwrites present keys.
         "south_indian_style": "vector",
-        "south_indian_vector_finish": "standard",
+        "south_indian_vector_finish": "ash",
         # td-iaqm.5 (CP5): SI sign display folded into app-wide display.sign_display; retired key never shipped.
         # SPEC-CAL-001: calendar convention for DISPLAYING pre-1582 dates.
         # 'astronomical' = Julian calendar pre-1582 (current behaviour, matches
@@ -562,8 +562,8 @@ DEFAULT_SETTINGS = {
         "show_planet_names": False,
         "show_retinue_rings": False,
         "show_trimsamsha_degrees": False,
-        "show_element_pies": True,
-        "cusp_glow_mode": 0,
+        "show_element_pies": False,
+        "cusp_glow_mode": 2,
         "wheel_house_display": "sign_based",
         # SPEC-BODY-002: Body Graph rashi-aspect dual view.
         # rashi_aspect_system: "quadrant" | "element" | "conventional".
@@ -582,7 +582,7 @@ DEFAULT_SETTINGS = {
 
     "zodiac": {
         "mode": "aditya",
-        "ayanamsa_id": 100,
+        "ayanamsa_id": 27,
         "house_system": "campanus",
         "use_western_names": False,
         "nakshatra_coords": "neither",
@@ -599,9 +599,9 @@ DEFAULT_SETTINGS = {
     "cot": {
         "planet_order": "solar_system",
         # SPEC-COT-001 §4.10: draw each sign's card (by lordship) inside the
-        # South Indian vector chart. Off by default — it adds a plaque to all
-        # twelve boxes, which is a real change to a chart people read daily.
-        "show_in_chart": False
+        # South Indian vector chart. On by default since 2026-09-24 (Lorris):
+        # fresh installs show the plaque in all twelve boxes.
+        "show_in_chart": True
     },
 
     "dasha": {
