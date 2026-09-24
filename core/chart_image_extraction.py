@@ -11,6 +11,7 @@ VISION_PROVIDERS = (
     {"name":"Mistral Large","key":"MISTRAL_API_KEY","model":"mistral-small-latest","url":"https://api.mistral.ai/v1/chat/completions","kind":"openai","reasoning":False},
     {"name":"Anthropic API","key":"ANTHROPIC_API_KEY","model":"claude-haiku-4-5","url":None,"kind":"anthropic","reasoning":False},
     # Subscription CLIs: no API key, the installed Claude Code / Codex login pays.
+    {"name":"Claude Code Haiku 4.5","key":None,"model":"claude-haiku-4-5","url":None,"kind":"claude_cli","reasoning":False},
     {"name":"Claude Code Sonnet 5","key":None,"model":"claude-sonnet-5","url":None,"kind":"claude_cli","reasoning":False},
     {"name":"Claude Code Opus 5","key":None,"model":"claude-opus-5","url":None,"kind":"claude_cli","reasoning":False},
     {"name":"Codex GPT-5.6 Luna","key":None,"model":"gpt-5.6-luna","url":None,"kind":"codex_cli","reasoning":True},
