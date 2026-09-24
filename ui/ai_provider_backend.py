@@ -5,13 +5,18 @@
 This module deliberately contains no chat/session execution.  It supplies the
 shared settings page with the same account, model, key and effort schema as the
 Pro provider registry, plus install-only CLI probes.  Finding a CLI never means
-that its user is authenticated: session rows remain ``installed_unverified``.
+that its user is authenticated, so each session CLI is also asked for its own
+login state (``claude auth status``, ``codex login status``). Those commands
+only read the CLI's stored login; they never start a session or bill anything.
 """
 from __future__ import annotations
 
+import glob
+import json
 import os
 import shutil
 import subprocess
+import sys
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Dict, List, Optional
@@ -122,6 +127,90 @@ class ProviderAccountRow:
     models: tuple = ()
 
 
+# A desktop app does not inherit the shell PATH: launched from Finder, the Dock
+# or a desktop entry it sees only the system directories, so a CLI installed by
+# npm, Homebrew or its own installer is "not found" although it runs fine in a
+# terminal. These are the places those installers put it.
+def _cli_search_dirs():
+    home = os.path.expanduser("~")
+    dirs = [os.path.join(home, ".local", "bin"),
+            os.path.join(home, ".npm-global", "bin"),
+            os.path.join(home, ".bun", "bin"),
+            os.path.join(home, ".volta", "bin"),
+            os.path.join(home, ".cargo", "bin")]
+    dirs += sorted(glob.glob(os.path.join(home, ".nvm", "versions", "node", "*", "bin")),
+                   reverse=True)
+    if sys.platform == "win32":
+        for var in ("APPDATA", "LOCALAPPDATA"):
+            base = os.environ.get(var)
+            if base:
+                dirs.append(os.path.join(base, "npm"))
+    else:
+        dirs += ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"]
+    return [d for d in dirs if os.path.isdir(d)]
+
+
+def find_cli(binary):
+    """Full path of a session CLI, looking past the app's own PATH."""
+    return shutil.which(binary) or shutil.which(
+        binary, path=os.pathsep.join(_cli_search_dirs()))
+
+
+def _cli_env(path):
+    """Environment for running a CLI: its own directory and the usual install
+    directories go on PATH, because an npm-installed CLI is a node script that
+    must also find `node`, which the desktop PATH lacks too."""
+    env = dict(os.environ)
+    extra = [os.path.dirname(path)] + _cli_search_dirs()
+    env["PATH"] = os.pathsep.join(extra + [env.get("PATH", "")])
+    return env
+
+
+def _run_cli(path, args, timeout):
+    kwargs = {}
+    if sys.platform == "win32":
+        kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    # UTF-8 explicitly: Node CLIs write UTF-8, and Windows would otherwise
+    # decode with the ANSI code page and fail on an accented org name.
+    return subprocess.run([path, *args], capture_output=True, text=True,
+                          encoding="utf-8", errors="replace",
+                          timeout=timeout, check=False, env=_cli_env(path),
+                          stdin=subprocess.DEVNULL, **kwargs)
+
+
+def _claude_login(path):
+    """(status, account, note) from `claude auth status` (JSON by default)."""
+    result = _run_cli(path, ["auth", "status", "--json"], timeout=8)
+    try:
+        data = json.loads(result.stdout)
+    except (TypeError, ValueError):
+        return None, None, "this version cannot report its login"
+    if not data.get("loggedIn"):
+        return ProviderStatus.LOGGED_OUT, None, "Run `claude auth login` in a terminal."
+    method = data.get("authMethod") or ""
+    kind = {"claude.ai": "oauth"}.get(method, method or None)
+    plan = data.get("subscriptionType")
+    return ProviderStatus.READY, ProviderAccount(
+        email=data.get("email"), plan=plan.capitalize() if plan else None,
+        auth_kind=kind), ""
+
+
+def _codex_login(path):
+    """(status, account, note) from `codex login status` (text on stderr)."""
+    result = _run_cli(path, ["login", "status"], timeout=8)
+    text = " ".join((result.stdout + " " + result.stderr).split())
+    low = text.lower()
+    if "not logged in" in low:
+        return ProviderStatus.LOGGED_OUT, None, "Run `codex login` in a terminal."
+    if result.returncode == 0 and "logged in" in low:
+        kind = "chatgpt" if "chatgpt" in low else ("apikey" if "api key" in low else None)
+        return ProviderStatus.READY, ProviderAccount(auth_kind=kind), ""
+    return None, None, "this version cannot report its login"
+
+
+_LOGIN_PROBES = {"claude": _claude_login, "codex": _codex_login}
+
+
 class _Instance:
     def __init__(self, driver):
         self.driver = driver
@@ -129,24 +218,29 @@ class _Instance:
     def snapshot(self):
         if self.driver.family is ProviderFamily.SESSION:
             binary = self.driver.name.lower()
-            path = shutil.which(binary)
+            path = find_cli(binary)
             if not path:
                 return ProviderSnapshot(ProviderStatus.NOT_INSTALLED,
-                                        f"{binary} not found on PATH.")
+                                        f"{binary} not found.")
+            version = ""
             try:
-                result = subprocess.run([path, "--version"], capture_output=True,
-                                        text=True, timeout=2.5, check=False)
+                result = _run_cli(path, ["--version"], timeout=4)
                 version = next((x.strip() for x in
                                 (result.stdout + "\n" + result.stderr).splitlines()
                                 if x.strip()), "")
-                detail = f"{binary} installed"
-                if version:
-                    detail += f" (version {version})"
-                detail += "; login state not probed."
+            except Exception:
+                pass
+            detail = f"{binary} installed" + (f" (version {version})" if version else "")
+            try:
+                status, account, note = _LOGIN_PROBES[binary](path)
             except Exception as exc:
-                detail = (f"{binary} installed at {path}; version probe failed "
-                          f"({type(exc).__name__}); login state not probed.")
-            return ProviderSnapshot(ProviderStatus.INSTALLED_UNVERIFIED, detail)
+                status, account, note = None, None, f"login check failed ({type(exc).__name__})"
+            if status is ProviderStatus.READY:
+                return ProviderSnapshot(status, detail, account=account)
+            if status is ProviderStatus.LOGGED_OUT:
+                return ProviderSnapshot(status, note)
+            return ProviderSnapshot(ProviderStatus.INSTALLED_UNVERIFIED,
+                                    f"{detail}; {note}.")
 
         key = self.driver.env_key
         if not key:
