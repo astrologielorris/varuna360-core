@@ -151,8 +151,39 @@ pip install -r requirements.txt
 python apps/core_gui_qt.py
 ```
 
-You'll need the Swiss Ephemeris data files in `ephe/`. They are bundled
-with this repository.
+Use Python 3.12. The Swiss Ephemeris data files come inside the `libaditya`
+package that `pip install -r requirements.txt` installs, so there is nothing
+else to download.
+
+## Building the macOS app
+
+The macOS app is built with Nuitka on a Mac of the architecture you want
+(Apple Silicon gives an arm64 app, Intel gives an x86_64 app). These are the
+same steps the GitHub workflow `.github/workflows/build-macos.yml` runs.
+
+1. Install the Xcode command line tools (`xcode-select --install`) and
+   Python 3.12 from python.org.
+2. Create the build environment and install the dependencies:
+
+   ```bash
+   python3.12 -m venv .venv
+   .venv/bin/python -m pip install --upgrade pip
+   .venv/bin/python -m pip install --only-binary cryptography -r requirements.txt
+   .venv/bin/python -m pip install nuitka==4.0.7 ordered-set zstandard imageio
+   ```
+
+   `--only-binary cryptography` matters on Intel Macs: it picks the newest
+   cryptography release that still has a ready-made Intel wheel.
+3. Build the app bundle, then package it:
+
+   ```bash
+   bash scripts/build_macos_nuitka.sh
+   bash scripts/package_macos_dmg.sh
+   ```
+
+The `.dmg` and `.zip` land in `dist/macos/`. The app is not signed with an
+Apple Developer ID, so on first launch macOS blocks it; the packaging script
+prints how to open it anyway.
 
 ## License
 
