@@ -10,7 +10,7 @@ the classic "Exchanges (Parivartana)" section, all inside one QScrollArea.
 Clicking a card expands its full reading IN PLACE (an exclusive accordion, one
 open at a time), so chart readings stay integrated in the page rather than in a
 pop-up (matches the kuta-panel rule). The ONLY pop-up is a single "(i)" tutorial
-that teaches what Parivartana / final dispositors ARE (doctrine, not this chart).
+that explains how to read the panel's cards, chips and bars.
 
 Presentation only: refresh() takes ALREADY-COMPUTED engine output (the controller
 frames the chart and calls the engines, hardening H3), so this widget never reads
@@ -24,7 +24,7 @@ from PySide6.QtCore import Qt, Signal, QRectF
 from PySide6.QtGui import QPainter, QColor, QLinearGradient, QBrush
 from PySide6.QtWidgets import (
     QWidget, QFrame, QLabel, QVBoxLayout, QHBoxLayout, QScrollArea,
-    QPushButton, QSizePolicy, QDialog,
+    QPushButton, QSizePolicy, QDialog, QGraphicsOpacityEffect,
 )
 
 from ui.themed_style import ThemedStyleMixin
@@ -38,8 +38,9 @@ from ui.qt_theme import (
     scaled_area_px,
 )
 from ui.popup_fonts import popup_title_px, live_rebuild
-from AI_tools.AI_main_function.constants import PARIVARTANA_YOGA_FULL
-from AI_tools.AI_main_function.parivartana_descriptions import describe_exchange
+from AI_tools.AI_main_function.interchange_rank import exchange_rank
+from apps.widgets import exchange_panel_parts as xpp
+from core import exchange_chain as xc
 
 # Vedic classification -> pari_sem key + human label (for the Exchanges section).
 _CLASS_LABEL = {
@@ -52,86 +53,32 @@ _CLASS_LABEL = {
 }
 _CLASS_ORDER = ["MAHA", "KHALA", "DAINYA_6", "DAINYA_8", "DAINYA_12", "DAINYA_DOUBLE"]
 
-# 
-# taxonomy is classical (cited). NO pro/ import (H11).
+# Inline tutorial text ((i) popup): how to use the panel only (no
+# interpretation); classical source cited. NO pro/ import (H11).
 _DOC_TITLE = "Exchanges and Final Dispositors"
 _DOC_SECTIONS = [
-    ("WHAT AN EXCHANGE IS",
-     " "
-     " "
-     ""),
-    ("",
+    ("WHAT THE PANEL SHOWS",
+     "The top card is the dominant final dispositor theme. Below it come the "
+     "other themes, then every exchange (Parivartana) in the chart. Click a theme "
+     "card's title to open or close its details."),
+    ("EXCHANGES",
+     "An exchange is two planets in each other's ruling signs. Each exchange card "
+     "shows the two planets with their signs and houses, and its class. Dainya: "
+     "one or both houses are the 6th, 8th or 12th. Khala: one house is the 3rd. "
+     "Maha: any other pair of houses."),
+    ("FINAL DISPOSITORS",
      "Follow any planet to the ruler of its sign, then that ruler to the ruler of "
-     " "
-     " "
-     " "
-     "two-planet loop."),
-    ("READING THE STRENGTH",
-     " "
-     " "
-     ""),
+     "its own sign, and so on. Every chain ends in a loop. The planets in that "
+     "loop are the final dispositors, and the card lists the houses they occupy. "
+     "An exchange is a loop of two planets."),
+    ("BAR, CHIP AND COLOUR",
+     "The bar and the N/7 count show how many of the seven planets lead into the "
+     "theme through their chains. The chip shows MAHA, KHALA or DAINYA for an "
+     "exchange, SELF for a planet in its own sign, and THEME for a longer loop. "
+     "The card colour follows the houses the theme occupies."),
     ("CLASSICAL SOURCES",
-     " "
-     " "
-     "doctrine."),
-]
-
-# 
-# 
-# taxonomy cited, no pro/ import (H11).
-_HOUSE_TYPE_HEADING = ""
-_HOUSE_TYPE_SECTIONS = [
-    ("",
-     " "
-     " "
-     " "
-     ""),
-    ("",
-     " "
-     " "
-     ""),
-    ("EFFORT HOUSES (2, 3, 11)",
-     " "
-     " "
-     " "
-     "compounding over time."),
-    ("DUSTHANAS (6, 8, 12)",
-     " "
-     " "
-     " "
-     ""),
-    ("HIDDEN HOUSES (4, 8, 12)",
-     " "
-     ""),
-    ("",
-     " "
-     " "
-     " "
-     "is not repeated."),
-    ("SOURCES: CLASSICAL ROOTS",
-     " "
-     " "
-     " "
-     " "
-     " "
-     " "
-     " "
-     "sign from the ascendant."),
-    ("",
-     " "
-     " "
-     " "
-     " "
-     " "
-     ""),
-    ("SOURCES: MODERN TEACHING",
-     " "
-     " "
-     " "
-     " "
-     " "
-     " "
-     ""),
+     "The Maha, Khala and Dainya classes of exchange are given in Phaladeepika "
+     "VI.32-34."),
 ]
 
 
@@ -189,6 +136,38 @@ class _ClickableLabel(QLabel):
         super().mouseReleaseEvent(event)
 
 
+class _ExchangeCard(QFrame):
+    """An exchange card (td-m79zy): a click outside its header label asks for the
+    chain focus; the metal RANK tag hangs at its top right."""
+    clicked = Signal(object)
+
+    def __init__(self, pair, rank, parent=None):
+        super().__init__(parent)
+        self.pair = tuple(pair)
+        self.tag = xpp.RankTag(rank, self)
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        self.tag.move(self.width() - self.tag.width() - scaled_px(14), -1)
+        self.tag.raise_()
+
+    def _hits(self, event):
+        return event.button() == Qt.LeftButton and not isinstance(
+            self.childAt(event.position().toPoint()), _ClickableLabel)
+
+    def mousePressEvent(self, event):
+        # Accept the press: a widget that ignores it never gets the release.
+        if self._hits(event):
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if self._hits(event):
+            self.clicked.emit(self.pair)
+        super().mouseReleaseEvent(event)
+
+
 class ParivartanaWidget(ThemedStyleMixin, QWidget):
     """Exchange + final-dispositor card stack. Public API mirrors the other
     Solar-Dawn panels: refresh(themes, interchanges) / clear() / refresh_theme().
@@ -196,9 +175,18 @@ class ParivartanaWidget(ThemedStyleMixin, QWidget):
     ``wide=True`` (fullscreen pop-out) pre-expands every card and scales type up.
     """
 
+    thread_pressed = Signal()           # the THREAD key (SPEC-EXCH-002)
+    focus_requested = Signal(object)    # an exchange card clicked: its planet pair
+
     def __init__(self, wide=False, parent=None):
         super().__init__(parent)
         self._wide = wide
+        self._thread_lit = False       # the THREAD key's lamp (the setting, via the controller)
+        self._focus = None             # the focused exchange's pair (chain focus)
+        self._exch_cards = {}          # pair -> _ExchangeCard
+        self._thread_key = None
+        self._legend = None
+        self.ladder = None
         self._themes = None            # last-rendered data (H13: re-render, not recompute)
         self._interchanges = None
         self._open_key = None          # exclusive-accordion open card id
@@ -319,6 +307,13 @@ class ParivartanaWidget(ThemedStyleMixin, QWidget):
         self._open_key = None
         self._details = {}
         self._cards = {}
+        self._exch_cards = {}
+        self._thread_key = None
+        self.ladder = None
+        if self._legend is not None:
+            self._legend.close()
+            self._legend.deleteLater()
+            self._legend = None
         # Prune per-render entries from the themed registry so refresh_theme()
         # never styles a deleted card widget (H6). Chrome entries are kept.
         reg = self.__dict__.get("_themed_registry")
@@ -358,18 +353,19 @@ class ParivartanaWidget(ThemedStyleMixin, QWidget):
             for i, th in enumerate(themes[1:], start=2):
                 self._cards_lay.addWidget(self._theme_card(th, rank=i, hero=False))
 
-        # 3. Classic exchanges section.
-        self._cards_lay.addWidget(self._section_label("Exchanges (Parivartana)"))
-        by_type = inter.get("by_type", {})
-        any_exchange = any(by_type.get(k) for k in _CLASS_ORDER)
-        if not any_exchange:
-            note = QLabel("No mutual exchange in this chart.")
+        # 3. Classic exchanges section, with the THREAD key (SPEC-EXCH-002).
+        self._cards_lay.addWidget(self._exchange_header())
+        records = xc.ordered_records(inter)
+        if not records:
+            note = QLabel(xpp.t("panel.exchange.none", "No mutual exchange in this chart."))
             self._register_themed(note, self._placeholder_style)
             self._cards_lay.addWidget(note)
         else:
-            for cls in _CLASS_ORDER:
-                for rec in by_type.get(cls, []):
-                    self._cards_lay.addWidget(self._exchange_card(cls, rec))
+            lets = xc.letters(len(records))
+            for rec, letter in zip(records, lets):
+                self._cards_lay.addWidget(self._exchange_card(rec[6], rec, letter))
+            self._cards_lay.addWidget(self._scale_ladder(records, lets))
+            self._apply_focus_look()
 
         self._cards_lay.addStretch(1)
 
@@ -417,7 +413,7 @@ class ParivartanaWidget(ThemedStyleMixin, QWidget):
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(scaled_px(8))
         bar = _StrengthBar(basin / 7.0, sem_key)
-        bar.setToolTip("")
+        bar.setToolTip("How many of the 7 planets lead into this theme")
         row.addWidget(bar, 1)
         cap = QLabel(f"{basin}/7 planets")
 
@@ -508,32 +504,92 @@ class ParivartanaWidget(ThemedStyleMixin, QWidget):
         rec = theme.get("exchange_record")
         if theme["is_exchange"] and rec is not None:
             pa, sa, ha, pb, sb, hb, cls = rec
+            # The exchange itself; no reading text ships on the LTS branch.
             lay.addWidget(self._body_text(f"{pa} ({sa}, H{ha})  <->  {pb} ({sb}, H{hb})"))
-            # 
-            specific = describe_exchange(ha, hb)
-            lay.addWidget(self._body_text(specific or PARIVARTANA_YOGA_FULL.get(cls, "")))
         else:
             # R3: multi-house / self-loop themes have no classical name -> houses + summary.
             hs = ", ".join(f"H{h}" for h in theme["occupied_houses"])
-            summary = (f"A theme of {len(theme['cycle_planets'])} planets "
-                       f"({', '.join(theme['cycle_planets'])}) funnelling into houses {hs}.")
+            summary = (f"A loop of {len(theme['cycle_planets'])} planets "
+                       f"({', '.join(theme['cycle_planets'])}) in houses {hs}.")
             if theme["dusthana_houses"]:
                 dh = ", ".join(f"H{h}" for h in theme["dusthana_houses"])
-                summary += f" It touches the difficult houses {dh}."
+                summary += f" Dusthana houses in the loop: {dh}."
             lay.addWidget(self._body_text(summary))
         return box
 
-    def _exchange_card(self, cls, rec):
+    def _exchange_header(self):
+        """The "Exchanges (Parivartana)" kicker with the THREAD key and its "?"."""
+        box = QWidget()
+        row = QHBoxLayout(box)
+        row.setContentsMargins(0, scaled_px(4), scaled_px(4), 0)
+        row.setSpacing(scaled_px(6))
+        row.addWidget(self._section_label(xpp.t("panel.exchange.title", "Exchanges (Parivartana)")), 1)
+        if self._wide:
+            return box                # the pop-out shows the cards only (SPEC-EXCH-002 OPEN-4)
+        from apps.panels.varga_panel import StripKey
+        key = StripKey(xpp.thread_label(), xpp.thread_tip(), parent=box)
+        key.set_lit(self._thread_lit)
+        key.clicked.connect(self.thread_pressed.emit)
+        self._thread_key = key
+        row.addWidget(key)
+        help_btn = QPushButton("?")
+        help_btn.setFixedSize(scaled_px(20), scaled_px(20))
+        help_btn.setCursor(Qt.WhatsThisCursor)
+        self._register_themed(help_btn, self._info_btn_style)
+        help_btn.installEventFilter(self)
+        help_btn.setProperty("chain_legend", True)
+        row.addWidget(help_btn)
+        return box
+
+    def eventFilter(self, obj, event):
+        from PySide6.QtCore import QEvent
+        if obj.property("chain_legend"):
+            if event.type() == QEvent.Type.Enter:
+                if self._legend is None:
+                    self._legend = xpp.ChainLegend(self)
+                self._legend.show_near(obj)
+            elif event.type() in (QEvent.Type.Leave, QEvent.Type.Hide):
+                if self._legend is not None:
+                    self._legend.hide()
+        return super().eventFilter(obj, event)
+
+    def _scale_ladder(self, records, lets):
+        box = QWidget()
+        lay = QVBoxLayout(box)
+        lay.setContentsMargins(0, scaled_px(6), 0, 0)
+        lay.setSpacing(scaled_px(2))
+        title = self._section_label(xpp.t("panel.exchange.scale_title", "EXCHANGE SCALE"))
+        title.setToolTip(xpp.ladder_tip())
+        lay.addWidget(title)
+        self.ladder = xpp.ScaleLadder()
+        self.ladder.set_exchanges(xpp.legend_rows(records, lets))
+        lay.addWidget(self.ladder)
+        return box
+
+    def _exchange_card(self, cls, rec, letter=""):
         key = f"exch-{cls}-{rec[0]}-{rec[3]}"
         sem_key, label = _CLASS_LABEL.get(cls, ("neutral", cls))
-        card = QFrame()
+        pa, sa, ha, pb, sb, hb, _ = rec
+        rank = exchange_rank(ha, hb, cls)
+        card = _ExchangeCard((pa, pb), rank)
         card.setObjectName("pcard")
+        if not self._wide:          # the pop-out has no THREAD key, so no chain focus (OPEN-4)
+            card.setCursor(Qt.PointingHandCursor)
+            card.clicked.connect(self.focus_requested.emit)
         self._register_themed(card, self._card_style)
         v = QVBoxLayout(card)
         v.setContentsMargins(scaled_px(14), scaled_px(8), scaled_px(14), scaled_px(10))
         v.setSpacing(scaled_px(4))
 
         head = QHBoxLayout()
+        if letter:
+            badge = QLabel(letter)
+            badge.setAlignment(Qt.AlignCenter)
+            badge.setFixedSize(scaled_px(18), scaled_px(18))
+            badge.setStyleSheet(
+                f"QLabel {{ color: #F3E9D6; background: #2E251B; border-radius: {scaled_px(5)}px; "
+                f"font-weight: 800; font-size: {scaled_px(11)}px; }}")
+            head.addWidget(badge)
         header = _ClickableLabel(label)
 
         def _hs(k=sem_key):
@@ -543,22 +599,94 @@ class ParivartanaWidget(ThemedStyleMixin, QWidget):
         header.clicked.connect(lambda k=key: self._toggle(k))
         head.addWidget(header, 1)
         head.addWidget(self._sev_chip(sem_key, label.split()[0].upper()))
+        head.addSpacing(scaled_px(42))          # room for the RANK tag
         v.addLayout(head)
 
-        pa, sa, ha, pb, sb, hb, _ = rec
+        word = QLabel(xpp.rank_word(rank).upper())
+
+        def _ws(r=rank):
+            return (f"QLabel {{ color: {xpp.rank_word_colour(r)}; font-weight: 800; "
+                    f"font-size: {scaled_px(10)}px; letter-spacing: 0.8px; }}")
+        self._register_themed(word, _ws)
+        v.addWidget(word)
+
         v.addWidget(self._body_text(f"{pa} ({sa}, H{ha})  <->  {pb} ({sb}, H{hb})"))
 
-        detail = QWidget()
-        dl = QVBoxLayout(detail)
-        dl.setContentsMargins(0, scaled_px(4), 0, 0)
-        # 
-        specific = describe_exchange(rec[2], rec[5])
-        dl.addWidget(self._body_text(specific or PARIVARTANA_YOGA_FULL.get(cls, "")))
-        detail.setVisible(self._wide)
-        v.addWidget(detail)
-        self._details[key] = detail
+        tie = QHBoxLayout()
+        tie.setSpacing(scaled_px(8))
+        tie.addWidget(xpp.ChainSwatch(rank, ha, hb, (pb, pa), seed=rank + 5,
+                                      width=scaled_px(100), height=scaled_px(26)))
+        pair_lbl = QLabel(f"{ha} \u27f7 {hb}")
+
+        def _ps():
+            th = get_theme_colors()
+            return (f"QLabel {{ color: {th['secondary_text']}; font-weight: 800; "
+                    f"font-size: {scaled_px(12)}px; }}")
+        self._register_themed(pair_lbl, _ps)
+        tie.addWidget(pair_lbl)
+        from apps.widgets.exchange_chain_items import house_keyword
+        kw = QLabel(f"{house_keyword(ha)} \u00b7 {house_keyword(hb)}")
+
+        def _ks():
+            th = get_theme_colors()
+            return (f"QLabel {{ color: {dim_text(th['secondary_text'], 0.75)}; "
+                    f"font-size: {scaled_px(10)}px; }}")
+        self._register_themed(kw, _ks)
+        tie.addWidget(kw, 1)
+        v.addLayout(tie)
+        if 12 in (ha, hb):
+            note = QLabel(xpp.note_12th())
+            note.setWordWrap(True)
+
+            def _ns():
+                th = get_theme_colors()
+                return (f"QLabel {{ color: {dim_text(th['secondary_text'], 0.6)}; "
+                        f"font-style: italic; font-size: {scaled_px(10)}px; }}")
+            self._register_themed(note, _ns)
+            v.addWidget(note)
+
+        # No expandable reading: the per-house-pair reading is not part of the
+        # LTS branch; the exchange line and the chain tie above are the whole card.
         self._cards[key] = card
+        self._exch_cards[card.pair] = card
         return card
+
+    # ---- THREAD key + chain focus (SPEC-EXCH-002) -------------------------
+    def restyle_chains(self):
+        """The chain style changed (Settings, a remote or AI write): the card
+        swatches and the legend minis repaint in the new style."""
+        for swatch in self.findChildren(xpp.ChainSwatch):
+            swatch.update()
+
+    def set_thread_lit(self, lit):
+        self._thread_lit = bool(lit)
+        if self._thread_key is not None:
+            self._thread_key.set_lit(self._thread_lit)
+        self._apply_focus_look()
+
+    def thread_lit(self):
+        return self._thread_lit
+
+    def set_focus(self, pair):
+        self._focus = tuple(pair) if pair else None
+        self._apply_focus_look()
+
+    def _apply_focus_look(self):
+        """The focused card gets a ring, the other cards fade (THREAD on only)."""
+        focus = self._focus if self._thread_lit else None
+        th = get_theme_colors()
+        for pair, card in self._exch_cards.items():
+            dim = focus is not None and pair != focus
+            if dim:
+                eff = QGraphicsOpacityEffect(card)
+                eff.setOpacity(0.5)
+                card.setGraphicsEffect(eff)
+                del eff                         # Rule 18: the card owns it
+            else:
+                card.setGraphicsEffect(None)
+            ring = (f"QFrame#pcard {{ border: {max(2, scaled_px(2))}px solid {th['primary']}; }}"
+                    if focus is not None and pair == focus else "")
+            card.setStyleSheet(self._card_style() + ring)
 
     def _mini_kicker(self, text):
         lbl = QLabel(text)
@@ -639,17 +767,6 @@ class ParivartanaWidget(ThemedStyleMixin, QWidget):
             clay.addWidget(b)
 
         for kicker, body in _DOC_SECTIONS:
-            _add_section(kicker, body)
-
-        # 
-        heading = QLabel(_HOUSE_TYPE_HEADING)
-        heading.setWordWrap(True)
-        heading.setStyleSheet(
-            f"color: {pari_sem('maha')['hi']}; font-weight: 800; font-size: {scaled_tier_size(13, 'info_text')}px; "
-            f"margin-top: {scaled_px(12)}px; border-top: 1px solid {_rgba(theme['secondary_light'], 0.5)}; "
-            f"padding-top: {scaled_px(10)}px;")
-        clay.addWidget(heading)
-        for kicker, body in _HOUSE_TYPE_SECTIONS:
             _add_section(kicker, body)
 
         clay.addStretch(1)

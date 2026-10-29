@@ -1,0 +1,21 @@
+{
+ "dasha.layout.bottom_tip": "Dock to the bottom, under the whole row (Ctrl+Shift+D)",
+ "dasha.layout.fold_tip": "Fold to a narrow rail / open the full column (Ctrl+])",
+ "dasha.layout.return": "Return to side",
+ "dasha.layout.return_tip": "Put the dasha back in its side column (Ctrl+Shift+D)",
+ "dasha.mode.nisarga.label": "Planetary Ages",
+ "dasha.mode.nisarga.status_label": "Planetary Ages",
+ "dasha.mode.nisarga.title": "Planetary Ages",
+ "dasha.mode.nisarga.title_tooltip": "Natural Planetary Ages",
+ "dasha.mode.vimshottari.label": "Vimshottari",
+ "dasha.mode.vimshottari.status_label": "Vimshottari Dasha",
+ "dasha.mode.vimshottari.title_tooltip": "Click to change ayanamsa",
+ "dasha.mode.zr.label": "Zodiacal Releasing",
+ "dasha.mode.zr.short_label": "Releasing",
+ "dasha.mode.zr.status_label": "Zodiacal Releasing",
+ "dasha.rail.time_left_m": "{months}m left",
+ "dasha.rail.time_left_ym": "{years}y {months}m left",
+ "dasha.rail.time_m": "{months}m",
+ "dasha.rail.time_ym": "{years}y {months}m",
+ "dasha.shelf.current": "Current: {glyph} {lord}"
+}

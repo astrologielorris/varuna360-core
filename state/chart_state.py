@@ -77,7 +77,8 @@ F2_RING_VIEWS, F2_RING_INDICES = compute_f2_ring()
 
 assert set(VIEW_STACK_INDEX) == set(VALID_VIEWS), \
     "VIEW_STACK_INDEX and VALID_VIEWS must describe the same set of views"
-VALID_VARGAS = frozenset({1, 2, 3, 4, 7, 9, 10, 1010, 12, 16, 20, 24, 2424, 27, 30, 40, 45, 60})
+VALID_VARGAS = frozenset({1, 2, 3, 4, 7, 9, 10, 1010, 12, 16, 20, 24, 2424, 27, 30, 40, 45, 60,
+                          202, 303, 404})  # td-m6xyo: D2p / D3p / D4p (varga style Parivritti)
 # SPEC-HSY-001: the 7 human keys the Settings UI can store. SE codes are
 # derived only at consumption via get_house_system_code().
 VALID_HOUSE_SYSTEMS = frozenset(HOUSE_SYSTEM_CODES)

@@ -9,7 +9,7 @@ Earth and Fire follow the shared wheel retinue palette; wood opacity stays local
 from core.retinue_constants import TRIMSAMSA_COLORS
 
 FINISHES = ("standard", "santal", "ash")
-SIGN_DISPLAYS = ("names", "zodiac", "josh", "josh_only")
+SIGN_DISPLAYS = ("names", "zodiac", "josh", "josh_only", "vector", "vector_only")
 JOSH_FILES = ("dhata", "aryama", "mitra", "varuna", "indra", "vivasvan",
               "tvashta", "vishnu", "amzu", "bhaga", "pushan", "parjanya")
 

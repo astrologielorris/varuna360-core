@@ -21,7 +21,6 @@ from PySide6.QtWidgets import (
     QTextBrowser,
 )
 from PySide6.QtCore import Qt, QObject, QEvent, QSize
-from PySide6.QtGui import QIcon
 
 # Import centralized theme
 from ui.qt_theme import (
@@ -34,6 +33,7 @@ from ui.qt_theme import (
     scaled_px,
     scaled_area_px,
 )
+from ui.accent_ink import on_accent_ink  # SPEC-THM-001 §13
 
 def avastha_compact_table_style():
     """Avastha-specific table style (SPEC-AVA-001 rev3 display fix).
@@ -60,7 +60,7 @@ def avastha_compact_table_style():
         }}
         QTableWidget::item:selected {{
             background-color: {theme["primary"]};
-            color: {theme["primary_text"]};
+            color: {on_accent_ink(theme["primary"], theme["primary_text"])};
         }}
         QHeaderView::section {{
             background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
@@ -74,11 +74,51 @@ def avastha_compact_table_style():
     """ + _THIN_SCROLLBAR_CSS
 
 
+# One style per info-table family, used by BOTH the construction sites below and
+# core_gui_qt._refresh_panel_styles, so a live theme switch repaints exactly what
+# a boot paints (the copies had drifted: the refresh flattened every header,
+# dropped the elevation gradient and the matrix gridline, and lost the Aspects
+# row-header frame).
+#   "table"   Karakas, Strength, Elements, Modes, Dignities
+#   "retinue" Hora, Trimsamsa: NO ::item rules, so setBackground() still works
+#             (Qt hands item painting to the stylesheet once any ::item rule exists)
+#   "aspects" Aspects, Tajika matrix and relations (2 px padding)
+_INFO_TABLE_PADDING = {"table": ("3px", "4px"), "retinue": (None, "4px"),
+                       "aspects": ("2px", "2px")}
+
+
+def info_table_style(kind="table"):
+    """The QSS of one info-table family for the CURRENT theme and fonts."""
+    theme = get_theme_colors()
+    item_pad, header_pad = _INFO_TABLE_PADDING[kind]
+    items = "" if item_pad is None else f"""
+        QTableWidget::item {{ background-color: transparent; padding: {item_pad}; }}
+        QTableWidget::item:selected {{
+            background-color: {theme["primary"]}; color: {on_accent_ink(theme["primary"], theme["primary_text"])};
+        }}"""
+    return f"""
+        QTableWidget {{
+            background-color: {theme["secondary_dark"]};
+            border: none; font-size: {scaled_area_px('tables')}px;
+            gridline-color: {elevation_divider(DIVIDER_ALPHA_MATRIX)};
+        }}{items}
+        QHeaderView::section {{
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 {elevation_color(2)}, stop:1 {elevation_color(1)}); color: {theme["secondary_text"]};
+            border: 1px solid {theme["secondary_light"]};
+            padding: {header_pad}; font-size: {scaled_area_px('table_headers')}px; font-weight: bold;
+        }}
+    """ + _THIN_SCROLLBAR_CSS
+
+
 # Import highlight delegates
 from apps.delegates import KarakaHighlightDelegate, StrengthHighlightDelegate, AspectHighlightDelegate, AvasthaHighlightDelegate, TajikaHighlightDelegate, RetinueColorDelegate
 
 # Import fullscreen popup dialog
 from apps.widgets.info_panel_dialog import open_panel_dialog
+from apps.panels.strength_style_switch import StrengthTable
+from apps.panels.table_metrics import column_header_height, table_row_height
+from apps.widgets.panel_header import HeaderSwapButton, HeaderTab, PanelHeader, set_active_tab
 
 # SPEC-SET-002 Phase 5: persist sub-panel tab selections (respects lock)
 from managers.settings_manager import get_settings
@@ -87,9 +127,13 @@ from managers.settings_manager import get_settings
 INFO_PANEL_WIDTH = 380
 
 
-def info_panel_width():
-    """Panel width scaled to screen resolution, minimum 380px."""
-    screen = QApplication.primaryScreen()
+def info_panel_width(widget=None):
+    """Panel width scaled to screen resolution, minimum 380px.
+
+    ``widget``: read the screen that widget is on (SPEC-LAYOUT-001 D1), else
+    the primary screen (before the window exists)."""
+    screen = widget.screen() if widget is not None else None
+    screen = screen or QApplication.primaryScreen()
     if screen is None:
         return 380
     w = screen.availableGeometry().width()
@@ -149,13 +193,25 @@ def _on_avastha_retinue_click(gui, row, col):
 
 
 def _table_row_height(area_id='tables', padding=8, min_h=18):
-    """Row height = effective font pixel size + padding, with a floor."""
-    return max(min_h, scaled_area_px(area_id) + padding)
+    """Row height = effective font pixel size + padding, with a floor (table_metrics)."""
+    return table_row_height(area_id, padding, min_h, px=scaled_area_px)
 
 
 def _column_header_height():
-    """Height for table column headers, scaled to table_headers font size."""
-    return max(20, scaled_area_px('table_headers') + 8)
+    """Height for table column headers, scaled to table_headers font size (table_metrics)."""
+    return column_header_height(px=scaled_area_px)
+
+
+def _fit_column_header(table, height):
+    """Column header height. A header that sizes itself from the font (the
+    Strength keys, td-esl0r: its keys hold a full Table Headers label) re-fits;
+    the others take the shared compact height."""
+    header = table.horizontalHeader()
+    fit = getattr(header, "fit_to_font", None)
+    if callable(fit):
+        fit()
+    else:
+        header.setFixedHeight(height)
 
 
 def _stack_min_height(visible_rows, area_id='tables', padding=8,
@@ -165,42 +221,73 @@ def _stack_min_height(visible_rows, area_id='tables', padding=8,
     return header_h + (visible_rows * row_h)
 
 
+def _body_min_width():
+    """Hard minimum width of a panel body (SPEC-LAYOUT-001 D2/D3): a small
+    floor, so a narrow info column (INFO_MIN) squeezes the table columns
+    instead of clipping the panel. The font-derived width a body needs to read
+    well (``info_panel_stack.body_need_width``) decides the magazine layout."""
+    return scaled_px(200)
+
+
 def _avastha_row_height():
     """Row height for the Avastha table, scaled to table font size."""
     return max(18, scaled_area_px('tables') + 8)
 
 
+def create_center_controllers(gui):
+    """SPEC-VAC-001 §4.5: the Vedic and the Tajika center drawing controllers, owned by the
+    center drawing registry only (W6 G1). Returns (vedic, tajika); idempotent. The Vedic
+    one comes first so the Tajika toggle keeps its place right after the swap button; a
+    rebuilt panel releases both and the mode sync first (the registry's stale check)."""
+    from managers.settings_manager import get_settings
+    from apps.widgets.panel_controllers.center_drawing_registry import ensure_center_controllers
+    from apps.widgets.panel_controllers.tajika_center_controller import TajikaCenterController
+    from apps.widgets.panel_controllers.vedic_center_controller import VedicCenterController
+    return ensure_center_controllers(
+        gui, (VedicCenterController, TajikaCenterController), get_settings())
+
+
 def relayout_info_panels(gui):
-    """Recalculate all structural dimensions after font/scale change."""
+    """Recalculate all structural dimensions after font/scale change.
+
+    SPEC-LAYOUT-001 D3: body minimums are set HERE, inside the stack, never
+    on the stack: no minimum height (the bodies scroll inside themselves, the
+    InfoPanelStack splitter decides the heights) and a small width floor (a
+    narrow column squeezes the table columns; the font-derived width that
+    decides the magazine layout is info_panel_stack.body_need_width)."""
     tables = [
-        (gui.karakas_table, 'tables', 19, 28, 5),
-        (gui.hora_table, 'tables', 11, 20, 6),
-        (gui.trimsamsa_table, 'tables', 11, 20, 6),
-        (gui.strength_table, 'tables', 19, 28, 5),
-        (gui.elements_table, 'tables', 44, 50, 4),
-        (gui.modality_table, 'tables', 64, 70, 3),
-        (gui.dignities_table, 'tables', 13, 22, 8),
-        (gui.aspects_table, 'tables', 15, 24, 5),
-        (gui.avastha_table, 'tables', 8, 18, 7),
-        (gui.tajika_matrix_table, 'tables', 11, 20, 6),
-        (gui.tajika_rel_table, 'tables', 13, 22, 5),
+        (gui.karakas_table, 'tables', 19, 28),
+        (gui.hora_table, 'tables', 11, 20),
+        (gui.trimsamsa_table, 'tables', 11, 20),
+        (gui.strength_table, 'tables', 19, 28),
+        (gui.elements_table, 'tables', 44, 50),
+        (gui.modality_table, 'tables', 64, 70),
+        (gui.dignities_table, 'tables', 13, 22),   # td-m6xyo: inside the VARGA panel, scrolls
+        (gui.aspects_table, 'tables', 15, 24),
+        (gui.avastha_table, 'tables', 8, 18),
+        (gui.tajika_matrix_table, 'tables', 11, 20),
+        (gui.tajika_rel_table, 'tables', 13, 22),
     ]
 
     col_hdr_h = _column_header_height()
-    for table, area, pad, min_h, min_vis in tables:
+    body_w = _body_min_width()
+    for table, area, pad, min_h in tables:
         if table is not None:
             row_h = _table_row_height(area, pad, min_h)
             table.verticalHeader().setDefaultSectionSize(row_h)
-            table.horizontalHeader().setFixedHeight(col_hdr_h)
-            table.setMinimumHeight(min_vis * row_h)
+            _fit_column_header(table, col_hdr_h)
+            table.setMinimumSize(body_w, 0)
             table.updateGeometry()
 
-    base_min = max(80, scaled_area_px('tables') * 8)
+    from apps.widgets.panel_controllers.center_drawing_registry import center_controllers
+    for center in center_controllers(gui):
+        center.refresh_size()   # SPEC-TJK-003 / SPEC-VAC-001: the virupa rails follow the font
+
     for widget_name in ['shame_display', 'tajika_placeholder',
-                        'exchange_display', 'nabhasa_display']:
+                        'exchange_display', 'nabhasa_display', 'house_graph_bars']:
         widget = getattr(gui, widget_name, None)
         if widget is not None:
-            widget.setMinimumHeight(base_min)
+            widget.setMinimumSize(body_w, 0)
 
     if hasattr(gui, 'house_graph_bars') and gui.house_graph_bars is not None:
         gui.house_graph_bars.updateGeometry()
@@ -211,11 +298,18 @@ def relayout_info_panels(gui):
         if stack is not None:
             stack.updateGeometry()
 
-    header_h = max(28, scaled_area_px('panel_titles') + 8)
-    for header in [gui.karakas_header, gui.strength_header,
-                   gui.aspects_header]:
-        if header is not None:
-            header.setFixedHeight(header_h)
+    # SPEC-PANELS-001 §2.6: the painted headers re-measure from the live font.
+    from apps.widgets.panel_header import refresh_panel_headers
+    refresh_panel_headers(gui)
+
+    # td-m6xyo (R1 review F6): the VARGA panel bakes scaled_area_px into its
+    # header / chip / key styles; a font or Display Scale change restyles it
+    # with the tables (now when on screen, else just before it is next shown).
+    from apps.panels.varga_panel import VargaPanel
+    from managers.font_refresh_deferral import refresh_now_or_on_show
+    stack = gui.strength_elements_stack
+    for varga_panel in (stack.findChildren(VargaPanel) if stack is not None else ()):
+        refresh_now_or_on_show(varga_panel, varga_panel.refresh_theme, gui)
 
 
 def create_right_panels(gui):
@@ -229,18 +323,16 @@ def create_right_panels(gui):
         QWidget: The combined panel widget
     """
     global INFO_PANEL_WIDTH
-    INFO_PANEL_WIDTH = info_panel_width()
+    INFO_PANEL_WIDTH = info_panel_width(gui)
 
     # Get theme colors for dynamic theming
     theme = get_theme_colors()
 
-    panel = QWidget()
+    from apps.widgets.info_panel_stack import InfoPanelStack
+    panel = InfoPanelStack()   # SPEC-LAYOUT-001 frozen API (stream B fills it)
     panel.setFixedWidth(INFO_PANEL_WIDTH)
     panel.setStyleSheet(get_panel_style())
 
-    layout = QVBoxLayout(panel)
-    layout.setSpacing(2)
-    layout.setContentsMargins(5, 5, 5, 5)
 
     # === KARAKAS / HORA / TRIMSAMSA PANEL (with inline tabs) ===
     karakas_frame = QWidget()
@@ -250,157 +342,44 @@ def create_right_panels(gui):
     karakas_layout.setSpacing(2)
     karakas_layout.setContentsMargins(5, 5, 5, 5)
 
-    # Header with inline tab buttons (theme-aware colors)
-    karakas_header = QWidget()
-    karakas_header.setFixedHeight(max(28, scaled_area_px('panel_titles') + 8))
+    # Header: SPEC-PANELS-001 §2.6 Inspector Underline (painted, theme-live)
+    karakas_header = PanelHeader()
     gui.karakas_header = karakas_header
-    karakas_header.setStyleSheet(f"""
-        QWidget {{
-            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                stop:0 {theme["primary_light"]},
-                stop:1 {theme["primary"]});
-            border-radius: 6px;
-        }}
-    """)
     karakas_header_layout = QHBoxLayout(karakas_header)
-    karakas_header_layout.setContentsMargins(8, 2, 8, 2)
+    karakas_header_layout.setContentsMargins(8, 0, 8, 0)
 
-    # Tab button styles (will be stored on gui by Strength panel below)
-    _k_tab_active = f"""
-        QPushButton {{
-            color: {theme['primary_text']}; font-size: {scaled_area_px('panel_titles')}px; font-weight: bold;
-            background: transparent; border: none;
-            border-bottom: 2px solid {theme['primary_text']}; padding: 2px 8px;
-        }}
-    """
-    _k_tab_inactive = f"""
-        QPushButton {{
-            color: {theme['primary_text']}; font-size: {scaled_area_px('panel_titles')}px; font-weight: normal;
-            background: transparent; border: none;
-            border-bottom: 2px solid transparent; padding: 2px 8px; opacity: 0.7;
-        }}
-        QPushButton:hover {{ border-bottom: 2px solid rgba(255,255,255,0.5); }}
-    """
-
-    _sep_style = f"QLabel {{ color: {theme['primary_text']}; font-size: {scaled_area_px('panel_titles')}px; background: transparent; opacity: 0.5; }}"
-
-    # Build swap icon inline (same SVG as strength panel, defined here for reuse)
-    import os
-    _swap_icon_path = os.path.normpath(os.path.join(os.path.dirname(__file__), '..', '..', 'img', 'icons', 'swap_arrows.svg'))
-    _karakas_swap_icon_style = f"""
-        QPushButton {{ background: {theme["secondary_dark"]}; border: 1px solid {theme["primary"]};
-            border-radius: {scaled_px(4)}px; padding: 0px; }}
-        QPushButton:hover {{ background: {theme["primary"]}; border-color: {theme["primary_light"]}; }}
-    """
-
-    def _make_karakas_swap_icon(color=None):
-        if color is None:
-            color = theme["primary_text"]
-        try:
-            with open(_swap_icon_path, "r") as f:
-                svg = f.read()
-            svg = svg.replace('stroke="white"', f'stroke="{color}"')
-            from PySide6.QtSvg import QSvgRenderer
-            from PySide6.QtGui import QPixmap, QPainter
-            renderer = QSvgRenderer(svg.encode())
-            pm = QPixmap(scaled_px(16), scaled_px(13))
-            pm.fill(Qt.GlobalColor.transparent)
-            p = QPainter(pm)
-            renderer.render(p)
-            p.end()
-            return QIcon(pm)
-        except Exception:
-            return QIcon()
-
-    gui.karakas_tab_btn = QPushButton("Karakas")
-    gui.karakas_tab_btn.setStyleSheet(_k_tab_active)
-    gui.karakas_tab_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+    gui.karakas_tab_btn = HeaderTab("Karakas")
+    gui.karakas_tab_btn.set_active(True)
     karakas_header_layout.addWidget(gui.karakas_tab_btn)
 
-    sep1 = QLabel("|")
-    sep1.setStyleSheet(_sep_style)
-    karakas_header_layout.addWidget(sep1)
-
-    gui.hora_tab_btn = QPushButton("Hora")
-    gui.hora_tab_btn.setStyleSheet(_k_tab_inactive)
-    gui.hora_tab_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+    gui.hora_tab_btn = HeaderTab("Hora")
     karakas_header_layout.addWidget(gui.hora_tab_btn)
 
-    sep2 = QLabel("|")
-    sep2.setStyleSheet(_sep_style)
-    karakas_header_layout.addWidget(sep2)
-
-    gui.trimsamsa_tab_btn = QPushButton("Trim")
-    gui.trimsamsa_tab_btn.setStyleSheet(_k_tab_inactive)
-    gui.trimsamsa_tab_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+    gui.trimsamsa_tab_btn = HeaderTab("Trim")
     karakas_header_layout.addWidget(gui.trimsamsa_tab_btn)
 
-    sep3 = QLabel("|")
-    sep3.setStyleSheet(_sep_style)
-    karakas_header_layout.addWidget(sep3)
-
-    gui.graph_tab_btn = QPushButton("Houses")
-    gui.graph_tab_btn.setStyleSheet(_k_tab_inactive)
-    gui.graph_tab_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+    gui.graph_tab_btn = HeaderTab("Houses")
     karakas_header_layout.addWidget(gui.graph_tab_btn)
 
-    # Swap button at the end (same position as strength panel)
-    gui.karakas_swap_btn = QPushButton()
-    gui.karakas_swap_btn.setIcon(_make_karakas_swap_icon())
-    gui.karakas_swap_btn.setIconSize(QSize(scaled_px(16), scaled_px(13)))
-    gui.karakas_swap_btn.setFixedSize(scaled_px(24), scaled_px(20))
-    gui.karakas_swap_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+    # Swap button at the end (same position and widget in all three panels)
+    gui.karakas_swap_btn = HeaderSwapButton()
     gui.karakas_swap_btn.setToolTip("Toggle enriched views: Karakas+/Condition")
-    gui.karakas_swap_btn.setStyleSheet(_karakas_swap_icon_style)
     karakas_header_layout.addWidget(gui.karakas_swap_btn)
 
     karakas_header_layout.addStretch()
     karakas_layout.addWidget(karakas_header)
 
-    # Store tab styles for karakas panel switching
-    gui._karakas_tab_active_style = _k_tab_active
-    gui._karakas_tab_inactive_style = _k_tab_inactive
-
     # === STACKED WIDGET for Karakas/Hora/Trimsamsa ===
     gui.karakas_stack = QStackedWidget()
-    gui.karakas_stack.setMinimumHeight(_stack_min_height(5, 'tables', 19, 28))
 
     # --- Shared table style ---
-    _table_style = f"""
-        QTableWidget {{
-            background-color: {theme["secondary_dark"]};
-            border: none; font-size: {scaled_area_px('tables')}px;
-            gridline-color: {elevation_divider(DIVIDER_ALPHA_MATRIX)};
-        }}
-        QTableWidget::item {{ background-color: transparent; padding: 3px; }}
-        QTableWidget::item:selected {{
-            background-color: {theme["primary"]}; color: {theme["primary_text"]};
-        }}
-        QHeaderView::section {{
-            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                stop:0 {elevation_color(2)}, stop:1 {elevation_color(1)}); color: {theme["secondary_text"]};
-            border: 1px solid {theme["secondary_light"]};
-            padding: 4px; font-size: {scaled_area_px('table_headers')}px; font-weight: bold;
-        }}
-    """ + _THIN_SCROLLBAR_CSS
+    _table_style = info_table_style("table")
 
     # Retinue table style — NO ::item rules so setBackground() works.
     # Qt's stylesheet engine takes total ownership of item painting when
     # ANY QTableWidget::item rule exists, even padding-only. BackgroundRole
     # from setBackground() is ignored. We must avoid ::item entirely.
-    _retinue_table_style = f"""
-        QTableWidget {{
-            background-color: {theme["secondary_dark"]};
-            border: none; font-size: {scaled_area_px('tables')}px;
-            gridline-color: {elevation_divider(DIVIDER_ALPHA_MATRIX)};
-        }}
-        QHeaderView::section {{
-            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                stop:0 {elevation_color(2)}, stop:1 {elevation_color(1)}); color: {theme["secondary_text"]};
-            border: 1px solid {theme["secondary_light"]};
-            padding: 4px; font-size: {scaled_area_px('table_headers')}px; font-weight: bold;
-        }}
-    """ + _THIN_SCROLLBAR_CSS
+    _retinue_table_style = info_table_style("retinue")
 
     # --- Page 0: Karakas Table (existing, unchanged) ---
     gui.karakas_table = QTableWidget()
@@ -412,7 +391,7 @@ def create_right_panels(gui):
     gui.karakas_table.verticalHeader().setVisible(False)
     gui.karakas_table.setShowGrid(True)
     gui.karakas_table.setStyleSheet(_table_style)
-    gui.karakas_table.setMinimumSize(INFO_PANEL_WIDTH - 20, _stack_min_height(5, 'tables', 19, 28))
+    gui.karakas_table.setMinimumSize(_body_min_width(), 0)
     gui.karakas_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
     gui.karakas_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
     gui.karakas_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
@@ -447,7 +426,7 @@ def create_right_panels(gui):
     gui.hora_table.verticalHeader().setVisible(False)
     gui.hora_table.setShowGrid(True)
     gui.hora_table.setStyleSheet(_retinue_table_style)
-    gui.hora_table.setMinimumSize(INFO_PANEL_WIDTH - 20, _stack_min_height(6, 'tables', 11, 20))
+    gui.hora_table.setMinimumSize(_body_min_width(), 0)
     gui.hora_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
     gui.hora_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
     gui.hora_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
@@ -469,7 +448,7 @@ def create_right_panels(gui):
     gui.trimsamsa_table.verticalHeader().setVisible(False)
     gui.trimsamsa_table.setShowGrid(True)
     gui.trimsamsa_table.setStyleSheet(_retinue_table_style)
-    gui.trimsamsa_table.setMinimumSize(INFO_PANEL_WIDTH - 20, _stack_min_height(6, 'tables', 11, 20))
+    gui.trimsamsa_table.setMinimumSize(_body_min_width(), 0)
     gui.trimsamsa_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
     gui.trimsamsa_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
     gui.trimsamsa_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
@@ -488,7 +467,7 @@ def create_right_panels(gui):
     # View 0: House Graph (default)
     from apps.widgets.panel_controllers.house_graph_controller import _HouseBarWidget
     gui.house_graph_bars = _HouseBarWidget(gui_ref=gui)
-    gui.house_graph_bars.setMinimumSize(INFO_PANEL_WIDTH - 20, _stack_min_height(8, 'tables', 4, 16))
+    gui.house_graph_bars.setMinimumSize(_body_min_width(), 0)
     gui.condition_inner_stack.addWidget(gui.house_graph_bars)  # View 0
 
     # View 1: Planetary Condition compact (behind arrow)
@@ -528,9 +507,7 @@ def create_right_panels(gui):
     def _switch_tab(index, active_btn):
         gui.karakas_stack.setCurrentIndex(index)
         _sync_karakas_visibility(index)
-        for btn in _all_tab_btns():
-            btn.setStyleSheet(gui._karakas_tab_active_style if btn is active_btn
-                              else gui._karakas_tab_inactive_style)
+        set_active_tab(_all_tab_btns(), active_btn)
         get_settings().persist_runtime_change("ui.panel.karakas_tab", index)
 
     def switch_to_karakas():
@@ -571,6 +548,7 @@ def create_right_panels(gui):
     def _toggle_enriched():
         gui._karakas_enriched_mode = not gui._karakas_enriched_mode
         enriched = gui._karakas_enriched_mode
+        gui.karakas_swap_btn.set_on(enriched)
         new_idx = 1 if enriched else 0
         gui.karakas_inner_stack.setCurrentIndex(new_idx)
         gui.condition_inner_stack.setCurrentIndex(new_idx)
@@ -598,7 +576,6 @@ def create_right_panels(gui):
 
     # Add small vertical space below
     karakas_layout.addSpacing(2)
-    layout.addWidget(karakas_frame, stretch=1)
 
     # === STRENGTH / ELEMENTS PANEL (with inline tabs) ===
     strength_frame = QWidget()
@@ -608,176 +585,54 @@ def create_right_panels(gui):
     strength_layout.setSpacing(2)
     strength_layout.setContentsMargins(5, 5, 5, 5)
 
-    # Header with inline tab buttons (theme-aware colors)
-    strength_header = QWidget()
-    strength_header.setFixedHeight(max(28, scaled_area_px('panel_titles') + 8))
+    # Header: SPEC-PANELS-001 §2.6 Inspector Underline (painted, theme-live)
+    strength_header = PanelHeader()
     gui.strength_header = strength_header
-    strength_header.setStyleSheet(f"""
-        QWidget {{
-            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                stop:0 {theme["primary_light"]},
-                stop:1 {theme["primary"]});
-            border-radius: 6px;
-        }}
-    """)
     strength_header_layout = QHBoxLayout(strength_header)
-    strength_header_layout.setContentsMargins(8, 2, 8, 2)
+    strength_header_layout.setContentsMargins(8, 0, 8, 0)
 
-    # Tab button style (active vs inactive)
-    tab_active_style = f"""
-        QPushButton {{
-            color: {theme['primary_text']};
-            font-size: {scaled_area_px('panel_titles')}px;
-            font-weight: bold;
-            background: transparent;
-            border: none;
-            border-bottom: 2px solid {theme['primary_text']};
-            padding: 2px 8px;
-        }}
-    """
-    tab_inactive_style = f"""
-        QPushButton {{
-            color: {theme['primary_text']};
-            font-size: {scaled_area_px('panel_titles')}px;
-            font-weight: normal;
-            background: transparent;
-            border: none;
-            border-bottom: 2px solid transparent;
-            padding: 2px 8px;
-            opacity: 0.7;
-        }}
-        QPushButton:hover {{
-            border-bottom: 2px solid rgba(255,255,255,0.5);
-        }}
-    """
-
-    # Strength tab button
-    gui.strength_tab_btn = QPushButton("Strength")
-    gui.strength_tab_btn.setStyleSheet(tab_active_style)
-    gui.strength_tab_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+    gui.strength_tab_btn = HeaderTab("Strength")
+    gui.strength_tab_btn.set_active(True)
     strength_header_layout.addWidget(gui.strength_tab_btn)
 
-    # Separator
-    sep_label = QLabel("|")
-    sep_label.setStyleSheet(f"QLabel {{ color: {theme['primary_text']}; font-size: {scaled_area_px('panel_titles')}px; background: transparent; opacity: 0.5; }}")
-    strength_header_layout.addWidget(sep_label)
-
-    # Elements tab button
-    gui.elements_tab_btn = QPushButton("Elem")
-    gui.elements_tab_btn.setStyleSheet(tab_inactive_style)
-    gui.elements_tab_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+    gui.elements_tab_btn = HeaderTab("Elem")
     strength_header_layout.addWidget(gui.elements_tab_btn)
 
-    # Separator 2
-    sep_label2 = QLabel("|")
-    sep_label2.setStyleSheet(f"QLabel {{ color: {theme['primary_text']}; font-size: {scaled_area_px('panel_titles')}px; background: transparent; opacity: 0.5; }}")
-    strength_header_layout.addWidget(sep_label2)
-
-    # Modes tab button (Movable/Fixed/Dual)
-    gui.modality_tab_btn = QPushButton("Modes")
-    gui.modality_tab_btn.setStyleSheet(tab_inactive_style)
-    gui.modality_tab_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+    gui.modality_tab_btn = HeaderTab("Modes")            # Movable / Fixed / Dual
     strength_header_layout.addWidget(gui.modality_tab_btn)
 
-    # Separator 3
-    sep_label3 = QLabel("|")
-    sep_label3.setStyleSheet(f"QLabel {{ color: {theme['primary_text']}; font-size: {scaled_area_px('panel_titles')}px; background: transparent; opacity: 0.5; }}")
-    strength_header_layout.addWidget(sep_label3)
-
-    # Dignities tab button
-    gui.dignities_tab_btn = QPushButton("Dignities")
-    gui.dignities_tab_btn.setStyleSheet(tab_inactive_style)
-    gui.dignities_tab_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+    gui.dignities_tab_btn = HeaderTab("Varga")   # td-m6xyo: the one-varga VARGA panel
     strength_header_layout.addWidget(gui.dignities_tab_btn)
 
     # Strength header language toggle (Sanskrit ↔ English)
     gui._strength_english_mode = False  # False = Sanskrit (Digbala/Uccha/Chesta), True = English (Direction/Energy/Confidence)
-    import os
-    _swap_icon_path = os.path.normpath(os.path.join(os.path.dirname(__file__), '..', '..', 'img', 'icons', 'swap_arrows.svg'))
-
-    def _make_swap_icon(color=None):
-        """Build a QIcon from the swap_arrows SVG with the given stroke color."""
-        if color is None:
-            color = theme["primary_text"]
-        with open(_swap_icon_path, "r") as f:
-            svg = f.read()
-        svg = svg.replace('stroke="white"', f'stroke="{color}"')
-        from PySide6.QtSvg import QSvgRenderer
-        from PySide6.QtGui import QPixmap, QPainter
-        renderer = QSvgRenderer(svg.encode())
-        pm = QPixmap(scaled_px(16), scaled_px(13))
-        pm.fill(Qt.GlobalColor.transparent)
-        p = QPainter(pm)
-        renderer.render(p)
-        p.end()
-        return QIcon(pm)
-
-    gui._make_swap_icon = _make_swap_icon
-    gui._swap_icon_path = _swap_icon_path
-    gui.strength_lang_btn = QPushButton()
-    gui.strength_lang_btn.setIcon(_make_swap_icon())
-    gui.strength_lang_btn.setIconSize(QSize(scaled_px(16), scaled_px(13)))
-    gui.strength_lang_btn.setFixedSize(scaled_px(24), scaled_px(20))
+    gui.strength_lang_btn = HeaderSwapButton()
     gui.strength_lang_btn.setToolTip("Toggle column headers: Sanskrit ↔ English")
-    gui.strength_lang_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-    gui.strength_lang_btn.setStyleSheet(f"""
-        QPushButton {{ background: {theme["secondary_dark"]}; border: 1px solid {theme["primary"]};
-            border-radius: {scaled_px(4)}px; padding: 0px; }}
-        QPushButton:hover {{ background: {theme["primary"]}; border-color: {theme["primary_light"]}; }}
-    """)
     strength_header_layout.addWidget(gui.strength_lang_btn)
 
     strength_header_layout.addStretch()
     strength_layout.addWidget(strength_header)
 
-    # Store tab styles for switching
-    gui._tab_active_style = tab_active_style
-    gui._tab_inactive_style = tab_inactive_style
-
     # === STACKED WIDGET for Strength/Elements tables ===
     gui.strength_elements_stack = QStackedWidget()
-    gui.strength_elements_stack.setMinimumHeight(_stack_min_height(5, 'tables', 19, 28))
 
     # --- Page 0: Strength Table ---
-    gui.strength_table = QTableWidget()
+    gui.strength_table = StrengthTable()   # td-9scg9: a QTableWidget with room for the switch
     gui.strength_table.setColumnCount(5)
     gui.strength_table.setRowCount(7)
     gui.strength_table.setHorizontalHeaderLabels(["Planet", "Digbala", "Uccha", "Chesta", "DUC Bala"])
     # Tooltips on column headers explaining the Sanskrit terms
-    for col, tip in [(1, "Direction"), (2, "Energy"), (3, "Confidence"),
-                     (4, "Combined strength: (Digbala + Uccha + Chesta) / 3")]:
+    for col, tip in [(1, "Direction"), (2, "Energy"), (3, "Confidence")]:
         item = gui.strength_table.horizontalHeaderItem(col)
         if item:
             item.setToolTip(tip)
+    from apps.widgets.panel_controllers.duc_method import follow_duc_tooltip
+    follow_duc_tooltip(gui.strength_table)   # the formula follows strength.duc_method
     gui.strength_table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
     gui.strength_table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
     gui.strength_table.verticalHeader().setVisible(False)
     gui.strength_table.setShowGrid(True)
-    table_style = f"""
-        QTableWidget {{
-            background-color: {theme["secondary_dark"]};
-            border: none;
-            font-size: {scaled_area_px('tables')}px;
-            gridline-color: {elevation_divider(DIVIDER_ALPHA_MATRIX)};
-        }}
-        QTableWidget::item {{
-            background-color: transparent;
-            padding: 3px;
-        }}
-        QTableWidget::item:selected {{
-            background-color: {theme["primary"]};
-            color: {theme["primary_text"]};
-        }}
-        QHeaderView::section {{
-            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                stop:0 {elevation_color(2)}, stop:1 {elevation_color(1)});
-            color: {theme["secondary_text"]};
-            border: 1px solid {theme["secondary_light"]};
-            padding: 4px;
-            font-size: {scaled_area_px('table_headers')}px;
-            font-weight: bold;
-        }}
-    """ + _THIN_SCROLLBAR_CSS
+    table_style = info_table_style("table")
     gui.strength_table.setStyleSheet(table_style)
     gui.strength_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
     gui.strength_table.verticalHeader().setDefaultSectionSize(_table_row_height('tables', 19, 28))
@@ -785,7 +640,15 @@ def create_right_panels(gui):
     # Apply highlight delegate for high-strength planets
     gui.strength_delegate = StrengthHighlightDelegate(parent=gui.strength_table)
     gui.strength_table.setItemDelegate(gui.strength_delegate)
-    gui.strength_table.setMinimumSize(INFO_PANEL_WIDTH - 20, _stack_min_height(5, 'tables', 19, 28))
+    gui.strength_table.setMinimumSize(_body_min_width(), 0)
+    # SPEC-RST-001 D-20: the strength headers are keys choosing the retinue strength
+    # source (click on / off / switch; F10 and Settings light the same key); the lit
+    # column's values sit on stones in the planet glow colours.
+    from apps.panels.strength_source_keys import install_strength_source_keys
+    install_strength_source_keys(gui.strength_table, gui)
+    # SPEC-RST-001 D-22 (td-9scg9): the V1 | V2 switch below the last planet row.
+    from apps.panels.strength_style_switch import install_strength_style_switch
+    install_strength_style_switch(gui.strength_table, gui)
 
     _bind_panel_popup(gui.strength_table, lambda: open_panel_dialog(gui, "strength"))
     gui.strength_elements_stack.addWidget(gui.strength_table)  # Index 0
@@ -804,7 +667,7 @@ def create_right_panels(gui):
     gui.elements_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
     gui.elements_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
     gui.elements_table.verticalHeader().setDefaultSectionSize(_table_row_height('tables', 44, 50))
-    gui.elements_table.setMinimumSize(INFO_PANEL_WIDTH - 20, _stack_min_height(4, 'tables', 44, 50))
+    gui.elements_table.setMinimumSize(_body_min_width(), 0)
     gui.elements_delegate = StrengthHighlightDelegate(parent=gui.elements_table)
     gui.elements_table.setItemDelegate(gui.elements_delegate)
 
@@ -825,7 +688,7 @@ def create_right_panels(gui):
     gui.modality_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
     gui.modality_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
     gui.modality_table.verticalHeader().setDefaultSectionSize(_table_row_height('tables', 64, 70))
-    gui.modality_table.setMinimumSize(INFO_PANEL_WIDTH - 20, _stack_min_height(3, 'tables', 64, 70))
+    gui.modality_table.setMinimumSize(_body_min_width(), 0)
     gui.modality_delegate = StrengthHighlightDelegate(parent=gui.modality_table)
     gui.modality_table.setItemDelegate(gui.modality_delegate)
 
@@ -844,12 +707,19 @@ def create_right_panels(gui):
     gui.dignities_table.setStyleSheet(table_style)
     gui.dignities_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
     gui.dignities_table.verticalHeader().setDefaultSectionSize(_table_row_height('tables', 13, 22))
-    gui.dignities_table.setMinimumSize(INFO_PANEL_WIDTH - 20, _stack_min_height(8, 'tables', 13, 22))
+    gui.dignities_table.setMinimumSize(_body_min_width(), 0)
     from apps.widgets.panel_controllers.dignities_controller import DignityColorDelegate
     gui.dignities_table.setItemDelegate(DignityColorDelegate(parent=gui.dignities_table))
 
     _bind_panel_popup(gui.dignities_table, lambda: open_panel_dialog(gui, "strength"))
-    gui.strength_elements_stack.addWidget(gui.dignities_table)  # Index 3
+    # td-m6xyo (SPEC-DIG-001 §4.4): page 3 is the one-varga VARGA panel; the full
+    # table lives inside it (its "All vargas" state) and feeds the expand dialog.
+    from apps.panels.varga_panel import VargaPanel
+    varga_panel = VargaPanel(gui, table=gui.dignities_table)
+    if getattr(gui, "dignities_controller", None) is not None:
+        gui.dignities_controller.attach_panel(varga_panel)
+    _bind_panel_popup(varga_panel.list, lambda: open_panel_dialog(gui, "strength"))
+    gui.strength_elements_stack.addWidget(varga_panel)  # Index 3
 
     strength_layout.addWidget(gui.strength_elements_stack)
 
@@ -876,6 +746,22 @@ def create_right_panels(gui):
             tip = ""
         gui.strength_lang_btn.setToolTip(tip)
         gui.strength_lang_btn.setVisible(index in (0, 2, 3))
+        _sync_strength_swap_on(index)
+
+    def _sync_strength_swap_on(index=None):
+        """The swap button is ON while the shown tab shows its alternate view:
+        English headers (Strength), Yoga terms (Modes). On Varga it cycles a
+        three-way style that Settings can also change, so it stays a plain
+        button there (no ON state to go stale)."""
+        if index is None:
+            index = gui.strength_elements_stack.currentIndex()
+        on = False
+        if index == 0:
+            on = bool(gui._strength_english_mode)
+        elif index == 2:
+            ctrl = getattr(gui, "modality_controller", None)
+            on = bool(ctrl and ctrl.yoga_mode)
+        gui.strength_lang_btn.set_on(on)
 
     def _sync_strength_visibility(index):
         """td-7932: gate the 4 eager controllers of this stack on visibility —
@@ -892,8 +778,7 @@ def create_right_panels(gui):
     def _switch_strength_tab(index, active_btn):
         gui.strength_elements_stack.setCurrentIndex(index)
         _sync_strength_visibility(index)
-        for btn in _all_strength_tabs():
-            btn.setStyleSheet(gui._tab_active_style if btn is active_btn else gui._tab_inactive_style)
+        set_active_tab(_all_strength_tabs(), active_btn)
         _update_lang_btn_tooltip(index)
         get_settings().persist_runtime_change("ui.panel.strength_tab", index)
 
@@ -925,9 +810,8 @@ def create_right_panels(gui):
                 item.setToolTip(english if not gui._strength_english_mode else sanskrit)
         # DUC Bala is a proper name (Dig-Uccha-Chesta), same in both languages.
         # setHorizontalHeaderLabels rebuilt the header items, so re-apply its tooltip.
-        duc_item = gui.strength_table.horizontalHeaderItem(4)
-        if duc_item:
-            duc_item.setToolTip("Combined strength: (Digbala + Uccha + Chesta) / 3")
+        from apps.widgets.panel_controllers.duc_method import apply_duc_tooltip
+        apply_duc_tooltip(gui.strength_table)
 
     def _toggle_modality_yoga():
         ctrl = getattr(gui, "modality_controller", None)
@@ -954,14 +838,7 @@ def create_right_panels(gui):
             _toggle_modality_yoga()
         elif active_idx == 3:
             _toggle_dignities_style()
-
-    def _on_modality_row_clicked(row, _col):
-        ctrl = getattr(gui, "modality_controller", None)
-        if ctrl and ctrl.yoga_mode:
-            from apps.widgets.panel_controllers.modality_controller import ModalityController
-            ModalityController.show_yoga_detail(gui, row)
-
-    gui.modality_table.cellClicked.connect(_on_modality_row_clicked)
+        _sync_strength_swap_on(active_idx)
 
     gui.strength_tab_btn.clicked.connect(switch_to_strength)
     gui.elements_tab_btn.clicked.connect(switch_to_elements)
@@ -982,7 +859,6 @@ def create_right_panels(gui):
 
     # Add small vertical space below
     strength_layout.addSpacing(2)
-    layout.addWidget(strength_frame, stretch=1)
 
     # === ASPECTS / AVASTHA / SHAME PANEL (with inline tabs) ===
     aspects_frame = QWidget()
@@ -992,91 +868,42 @@ def create_right_panels(gui):
     aspects_layout.setSpacing(2)
     aspects_layout.setContentsMargins(5, 5, 5, 5)
 
-    # Header with inline tab buttons (same pattern as Strength panel)
-    aspects_header = QWidget()
-    aspects_header.setFixedHeight(max(28, scaled_area_px('panel_titles') + 8))
+    # Header: SPEC-PANELS-001 §2.6 Inspector Underline (painted, theme-live)
+    aspects_header = PanelHeader()
     gui.aspects_header = aspects_header
-    aspects_header.setStyleSheet(f"""
-        QWidget {{
-            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                stop:0 {theme["primary_light"]},
-                stop:1 {theme["primary"]});
-            border-radius: 6px;
-        }}
-    """)
     aspects_header_layout = QHBoxLayout(aspects_header)
-    aspects_header_layout.setContentsMargins(8, 2, 8, 2)
+    aspects_header_layout.setContentsMargins(8, 0, 8, 0)
 
-    # Vedic/Tajika mode toggle button
+    # Vedic/Tajika mode toggle button (ON = Tajika)
     gui._aspects_mode = "vedic"  # default mode
-    gui.aspects_mode_btn = QPushButton()
-    gui.aspects_mode_btn.setIcon(_make_swap_icon())
-    gui.aspects_mode_btn.setIconSize(QSize(scaled_px(16), scaled_px(13)))
-    gui.aspects_mode_btn.setFixedSize(scaled_px(24), scaled_px(20))
+    gui.aspects_mode_btn = HeaderSwapButton()
     gui.aspects_mode_btn.setToolTip("Toggle: Vedic ↔ Tajika aspects")
-    gui.aspects_mode_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-    gui.aspects_mode_btn.setStyleSheet(f"""
-        QPushButton {{ background: {theme["secondary_dark"]}; border: 1px solid {theme["primary"]};
-            border-radius: {scaled_px(4)}px; padding: 0px; }}
-        QPushButton:hover {{ background: {theme["primary"]}; border-color: {theme["primary_light"]}; }}
-    """)
 
-    # Aspects tab button (active by default)
-    gui.aspects_tab_btn = QPushButton("Aspects V")
-    gui.aspects_tab_btn.setStyleSheet(tab_active_style)
-    gui.aspects_tab_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+    gui.aspects_tab_btn = HeaderTab("Aspects V")      # active by default
+    gui.aspects_tab_btn.set_active(True)
     aspects_header_layout.addWidget(gui.aspects_tab_btn)
 
-    # Separator
-    asp_sep1 = QLabel("|")
-    asp_sep1.setStyleSheet(f"QLabel {{ color: {theme['primary_text']}; font-size: {scaled_area_px('panel_titles')}px; background: transparent; opacity: 0.5; }}")
-    aspects_header_layout.addWidget(asp_sep1)
-
-    # Avastha tab button
-    gui.avastha_tab_btn = QPushButton("Avastha")
-    gui.avastha_tab_btn.setStyleSheet(tab_inactive_style)
-    gui.avastha_tab_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+    gui.avastha_tab_btn = HeaderTab("Avastha")
     gui.avastha_tab_btn.setToolTip(
         "Avastha — click again to refine by strength: Duc / Dig / Uccha / Chesta")
     aspects_header_layout.addWidget(gui.avastha_tab_btn)
 
-    # Separator
-    asp_sep2 = QLabel("|")
-    asp_sep2.setStyleSheet(f"QLabel {{ color: {theme['primary_text']}; font-size: {scaled_area_px('panel_titles')}px; background: transparent; opacity: 0.5; }}")
-    aspects_header_layout.addWidget(asp_sep2)
-
-    # Shame tab button
-    gui.shame_tab_btn = QPushButton("Shame")
-    gui.shame_tab_btn.setStyleSheet(tab_inactive_style)
-    gui.shame_tab_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+    gui.shame_tab_btn = HeaderTab("Shame")
     aspects_header_layout.addWidget(gui.shame_tab_btn)
 
-    # Separator (Vedic-only, hidden in Tajika)
-    gui._asp_sep3 = QLabel("|")
-    gui._asp_sep3.setStyleSheet(f"QLabel {{ color: {theme['primary_text']}; font-size: {scaled_area_px('panel_titles')}px; background: transparent; opacity: 0.5; }}")
-    aspects_header_layout.addWidget(gui._asp_sep3)
-
     # Exchange tab button (Vedic-only, hidden in Tajika)
-    gui.exchange_tab_btn = QPushButton("Exch")
-    gui.exchange_tab_btn.setStyleSheet(tab_inactive_style)
-    gui.exchange_tab_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+    gui.exchange_tab_btn = HeaderTab("Exch")
     aspects_header_layout.addWidget(gui.exchange_tab_btn)
 
-    # Separator + "Nabhasa" tab — the 4th TAJIKA-row tab, to the right of the
-    # Tajika "Yogas" (annual) tab, filling the empty space on that row. Hidden in
-    # Vedic mode (which keeps its four tabs uncramped). The Nabhasa panel itself is
-    # a natal calculation (aspects_stack Index 7); it is placed on the Tajika row
-    # only because that row had the spare width. Distinct from the Tajika "Yogas"
+    # "Nabhasa" tab — the 4th TAJIKA-row tab, to the right of the Tajika "Yogas"
+    # (annual) tab, filling the empty space on that row. Hidden in Vedic mode
+    # (which keeps its four tabs uncramped). The Nabhasa panel itself is a natal
+    # calculation (aspects_stack Index 7); it is placed on the Tajika row only
+    # because that row had the spare width. Distinct from the Tajika "Yogas"
     # feature (annual yogas, Index 5) which is untouched.
-    gui._asp_sep4 = QLabel("|")
-    gui._asp_sep4.setStyleSheet(f"QLabel {{ color: {theme['primary_text']}; font-size: {scaled_area_px('panel_titles')}px; background: transparent; opacity: 0.5; }}")
-    aspects_header_layout.addWidget(gui._asp_sep4)
-    gui.nabhasa_tab_btn = QPushButton("Nabhasa")
-    gui.nabhasa_tab_btn.setStyleSheet(tab_inactive_style)
-    gui.nabhasa_tab_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+    gui.nabhasa_tab_btn = HeaderTab("Nabhasa")
     aspects_header_layout.addWidget(gui.nabhasa_tab_btn)
     # Vedic is the default mode -> the Nabhasa tab starts hidden (Tajika-only).
-    gui._asp_sep4.setVisible(False)
     gui.nabhasa_tab_btn.setVisible(False)
 
     aspects_header_layout.addWidget(gui.aspects_mode_btn)
@@ -1085,34 +912,9 @@ def create_right_panels(gui):
 
     # === STACKED WIDGET for Aspects/Avastha/Shame ===
     gui.aspects_stack = QStackedWidget()
-    gui.aspects_stack.setMinimumHeight(_stack_min_height(5, 'tables', 15, 24))
 
     # Common table style for aspects section
-    aspects_table_style = f"""
-        QTableWidget {{
-            background-color: {theme["secondary_dark"]};
-            border: none;
-            font-size: {scaled_area_px('tables')}px;
-            gridline-color: {elevation_divider(DIVIDER_ALPHA_MATRIX)};
-        }}
-        QTableWidget::item {{
-            background-color: transparent;
-            padding: 2px;
-        }}
-        QTableWidget::item:selected {{
-            background-color: {theme["primary"]};
-            color: {theme["primary_text"]};
-        }}
-        QHeaderView::section {{
-            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                stop:0 {elevation_color(2)}, stop:1 {elevation_color(1)});
-            color: {theme["secondary_text"]};
-            border: 1px solid {theme["secondary_light"]};
-            padding: 2px;
-            font-size: {scaled_area_px('table_headers')}px;
-            font-weight: bold;
-        }}
-    """ + _THIN_SCROLLBAR_CSS
+    aspects_table_style = info_table_style("aspects")
 
     # --- Page 0: Aspects Table (existing 7x9 matrix, unchanged) ---
     gui.aspects_table = QTableWidget()
@@ -1132,10 +934,19 @@ def create_right_panels(gui):
 
     gui.aspects_delegate = AspectHighlightDelegate(parent=gui.aspects_table)
     gui.aspects_table.setItemDelegate(gui.aspects_delegate)
-    gui.aspects_table.setMinimumSize(INFO_PANEL_WIDTH - 20, _stack_min_height(5, 'tables', 15, 24))
+    gui.aspects_table.setMinimumSize(_body_min_width(), 0)
 
     _bind_panel_popup(gui.aspects_table, lambda: open_panel_dialog(gui, "aspects"))
-    gui.aspects_stack.addWidget(gui.aspects_table)  # Index 0
+    # SPEC-VAC-001 §4.4: the page holds the matrix and the virupa rail under it; the key
+    # headers, the center toggle and their state come with VedicCenterController.
+    from apps.panels.vedic_center_keys import VedicVirupaRail
+    _vedic_page = QWidget()
+    _vedic_page_layout = QVBoxLayout(_vedic_page)
+    _vedic_page_layout.setContentsMargins(0, 0, 0, 0)
+    _vedic_page_layout.setSpacing(2)
+    _vedic_page_layout.addWidget(gui.aspects_table)
+    _vedic_page_layout.addWidget(VedicVirupaRail(_vedic_page))
+    gui.aspects_stack.addWidget(_vedic_page)  # Index 0
 
     # --- Page 1: Avastha Table (7x7 + TOTAL/POS/NEG/SIGN/HORA/TRIMSAMSA rows) ---
     # SPEC-AVA-001 §12.2 (rev4): 13 rows — matrix 0-6, TOTAL 7, POS 8, NEG 9,
@@ -1162,10 +973,11 @@ def create_right_panels(gui):
 
     gui.avastha_delegate = AvasthaHighlightDelegate(parent=gui.avastha_table)
     gui.avastha_table.setItemDelegate(gui.avastha_delegate)
-    # 13 rows (rev4): size the table to lay out every row (matrix + TOTAL/POS/NEG
-    # + SIGN/HORA/TRIMSAMSA); the info panel's own scroll area handles overflow so
-    # the retinue rows are not stranded below an internal table scrollbar.
-    gui.avastha_table.setMinimumSize(INFO_PANEL_WIDTH - 20, _stack_min_height(13, 'tables', 8, 18))
+    # 13 rows (rev4). SPEC-LAYOUT-001 D3: the panel height comes from the
+    # InfoPanelStack splitter (its "fit" snap and AUTO rule show every row);
+    # below that the table scrolls inside itself. The room the 5-char dignity
+    # diagonals ("MK105") need is in info_panel_stack.body_need_width.
+    gui.avastha_table.setMinimumSize(_body_min_width(), 0)
 
     _bind_panel_popup(gui.avastha_table, lambda: open_panel_dialog(gui, "aspects"))
     # SPEC-AVA-001 §12.5: a single click on a SIGN / HORA / TRIMSAMSA cell opens
@@ -1202,7 +1014,7 @@ def create_right_panels(gui):
             font-family: monospace;
         }}
     """)
-    gui.shame_display.setMinimumSize(INFO_PANEL_WIDTH - 20, max(80, scaled_area_px('tables') * 8))
+    gui.shame_display.setMinimumSize(_body_min_width(), 0)
 
     _bind_panel_popup(gui.shame_display, lambda: open_panel_dialog(gui, "aspects"))
     gui.aspects_stack.addWidget(gui.shame_display)  # Index 2
@@ -1228,10 +1040,19 @@ def create_right_panels(gui):
 
     gui.tajika_delegate = TajikaHighlightDelegate(parent=gui.tajika_matrix_table)
     gui.tajika_matrix_table.setItemDelegate(gui.tajika_delegate)
-    gui.tajika_matrix_table.setMinimumSize(INFO_PANEL_WIDTH - 20, _stack_min_height(6, 'tables', 11, 20))
+    gui.tajika_matrix_table.setMinimumSize(_body_min_width(), 0)
 
     _bind_panel_popup(gui.tajika_matrix_table, lambda: open_panel_dialog(gui, "aspects"))
-    gui.aspects_stack.addWidget(gui.tajika_matrix_table)  # Index 3
+    # SPEC-TJK-003 §4.4: the page holds the matrix and the virupa rail under it; the
+    # key headers, the center toggle and their state come with TajikaCenterController.
+    from apps.panels.tajika_center_keys import VirupaRail
+    _tajika_page = QWidget()
+    _tajika_page_layout = QVBoxLayout(_tajika_page)
+    _tajika_page_layout.setContentsMargins(0, 0, 0, 0)
+    _tajika_page_layout.setSpacing(2)
+    _tajika_page_layout.addWidget(gui.tajika_matrix_table)
+    _tajika_page_layout.addWidget(VirupaRail(_tajika_page))
+    gui.aspects_stack.addWidget(_tajika_page)  # Index 3
 
     # --- Page 4: Tajika Relationships (table with shape icons) ---
     gui.tajika_rel_table = QTableWidget()
@@ -1250,7 +1071,7 @@ def create_right_panels(gui):
 
     gui.tajika_rel_delegate = TajikaHighlightDelegate(parent=gui.tajika_rel_table)
     gui.tajika_rel_table.setItemDelegate(gui.tajika_rel_delegate)
-    gui.tajika_rel_table.setMinimumSize(INFO_PANEL_WIDTH - 20, _stack_min_height(5, 'tables', 13, 22))
+    gui.tajika_rel_table.setMinimumSize(_body_min_width(), 0)
 
     # No ZoomableContainer — this table needs native scrolling
     gui.aspects_stack.addWidget(gui.tajika_rel_table)  # Index 4
@@ -1275,7 +1096,7 @@ def create_right_panels(gui):
             </p>
         </div>
     """)
-    gui.tajika_placeholder.setMinimumSize(INFO_PANEL_WIDTH - 20, max(80, scaled_area_px('tables') * 8))
+    gui.tajika_placeholder.setMinimumSize(_body_min_width(), 0)
 
     # No ZoomableContainer — QTextEdit has native scrolling
     gui.aspects_stack.addWidget(gui.tajika_placeholder)  # Index 5
@@ -1288,7 +1109,7 @@ def create_right_panels(gui):
     # refresh_theme(); it must NOT receive a QTextBrowser stylesheet (H2).
     from apps.widgets.parivartana_widget import ParivartanaWidget
     gui.exchange_display = ParivartanaWidget()
-    gui.exchange_display.setMinimumSize(INFO_PANEL_WIDTH - 20, max(80, scaled_area_px('tables') * 8))
+    gui.exchange_display.setMinimumSize(_body_min_width(), 0)
 
     # Double-click pop-out: _bind_panel_popup filters the widget AND its
     # viewport() if present; ParivartanaWidget.viewport() returns its inner
@@ -1302,7 +1123,7 @@ def create_right_panels(gui):
     # refresh_theme() (H2); it must NOT receive a QTextBrowser stylesheet.
     from apps.widgets.nabhasa_widget import NabhasaWidget
     gui.nabhasa_display = NabhasaWidget()
-    gui.nabhasa_display.setMinimumSize(INFO_PANEL_WIDTH - 20, max(80, scaled_area_px('tables') * 8))
+    gui.nabhasa_display.setMinimumSize(_body_min_width(), 0)
     _bind_panel_popup(gui.nabhasa_display, lambda: open_panel_dialog(gui, "aspects"))
     gui.aspects_stack.addWidget(gui.nabhasa_display)  # Index 7
 
@@ -1319,8 +1140,9 @@ def create_right_panels(gui):
         """
         fourth = gui.nabhasa_tab_btn if gui._aspects_mode == "tajika" else gui.exchange_tab_btn
         btns = [gui.aspects_tab_btn, gui.avastha_tab_btn, gui.shame_tab_btn, fourth]
-        for i, btn in enumerate(btns):
-            btn.setStyleSheet(gui._tab_active_style if i == active_idx else gui._tab_inactive_style)
+        set_active_tab([gui.aspects_tab_btn, gui.avastha_tab_btn, gui.shame_tab_btn,
+                        gui.exchange_tab_btn, gui.nabhasa_tab_btn],
+                       btns[active_idx] if 0 <= active_idx < len(btns) else None)
 
     def _sync_aspects_eager(active_idx):
         """td-7932: gate the EAGER members of aspects_stack — aspects (0) and the
@@ -1514,10 +1336,9 @@ def create_right_panels(gui):
             gui.avastha_tab_btn.setToolTip("Tajika planetary relationships")
             gui.shame_tab_btn.setText("Yogas")
             gui.exchange_tab_btn.setVisible(False)
-            gui._asp_sep3.setVisible(False)
             # Tajika row: reveal the 4th "Nabhasa" tab (Vedic hides it).
             gui.nabhasa_tab_btn.setVisible(True)
-            gui._asp_sep4.setVisible(True)
+            gui.aspects_mode_btn.set_on(True)
             switch_to_tajika_matrix()
         else:
             gui._aspects_mode = "vedic"
@@ -1532,16 +1353,19 @@ def create_right_panels(gui):
                 "Avastha — click again to refine by strength: Duc / Dig / Uccha / Chesta")
             gui.shame_tab_btn.setText("Shame")
             gui.exchange_tab_btn.setVisible(True)
-            gui._asp_sep3.setVisible(True)
             # Vedic row keeps four tabs; the Nabhasa tab is Tajika-only.
             gui.nabhasa_tab_btn.setVisible(False)
-            gui._asp_sep4.setVisible(False)
+            gui.aspects_mode_btn.set_on(False)
             switch_to_aspects()
         # Toggling mode jumps to the first tab of the new mode.
         get_settings().persist_runtime_change("ui.panel.aspects_mode", gui._aspects_mode)
         get_settings().persist_runtime_change("ui.panel.aspects_tab", 0)
 
     gui.aspects_mode_btn.clicked.connect(toggle_aspects_mode)
+    # SPEC-TJK-003 / SPEC-VAC-001: the center drawings' toggles, keys and rails (needs
+    # the main window)
+    if callable(getattr(gui, "_ensure_controller", None)):
+        create_center_controllers(gui)
 
     # Store switch functions for external use
     gui.switch_to_aspects_tab = switch_to_aspects
@@ -1561,7 +1385,6 @@ def create_right_panels(gui):
 
     # Add small spacing below
     aspects_layout.addSpacing(2)
-    layout.addWidget(aspects_frame, stretch=1)
 
     # === COLUMN HEADER HEIGHTS (compact, font-scaled) ===
     col_hdr_h = _column_header_height()
@@ -1570,7 +1393,7 @@ def create_right_panels(gui):
                 gui.dignities_table, gui.aspects_table, gui.avastha_table,
                 gui.tajika_matrix_table, gui.tajika_rel_table]:
         if tbl is not None:
-            tbl.horizontalHeader().setFixedHeight(col_hdr_h)
+            _fit_column_header(tbl, col_hdr_h)
 
     # === DOUBLE-CLICK FULLSCREEN POPUP (also on headers + frame backgrounds) ===
     # No sub-tab argument here on purpose: open_panel_dialog resolves the live
@@ -1600,4 +1423,11 @@ def create_right_panels(gui):
             _hdr.setToolTip(_tip)
             _hdr.setCursor(Qt.CursorShape.PointingHandCursor)
 
+    # SPEC-LAYOUT-001 stream B: the stack places the three frames (splitter,
+    # folds, magazine layout); their names, stacks and sub-tab indices stay.
+    panel.attach_panels(gui, {
+        "karakas": (karakas_frame, karakas_header, gui.karakas_stack),
+        "strength": (strength_frame, strength_header, gui.strength_elements_stack),
+        "bottom": (aspects_frame, aspects_header, gui.aspects_stack),
+    })
     return panel

@@ -60,7 +60,7 @@ class ActionBarLayoutController(ThemedStyleMixin):
     def __init__(self, bar, gui, metrics: BarMetrics, tokens_fn, *,
                  buttons: dict, toggles_cluster, zod_cluster, sep_s3,
                  tray, title_well, meta, overflow_btn,
-                 hd_visible: bool):
+                 hd_visible: bool, pair=None):
         self._bar = bar
         self._gui = gui
         self._m = metrics
@@ -90,6 +90,13 @@ class ActionBarLayoutController(ThemedStyleMixin):
         self._applied_tier = -1                  # force the first apply
         # doc §1.5: meta re-evaluates on well resize AND name/meta rewrites
         title_well.on_content_changed = self._update_meta
+        # SPEC-DUAL-001 §4.1: the pill pair (one well, or A ⇄ B). Its minimum
+        # width is the centre slot of required(d); a mode / B / content change
+        # rebuilds the table (S12).
+        self._pair = pair
+        if pair is not None:
+            pair.on_pair_changed = self._on_pair_changed
+            pair.well_b.on_content_changed = self._update_meta
 
     # ------------------------------------------------------------------ table
     def required(self, d: int) -> int:
@@ -138,9 +145,13 @@ class ActionBarLayoutController(ThemedStyleMixin):
         # equivalence): the mid surplus-spacer keeps the layout at 4 track gaps
         # (the spacer suppresses only its own extra spacing, not an existing
         # widget<->widget gap), same as the rev2 uncapped-well layout.
+        # SPEC-DUAL-001 §4.1: the centre slot is the pill pair's mandatory
+        # width (one well: title_min_w + the switch box; two: both wells +
+        # ⇄ + gaps), so the tier table follows the mode.
+        centre = self._pair.min_width() if self._pair is not None else m.title_min_w
         return round(2 * m.side_pad + 4 * m.track_gap
                      + m.grp_margin + left
-                     + SEP + m.title_min_w + SEP
+                     + SEP + centre + SEP
                      + m.grp_margin + right)
 
     def _compute_table(self):
@@ -207,7 +218,17 @@ class ActionBarLayoutController(ThemedStyleMixin):
     def set_metrics(self, metrics: BarMetrics):
         self._m = metrics
         self._applied_tier = -1                  # boxes change: full re-apply
+        if self._pair is not None:               # children reboxed first
+            self._pair.set_metrics(metrics)
+            self._pair.well_a.refresh_min_width()
+            self._pair.well_b.refresh_min_width()
         self.rebuild_table(force_refit=True)
+
+    def _on_pair_changed(self):
+        """SPEC-DUAL-001 S12: mode, B filled / empty, switch box (metrics,
+        language): a new centre minimum, so a new table, forced refit."""
+        if self._required:
+            self.rebuild_table(force_refit=True)
 
     def force_tier(self, d: int):
         """Bypass selection and apply tier d — the T-1 equivalence test and
@@ -271,6 +292,9 @@ class ActionBarLayoutController(ThemedStyleMixin):
         """D-22f: the d0 meta is all-or-nothing (mockup trimMeta) with its
         own one-sided 16px band so a drag cannot park it on a flicker edge."""
         meta, well = self._meta, self._title_well
+        if self._pair is not None and self._pair.is_pair():
+            self._update_pair_meta()
+            return
         # D-23(b) / F2: an active overlay chip carries the identity, so the
         # meta yields to it entirely (the mockup's trimMeta hides #chartMeta
         # once the chip is present) — regardless of tier or fit.
@@ -284,17 +308,56 @@ class ActionBarLayoutController(ThemedStyleMixin):
             return
         lay = well.layout()
         margins = lay.contentsMargins()
+        others = [lay.itemAt(i).widget() for i in range(lay.count())]
+        others = [w for w in others
+                  if w is not None and w is not meta and not w.isHidden()]
+        # every shown child but the meta, plus one gap each (the meta adds
+        # one more child to the row: name|meta, meta|switch, switch|close)
         available = (well.width() - margins.left() - margins.right()
-                     - well.name_btn.width()
-                     - 3 * lay.spacing()          # name|meta, meta|chev slot,
-                     - well.close_btn.width())    #   chev|close
-        if self._meta_shown:
+                     - sum(w.width() for w in others)
+                     - len(others) * lay.spacing())
+        # SPEC-DUAL-001: the band guards a DRAG (small steps across the edge).
+        # A jump (a fresh layout, a maximise, the first real width after
+        # construction) is judged fresh, like the mockup's trimMeta, so the
+        # meta at a given width no longer depends on the widths before it —
+        # the COMPARE switch left 1920 px with less than the band's slack.
+        prev, self._meta_avail = getattr(self, "_meta_avail", None), available
+        jump = prev is None or abs(available - prev) > 2 * _HYSTERESIS_PX
+        if self._meta_shown or jump:
             show = meta.width() <= available          # hide the moment it hits
         else:
             show = meta.width() + _HYSTERESIS_PX <= available
         if show != self._meta_shown:
             self._meta_shown = show
             meta.setVisible(show)
+
+    def _update_pair_meta(self):
+        """SPEC-DUAL-001 §4.1 three-level density, pair only: full meta for
+        both wells when both fit, else the short meta for both, else names
+        only. ONE decision for both wells, from the arithmetic the tier table
+        uses (the pair's share of the bar), with a 16 px band on the way back
+        up (D-22f)."""
+        pair = self._pair
+        cur = pair.meta_level()
+        level = 2
+        if self._applied_tier < META_HIDDEN_FROM and self._required:
+            tier = max(0, self._applied_tier)
+            avail = self._bar.width() - (self._required[tier] - pair.min_width())
+            for cand in (0, 1):
+                need = pair.natural_width(cand) + (_HYSTERESIS_PX if cand < cur else 0)
+                if need <= avail:
+                    level = cand
+                    break
+        pair.set_meta_level(level)           # idempotent: keeps visibility in step
+        meta = self._meta
+        show_a = (level < 2 and bool(meta.shown_text())
+                  and not getattr(self._gui, "_overlay_chip_active", False))
+        if meta.isHidden() == show_a:
+            meta.setVisible(show_a)
+        self._meta_shown = show_a
+
+    def pair_meta_level(self) -> int:
+        return self._pair.meta_level() if self._pair is not None else 0
 
     # ---------------------------------------------------- overlay chip info
     def _update_overlay_info(self):
@@ -307,7 +370,9 @@ class ActionBarLayoutController(ThemedStyleMixin):
             return
         # d1+ collapses the info span (mockup `.ovl-info{display:none}`); the
         # painted chip then elides the name alone. Only the tier gate lives here.
-        view.set_collapsed(self._applied_tier >= META_HIDDEN_FROM)
+        # SPEC-DUAL-001 §4.1: in pair mode the chip is always name only.
+        view.set_collapsed(self._applied_tier >= META_HIDDEN_FROM
+                           or (self._pair is not None and self._pair.is_pair()))
 
     # ---------------------------------------------------------- overflow menu
     def _rebuild_overflow_actions(self):

@@ -20,6 +20,7 @@ Color Structure:
 import json
 from pathlib import Path
 from PySide6.QtGui import QFont
+from ui.accent_ink import dark_bar_pure, on_accent_ink  # SPEC-THM-001 §13 (lazy-safe: no qt_theme import at its top)
 
 # =============================================================================
 # LOAD SETTINGS FROM settings.json
@@ -71,27 +72,10 @@ FONT_SIZES = {
 # Base sizes in points for groups of UI regions that scale together. The user
 # gets one spinbox per area in the Pro "Font Sizes" settings page. These compose
 # with the global _scale_factor: effective = base * _scale_factor.
-AREA_DEFAULTS = {
-    "tables": 11,
-    "table_headers": 12,
-    "panel_titles": 14,
-    "info_text": 11,
-    "buttons": 10,
-    # Shared primary/secondary QPushButton helpers (get_primary_button_style /
-    # get_secondary_button_style). Default 12 = EXACT parity with the former
-    # hardcoded scaled_px(12); a separate area from 'buttons' (10) so migrating
-    # the shared helpers is not a size regression.
-    "action_buttons": 12,
-    "sidebar": 10,
-    "chart_memory": 10,
-    "status": 9,
-    "tabs": 12,
-    # Glyph/cusp/degree/planet/ASC text painted directly on the chart wheel,
-    # North-Indian chart, and body graph. Default 16 keeps these primary chart
-    # labels readable at roughly their former size (they were 14-18pt hardcoded;
-    # mapping them onto the smaller generic areas had shrunk them ~20-30%).
-    "chart_labels": 16,
-}
+# The sizes (and their reasons) live in core/settings_registry/font_defaults.py
+# (SPEC-SET-003 W3d), the one place the factory value of display.fonts.* is set.
+from core.settings_registry.font_defaults import FONT_DEFAULTS as _REGISTRY_FONT_DEFAULTS
+AREA_DEFAULTS = dict(_REGISTRY_FONT_DEFAULTS)
 
 _area_overrides = {}   # area_id -> user-chosen base pt size
 
@@ -426,7 +410,7 @@ def get_button_style(accent_name="blue"):
                 min-width: {scaled_px(22)}px; max-width: {scaled_px(22)}px; min-height: {scaled_px(22)}px; max-height: {scaled_px(22)}px;
             }}
             QPushButton:hover {{ background-color: {theme["secondary_light"]}; }}
-            QPushButton:checked {{ background-color: {accent["active"]}; color: {theme["primary_text"]}; }}
+            QPushButton:checked {{ background-color: {accent["active"]}; color: {on_accent_ink(accent["active"], theme["primary_text"])}; }}
         """
     # DARK: frozen backgrounds + dynamic accent
     return f"""
@@ -438,7 +422,7 @@ def get_button_style(accent_name="blue"):
             min-width: {scaled_px(22)}px; max-width: {scaled_px(22)}px; min-height: {scaled_px(22)}px; max-height: {scaled_px(22)}px;
         }}
         QPushButton:hover {{ background-color: {HOVER}; }}
-        QPushButton:checked {{ background-color: {accent["active"]}; color: {get_theme_colors()["primary_text"] if accent_name == "blue" else TEXT_PRIMARY}; }}
+        QPushButton:checked {{ background-color: {accent["active"]}; color: {on_accent_ink(accent["active"]) if accent_name == "blue" else TEXT_PRIMARY}; }}
     """
 
 def get_list_style(accent_name="blue"):
@@ -466,7 +450,7 @@ def get_list_style(accent_name="blue"):
         }}
         QListWidget::item:selected {{
             background-color: {theme["primary"]};
-            color: {theme["primary_text"]};
+            color: {on_accent_ink(theme["primary"], theme["primary_text"])};
         }}
     """
 
@@ -563,7 +547,7 @@ def get_primary_button_style():
             background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
                 stop:0 {accent["light"]},
                 stop:1 {accent["base"]});
-            color: {theme["primary_text"]};
+            color: {on_accent_ink(accent["base"], theme["primary_text"])};
             border: 1px solid {accent["hover"]}; border-radius: 4px; font-size: {scaled_area_px('action_buttons')}px;
             font-weight: bold; padding: {scaled_px(8)}px {scaled_px(16)}px; min-height: {scaled_px(32)}px;
         }}
@@ -573,7 +557,7 @@ def get_primary_button_style():
                 stop:1 {accent["hover"]});
         }}
         QPushButton:pressed {{ background-color: {accent["active"]}; }}
-        QPushButton:disabled {{ background-color: {disabled_bg}; color: {theme["secondary_light"]}; }}
+        QPushButton:disabled {{ background-color: {disabled_bg}; color: {dim_text(theme["secondary_text"])}; }}
     """
 
 def get_secondary_button_style():
@@ -937,25 +921,23 @@ def desaturated_theme_path(theme_file, sat=None, deep=None):
         sat = _UI_SATURATION
     if deep is None:
         deep = get_deep_dark()
+    from ui.themes import bundled_theme_path  # dark_orange: not in qt-material
+    theme_file = bundled_theme_path(theme_file) or theme_file
     # Deep dark is a DARK-theme option; a light theme passes through untouched.
     deep = bool(deep) and _is_dark_theme_file(theme_file)
     try:
-        from ui.theme_palette import DARK_ACCENT_INK, transformed_palette, theme_override
-        palette_override = transformed_palette(theme_file, applied=True)
-        has_palette_override = bool(theme_override(theme_file, applied=True)) or os.path.basename(str(theme_file)) in DARK_ACCENT_INK
+        from ui.accent_ink import has_xml_override, xml_palette  # SPEC-THM-001 §13
+        palette_override = xml_palette(theme_file, applied=True)
+        has_palette_override = has_xml_override(theme_file)
     except Exception:
         palette_override = {}
         has_palette_override = False
     if sat >= 100 and not deep and not has_palette_override:
         return theme_file
     try:
-        # Resolve the source XML: a built-in name lives under qt_material/themes,
-        # otherwise theme_file may already be an on-disk path.
-        if os.path.exists(theme_file):
-            src = theme_file
-        else:
-            import qt_material
-            src = os.path.join(os.path.dirname(qt_material.__file__), "themes", theme_file)
+        # Resolve the source XML (on-disk path, else qt_material/themes).
+        from ui.theme_palette import _source_path
+        src = _source_path(theme_file)
         if not os.path.exists(src):
             return theme_file
 
@@ -1064,7 +1046,7 @@ def desat_image(qimage, fast=False):
     fast=True: a QPainter grayscale-over-original blend, done in C++ (~50ms at
     2000px vs seconds). Uses Qt's qGray luma (weights differ slightly from
     Rec.601 — visually negligible) and treats semi-transparent pixels uniformly,
-    so it is ONLY safe for LARGE, FULLY-OPAQUE surfaces (the antikythera world
+    so it is ONLY safe for LARGE, FULLY-OPAQUE surfaces (a Pro world
     map). Do NOT use for alpha-edged icons.
     """
     if qimage is None:
@@ -1366,7 +1348,7 @@ def get_3d_button_style(accent_name="blue", size="medium"):
                 stop:0 {theme["primary_light"]},
                 stop:0.5 {theme["primary"]},
                 stop:1 {theme["secondary"]});
-            color: {theme["primary_text"]};
+            color: {on_accent_ink(theme["primary"], theme["primary_text"])};
             border: 2px solid {theme["primary_light"]};
         }}
     """
@@ -1442,11 +1424,24 @@ def get_tab_bar_style(compact=False):
                 stop:0 {theme["primary_light"]},
                 stop:0.5 {theme["primary"]},
                 stop:1 {theme["secondary"]});
-            color: {theme["primary_text"]};
+            color: {on_accent_ink(theme["primary"], theme["primary_text"])};
             border: 1px solid {theme["primary"]};
             border-bottom: none;
         }}
     """
+
+
+# The menu bar and its menus follow the Tab Bar font area (td-80vqm: "the
+# menu" had no font setting, so a request to make it smaller could not reach
+# it). qt-material draws them at 13 px; the area's factor scales that, so at
+# the default size nothing changes.
+MENU_BASE_PX = 13
+
+
+def menu_font_px() -> int:
+    """The menu bar's text size: qt-material's 13 px times the Tab Bar area's
+    factor (its size against the default, and the display scale)."""
+    return max(7, round(MENU_BASE_PX * scaled_area_factor("tabs")))
 
 
 def get_menu_bar_style():
@@ -1460,11 +1455,13 @@ def get_menu_bar_style():
         str: QMenuBar and QMenu stylesheet
     """
     theme = get_theme_colors()
+    menu_px = menu_font_px()
 
     return f"""
         QMenuBar {{
             background-color: {theme["secondary"]};
             color: {theme["secondary_text"]};
+            font-size: {menu_px}px;
             padding: 2px;
             spacing: 3px;
         }}
@@ -1478,11 +1475,12 @@ def get_menu_bar_style():
         }}
         QMenuBar::item:pressed {{
             background: {theme["primary"]};
-            color: {theme["primary_text"]};
+            color: {on_accent_ink(theme["primary"], theme["primary_text"])};
         }}
         QMenu {{
             background-color: {theme["secondary"]};
             color: {theme["secondary_text"]};
+            font-size: {menu_px}px;
             border: 1px solid {theme["secondary_dark"]};
             border-radius: 4px;
             padding: 4px;
@@ -1493,7 +1491,7 @@ def get_menu_bar_style():
         }}
         QMenu::item:selected {{
             background: {theme["primary"]};
-            color: {theme["primary_text"]};
+            color: {on_accent_ink(theme["primary"], theme["primary_text"])};
         }}
         QMenu::separator {{
             height: 1px;
@@ -1956,9 +1954,8 @@ def _bar_tint(hex_color, alpha=1.0):
     return c
 
 
-# The eight pure keys as the mockup froze them for DARK (see the polarity note
-# above). Every value is an existing module constant except --primary_light, which
-# has no counterpart here (get_theme_colors()'s frozen fallback is #5EADFF).
+# The eight pure keys as the mockup drew them for DARK; the accent family follows
+# the live theme except on stock Dark Blue (ui.accent_ink.dark_bar_pure, §13).
 _BAR_PURE_DARK = {
     "primary":         BLUE,                        # --primary        dark  :18
     "primary_dark":    ACCENTS["blue"]["active"],   # --primary_dark   dark  :19
@@ -1988,6 +1985,7 @@ _BAR_ACCENT_LIGHT = {
     "muted":     "#8A8A8E",                         # --muted      light :93
 }
 
+_BAR_STEEL = {True: ("#7890B2", "#4B6790"), False: ("#9BADC6", "#879FC1")}  # SPEC-DUAL-001 steel, steel_hi
 _BAR_TOKEN_CACHE = None      # (signature, dict) — rebuilt whenever the palette moves
 
 
@@ -2003,7 +2001,6 @@ def _build_bar_tokens():
     """Resolve the whole bar palette for the current theme. See bar_tokens()."""
     light = bool(is_light_theme())
     gold, gold_hi = gold_accent()
-
     if light:
         # light_blue.xml == the mockup's light block, so the live palette IS the
         # design (D-60). Read it through the eight REAL keys, nothing else exists.
@@ -2011,13 +2008,10 @@ def _build_bar_tokens():
         pure = {k: t[k] for k in _BAR_PURE_DARK}
         acc = {k: desat_hex(v) for k, v in _BAR_ACCENT_LIGHT.items()}
     else:
-        pure = {**{k: desat_hex(v) for k, v in _BAR_PURE_DARK.items()}, "primary_text": get_theme_colors()["primary_text"]}
+        pure = dark_bar_pure({k: desat_hex(v) for k, v in _BAR_PURE_DARK.items()})
         acc = {k: desat_hex(v) for k, v in _BAR_ACCENT_DARK.items()}
 
-    green = acc["green"]
-    red = acc["red"]
-    primary = pure["primary"]
-    secondary = pure["secondary"]
+    green, red, primary, secondary = acc["green"], acc["red"], pure["primary"], pure["secondary"]
 
     tok = {}
 
@@ -2087,7 +2081,7 @@ def _build_bar_tokens():
     # --- 6. checked identities (tints) ---------------------------------------
     tok["tint_blue"] = (QColor(primary) if light                # --tint-blue    :119 (opaque)
                         else _bar_tint(primary, .90))           # --tint-blue    :58
-    tok["tint_blue_fg"] = QColor(pure["primary_text"])         # --tint-blue-fg :120 / :59
+    tok["tint_blue_fg"] = QColor(on_accent_ink(primary, pure["primary_text"]))  # --tint-blue-fg :120 / :59
     tok["tint_green"] = _bar_tint(green, .14 if light else .22)  # --tint-green   :121 / :60
     tok["tint_green_fg"] = QColor(acc["green_hi"])              # --tint-green-fg :122 / :61
     tok["tint_gold"] = _bar_tint(gold, .16 if light else .22)   # --tint-gold    :123 / :62
@@ -2113,6 +2107,9 @@ def _build_bar_tokens():
     tok["close_rim_h"] = _bar_tint(red, .60)           # .xbtn:hover rim         :415
     tok["menu_fill"] = _bar_tint(secondary, .88)       # .menu background        :425
     tok["menu_drop"] = _bar_over(False, .60)           # .menu drop shadow       :427
+    # SPEC-DUAL-001 §4.1 chart B steel: light authored; dark = each light value + the HSL lightness lift of its gold pair
+    tok["steel"], tok["steel_hi"] = map(QColor, map(desat_hex, _BAR_STEEL[light]))
+    tok["steel_glow"] = _bar_tint(tok["steel_hi"].name(), .35)  # rgba(75,103,144,.35)
 
     return tok
 

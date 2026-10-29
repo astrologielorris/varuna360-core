@@ -36,14 +36,16 @@ from ui.qt_theme import (
     is_light_theme,
     desat_image,
 )
+from ui.accent_ink import on_accent_ink  # SPEC-THM-001 §13
 from ui.popup_fonts import tier_point_px, tier_px, popup_title_px, popup_group_px
 
 # Import shared Aditya data
 from core.aditya_data import (
     check_planet_dignity, get_dignity_description, get_aditya_description,
-    get_being_description,
+    get_being_description, ui_text,
     ADITYA_BODY_PARTS, PLANET_COLORS, ELEMENT_COLORS, ADITYA_NAMES
 )
+from ui.app_language import gui_description_language, gui_ui_language
 from core.hora_trimsamsa_calc import resolve_planet_position
 
 # Project root for image paths
@@ -584,7 +586,7 @@ class PlanetInfoDialog(QDialog):
             }}
             QListWidget::item:selected {{
                 background-color: {self.theme['primary']};
-                color: {self.theme['primary_text']};
+                color: {on_accent_ink(self.theme['primary'], self.theme['primary_text'])};
             }}
         """)
         self.toc_list.itemClicked.connect(self._scroll_to_anchor)
@@ -618,10 +620,13 @@ class PlanetInfoDialog(QDialog):
 
         # Append hora/trimsamsa as HTML via QTextCursor (tables survive
         # Qt's rich text engine, unlike <div> blocks in setMarkdown)
-        from PySide6.QtGui import QTextCursor
+        from PySide6.QtGui import QTextCursor, QTextBlockFormat, QTextCharFormat
         hora_html = self._build_hora_trimsamsa_html()
         cursor = self.content_browser.textCursor()
         cursor.movePosition(QTextCursor.MoveOperation.End)
+        # The Hora header starts its own plain block (not inside the last
+        # paragraph or list item of the markdown above).
+        cursor.insertBlock(QTextBlockFormat(), QTextCharFormat())
         cursor.insertHtml(hora_html)
 
         # Extract TOC from base markdown + manually add hora/trimsamsa
@@ -631,7 +636,8 @@ class PlanetInfoDialog(QDialog):
 
         toc_items = self._extract_toc(base_markdown)
         for _, being_type, label in self._HORA_BEINGS:
-            desc = get_being_description(self.aditya_sign, "hora", being_type)
+            label = self._being_label(being_type, label)
+            desc = get_being_description(self.aditya_sign, "hora", being_type, lang=gui_description_language())
             suffix = f": {desc['name']}" if desc and desc.get("name") else ""
             colors_pair = None
             if being_type == self._hora_key:
@@ -641,7 +647,7 @@ class PlanetInfoDialog(QDialog):
                          ('h2', 'Hora', 'hora', None))
         toc_items.append(('h2', 'Trimsamsa', 'trimsamsa', None))
         for _, being_type, label in self._TRIMSAMSA_BEINGS:
-            desc = get_being_description(self.aditya_sign, "trimsamsa", being_type)
+            desc = get_being_description(self.aditya_sign, "trimsamsa", being_type, lang=gui_description_language())
             suffix = f": {desc['name']}" if desc and desc.get("name") else ""
             colors_pair = None
             if being_type == self._trimsamsa_key:
@@ -705,7 +711,7 @@ class PlanetInfoDialog(QDialog):
                 QPushButton {{
                     background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
                         stop:0 {self.theme['primary_light']}, stop:1 {self.theme['primary']});
-                    color: {self.theme['primary_text']};
+                    color: {on_accent_ink(self.theme['primary'], self.theme['primary_text'])};
                     border: none;
                     padding: 12px 24px;
                     border-radius: 8px;
@@ -746,11 +752,11 @@ class PlanetInfoDialog(QDialog):
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
                     stop:0 {self.theme['primary_light']}, stop:1 {self.theme['primary']});
                 border-color: {self.theme['primary']};
-                color: {self.theme['primary_text']};
+                color: {on_accent_ink(self.theme['primary'], self.theme['primary_text'])};
             }}
             QPushButton:pressed {{
                 background: {self.theme['primary']};
-                color: {self.theme['primary_text']};
+                color: {on_accent_ink(self.theme['primary'], self.theme['primary_text'])};
             }}
         """)
         close_btn.clicked.connect(self.accept)
@@ -780,6 +786,11 @@ class PlanetInfoDialog(QDialog):
         ("trimsamsa", "yaksha", "Yaksha"),
         ("trimsamsa", "apsara", "Apsara"),
     ]
+    @staticmethod
+    def _being_label(being_type, default):
+        """Hora card label in the app language (trimsamsa labels are names)."""
+        return ui_text("hora_" + being_type, gui_ui_language()) if being_type in ("aditya", "naga") else default
+
     _HORA_COLORS_DARK = {
         "aditya": ("#5C3D10", "#FFD54F"),
         "naga":   ("#10354D", "#80DEEA"),
@@ -826,8 +837,8 @@ class PlanetInfoDialog(QDialog):
             sections.append(f"\n## Proud State (Avastha)\n\n{dignity_text}\n")
 
         # Sign description
-        sign_text = get_aditya_description(self.aditya_sign)
-        sections.append(f"\n## About {self.aditya_sign}\n\n{sign_text}")
+        sign_text = get_aditya_description(self.aditya_sign, lang=gui_description_language())
+        sections.append(f"\n## {ui_text('about', gui_ui_language(), sign=self.aditya_sign)}\n\n{sign_text}")
 
         return "\n".join(sections)
 
@@ -853,20 +864,12 @@ class PlanetInfoDialog(QDialog):
         # text engine multiplies a heading's font-size ON TOP of the styled px
         # (h2 19px rendered 29px), so the setting never lands; neutral bold <p>
         # blocks carry the px exactly (see _section_header_html).
-        intro_px = scaled_area_px('info_text')
         parts = []
         parts.append(self._section_header_html("Hora"))
-        parts.append(
-            f'<p style="color: {text_color}; font-size: {intro_px}px;">'
-            ' '
-            ' '
-            ' '
-            ''
-            '</p>'
-        )
 
         for _, being_type, display_label in self._HORA_BEINGS:
-            desc = get_being_description(self.aditya_sign, "hora", being_type)
+            display_label = self._being_label(being_type, display_label)
+            desc = get_being_description(self.aditya_sign, "hora", being_type, lang=gui_description_language())
             name_suffix = f": {desc['name']}" if desc and desc.get("name") else ""
             title = display_label + name_suffix
             is_active = (self._hora_key == being_type)
@@ -883,7 +886,7 @@ class PlanetInfoDialog(QDialog):
         parts.append(self._section_header_html("Trimsamsa"))
 
         for _, being_type, display_label in self._TRIMSAMSA_BEINGS:
-            desc = get_being_description(self.aditya_sign, "trimsamsa", being_type)
+            desc = get_being_description(self.aditya_sign, "trimsamsa", being_type, lang=gui_description_language())
             name_suffix = f": {desc['name']}" if desc and desc.get("name") else ""
             title = display_label + name_suffix
             is_active = (self._trimsamsa_key == being_type)
@@ -906,20 +909,18 @@ class PlanetInfoDialog(QDialog):
         h_px = tier_px('info_text', 12)   # card title: info_text bold (§3.2)
         annotation = (
             f'<p style="color: {GOLD}; font-style: italic; font-size: {p_px}px;">'
-            f'{planet_name} at {degree_text} {sign_name} falls directly in this '
-            f'{ring_label}. This description is especially relevant in your chart.</p>'
+            + ui_text("annotation_" + ring_label.lower(), gui_ui_language(), planet=planet_name,
+                      degree=degree_text, sign=sign_name)
+            + '</p>'
         )
         content = annotation
-        if desc:
-            for key, label in [("theme", "Theme"), ("healthy", "Healthy Expression"),
-                               ("afflicted", "Afflicted Expression")]:
-                value = desc.get(key, "")
-                if value:
-                    content += (f'<p style="color: {fg}; font-size: {p_px}px;">'
-                                f'<b>{label}:</b> {value}</p>')
-        else:
-            content += (f'<p style="color: {fg}; font-style: italic; '
-                        f'font-size: {p_px}px;">Description not available</p>')
+        # Description text renders only when the entry carries it; without it
+        # the card is the title and the annotation, no placeholder.
+        for key in ("theme", "healthy", "afflicted"):
+            value = (desc or {}).get(key, "")
+            if value:
+                content += (f'<p style="color: {fg}; font-size: {p_px}px;">'
+                            f'<b>{ui_text(key, gui_ui_language())}:</b> {value}</p>')
         return (
             f'<table width="100%" cellpadding="10" '
             f'style="background-color: {bg}; margin-top: 6px; margin-bottom: 6px;">'
@@ -940,16 +941,11 @@ class PlanetInfoDialog(QDialog):
         p_px = scaled_area_px('info_text')
         h_px = tier_px('info_text', 12)   # card title: info_text bold (§3.2)
         content = ""
-        if desc:
-            for key, label in [("theme", "Theme"), ("healthy", "Healthy Expression"),
-                               ("afflicted", "Afflicted Expression")]:
-                value = desc.get(key, "")
-                if value:
-                    content += (f'<p style="color: {text_color}; '
-                                f'font-size: {p_px}px;"><b>{label}:</b> {value}</p>')
-        else:
-            content += (f'<p style="color: {text_color}; font-style: italic; '
-                        f'font-size: {p_px}px;">Description not available</p>')
+        for key in ("theme", "healthy", "afflicted"):
+            value = (desc or {}).get(key, "")
+            if value:
+                content += (f'<p style="color: {text_color}; '
+                            f'font-size: {p_px}px;"><b>{ui_text(key, gui_ui_language())}:</b> {value}</p>')
         return (f'<p style="font-size: {h_px}px; font-weight: bold; '
                 f'margin: 6px 0 2px 0;">{title}</p>{content}')
 
@@ -980,7 +976,7 @@ class PlanetInfoDialog(QDialog):
             }}
             QPushButton:hover {{
                 background-color: {theme['primary']};
-                color: {theme['primary_text']};
+                color: {on_accent_ink(theme['primary'], theme['primary_text'])};
             }}
             QPushButton:disabled {{
                 background-color: {theme['secondary_dark']};

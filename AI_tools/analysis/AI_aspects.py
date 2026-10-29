@@ -57,8 +57,8 @@ from core.time_utils import (
 from core.chart_helpers import (
     get_planet_sign_name, get_planet_decimal_degrees, has_planet,
 )
+from core.chart_memo import memo_per_chart
 
-# Default CHTK file
 DEFAULT_CHTK = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "Lorris.chtk")
 
 # All planets (including nodes for receiving aspects)
@@ -367,9 +367,9 @@ def classify_aspect(diff_degrees: float, aspecting_planet: str) -> tuple:
 # MAIN ASPECT CALCULATION
 # ============================================================================
 
+@memo_per_chart          # one compute per chart object (SPEC-VAC-001 W6 S6); read-only result
 def calculate_all_aspects(chart, threshold: float = 0) -> dict:
-    """
-    Calculate all planetary aspects for a chart.
+    """Calculate all planetary aspects for a chart.
 
     Args:
         chart: libaditya Chart object
@@ -478,56 +478,59 @@ def calculate_all_aspects(chart, threshold: float = 0) -> dict:
 # ============================================================================
 
 def parse_dms_to_decimal(dms_str):
-    """Parse DMS string like '44n29' or '73w12' to decimal degrees."""
-    import re
+    """Kala coordinate text ('44n29', '73w12', "48N49'00") -> decimal degrees.
 
-    if not dms_str:
-        return 0.0
-
-    dms_str = dms_str.strip().lower()
-    match = re.match(r'(\d+)([nsew])(\d*)', dms_str)
-    if not match:
-        return 0.0
-
-    degrees = int(match.group(1))
-    direction = match.group(2)
-    minutes = int(match.group(3)) if match.group(3) else 0
-
-    decimal = degrees + (minutes / 60.0)
-
-    if direction in ['s', 'w']:
-        decimal = -decimal
-
-    return decimal
+    Delegates to core.chtk_reader.parse_kala_coordinate, the one chart-file
+    coordinate parser (case-insensitive hemisphere letter, seconds kept).
+    S and W are negative; empty or unparseable text gives 0.0.
+    """
+    from core.chtk_reader import parse_kala_coordinate
+    return parse_kala_coordinate(dms_str)
 
 
-def extract_from_chtk(chtk_path):
+# The settings this command reads (SPEC-SET-003 §4.5): the chart frame (the
+# label set and the Human Design level included) and the experience level.
+USES = ("zodiac.mode", "zodiac.ayanamsa_id", "zodiac.house_system",
+        "zodiac.nakshatra_coords", "chart.show_outer_planets",
+        "zodiac.use_western_names", "ui.hd_experience_level", "ui.experience_level")
+
+
+def _settings_frame():
+    """The chart frame of the terminal settings (the tools' settings >
+    running app > saved Settings tab > factory, SPEC-SET-003 INV-4), read
+    only."""
+    from core.capabilities.inputs import ChartFrame
+    from core.settings_registry.cli import view_for
+    return ChartFrame.resolve(view_for(None))
+
+
+def extract_from_chtk(chtk_path, frame=None):
     """Extract planet data from a chart file (.chtk or .toml).
 
     SPEC-IMPORT-001 §6.1: dispatch via BirthDataManager.create_birth_data_from_file
     so .toml charts work here too (previously CHTKReader.read_chtk_file, .chtk-only).
-    The canonical dict already does the LOCAL->UTC conversion this function used to
-    do inline (BCE-safe, date-aware IANA, War Time flag), so the manual TZ block is
-    replaced by reading flat latitude/longitude and the canonical utc_* fields.
+
+    ``frame``: the resolved chart frame (``ChartFrame``); None = the frame of
+    the terminal settings (the tools' settings > running app > saved >
+    factory). The chart is built by ``CalculationInput.build_chart``, the
+    factory call the app makes for the chart the Aspects panel reads, so the
+    same-sign (Yuti) cells follow the zodiac mode as the panel's do.
     """
-    from managers.birth_data_manager import BirthDataManager
+    from core.capabilities.inputs import CalculationInput
+    from core.capabilities.settings_view import SettingsView
 
-    bd = BirthDataManager.create_birth_data_from_file(str(chtk_path))
-
-    lat = bd['latitude']
-    lon = bd['longitude']
-
-    from core.chart_factory import build_chart_from_params
-    from libaditya import swe
-    from core.chart_factory import jd_from_birth_data
-    jd = jd_from_birth_data(bd)
-    chart = build_chart_from_params(jd=jd, lat=lat, lon=lon, mode="aditya", ayanamsa=1)
-
-    return chart, bd['name']
+    if frame is None:
+        frame = _settings_frame()
+    inp = CalculationInput.from_file(str(chtk_path), SettingsView.load(factory_only=True))
+    inp.frame = frame
+    return inp.build_chart(), inp.chart.title
 
 
-def extract_from_datetime(date_str, time_str, lat, lon):
-    """Extract planet data from date/time and coordinates."""
+def extract_from_datetime(date_str, time_str, lat, lon, frame=None):
+    """Extract planet data from date/time and coordinates (``frame`` as in
+    ``extract_from_chtk``)."""
+    if frame is None:
+        frame = _settings_frame()
     date_parts = date_str.split('-')
     year = int(date_parts[0])
     month = int(date_parts[1])
@@ -542,17 +545,23 @@ def extract_from_datetime(date_str, time_str, lat, lon):
         minute = 0
 
     from core.chart_factory import build_chart_from_params
-    from libaditya import swe
+    from core.time_utils import julday  # Julian before 1582-10-15, as the app
     hour_decimal = hour + minute / 60.0
-    jd = swe.julday(year, month, day, hour_decimal)
-    chart = build_chart_from_params(jd=jd, lat=lat, lon=lon, mode="aditya", ayanamsa=1)
+    jd = julday(year, month, day, hour_decimal)
+    chart = build_chart_from_params(jd=jd, lat=lat, lon=lon, mode=frame.mode,
+                                    ayanamsa=frame.ayanamsa_id,
+                                    hsys=frame.house_system_code)
 
+    return chart, _datetime_name(date_str, time_str, lat, lon)
+
+
+def _datetime_name(date_str, time_str, lat, lon):
+    """The title of a date/time chart."""
     name = f"Chart for {date_str}"
     if time_str:
         name += f" {time_str}"
     name += f" @ ({lat:.2f}, {lon:.2f})"
-
-    return chart, name
+    return name
 
 
 # ============================================================================
@@ -748,6 +757,32 @@ def format_list_output(person_name: str, aspects_data: dict, planets_data: dict,
 # CLI INTERFACE
 # ============================================================================
 
+def _center_lit_sets(parser, args):
+    """The --casters / --receivers sets of --center-geometry, which is exclusive with
+    the matrix filters --list, --strong and --threshold (exit 2; SPEC-VAC-001 §4.7).
+    Without --center-geometry: no sets, and --threshold defaults to 0."""
+    if not args.center_geometry:
+        if args.threshold is None:
+            args.threshold = 0
+        return frozenset(), frozenset()
+    if args.list or args.strong or args.threshold is not None:
+        parser.error("--center-geometry cannot be combined with --list, --strong or --threshold")
+    from core.vedic_center import lit_codes
+    try:
+        return (lit_codes(args.casters, casters_only=True), lit_codes(args.receivers))
+    except ValueError as exc:
+        parser.error(str(exc))
+
+
+def center_geometry_result(chart, person_name, args, lit):
+    """The model the vector South Indian center draws, in the Tajika envelope
+    (SPEC-VAC-001 §4.1, §4.7): the app's own ``vedic_full_model`` and ``select``."""
+    from core import vedic_center as vc
+    from core.capabilities.karakas_aspects import vedic_full_model
+    model = vc.select(vedic_full_model(chart), max(0, min(60, args.min_virupas)), *lit)
+    return {"name": person_name, "center_geometry": vc.model_to_json(model)}
+
+
 def main():
     """Command-line interface."""
     parser = argparse.ArgumentParser(
@@ -783,10 +818,36 @@ Special Aspects:
                         help="Include aspect interpretations")
     parser.add_argument("--json", action="store_true",
                         help="JSON output")
-    parser.add_argument("--threshold", type=float, default=0,
+    parser.add_argument("--threshold", type=float, default=None,
                         help="Minimum VR to display (default: 0)")
+    center = parser.add_argument_group("South Indian center geometry (SPEC-VAC-001)")
+    center.add_argument("--center-geometry", action="store_true",
+                        help="Output the Vedic center drawing's model: angles, exact and "
+                             "stud points, push levels, drawn casts with their lenses, "
+                             "yutis (use with --json)")
+    center.add_argument("--min-virupas", type=int, default=0, metavar="N",
+                        help="With --center-geometry: leave out casts under N virupas (0-60)")
+    center.add_argument("--casters", type=str, default=None, metavar="CODES",
+                        help="With --center-geometry: light these casters (codes like SA,JU)")
+    center.add_argument("--receivers", type=str, default=None, metavar="CODES",
+                        help="With --center-geometry: light these receivers (codes like KE)")
+    # The chart frame follows the app (argument > running app > saved Settings
+    # tab > factory, AIC plan 2): the same-sign Yuti cells depend on the mode.
+    # The Aspects panel reads the app's active chart: the -88 Design chart in
+    # Human Design mode (D-1 only), --human-design / --no-human-design override.
+    from core.capabilities.cli_settings import (
+        add_view_flags, cli_chart, cli_datetime_jd, cli_moment_chart)
+    from core.capabilities.inputs import ChartFrame
+    from core.settings_registry.cli import echo, resolve_settings, use_settings
+    add_view_flags(parser)
+    use_settings(parser, USES)
 
     args = parser.parse_args()
+    lit = _center_lit_sets(parser, args)
+    # Settings: the tools' settings (settings.py) > running app > saved
+    # Settings tab > factory (SPEC-SET-003 INV-4; never writes).
+    cfg = resolve_settings(args)
+    frame = ChartFrame.resolve(cfg.view)
 
     # Determine input method
     if args.date:
@@ -794,9 +855,19 @@ Special Aspects:
             print("Error: --lat and --lon are required when using --date")
             sys.exit(1)
 
-        chart, person_name = extract_from_datetime(
-            args.date, args.time, args.lat, args.lon
-        )
+        # The same view rule as a chart file: the -88 Design chart of this
+        # moment in Human Design mode (cli_moment_chart), else the birth chart.
+        loaded = {}
+
+        def _natal():
+            chart, loaded["name"] = extract_from_datetime(
+                args.date, args.time, args.lat, args.lon, frame=frame)
+            return chart
+        chart, _inp = cli_moment_chart(
+            args, frame, jd_ut=cli_datetime_jd(args.date, args.time),
+            latitude=args.lat, longitude=args.lon, natal=_natal)
+        person_name = loaded.get("name") or _datetime_name(
+            args.date, args.time, args.lat, args.lon)
     else:
         chtk_path = args.chtk_file if args.chtk_file else DEFAULT_CHTK
 
@@ -804,7 +875,13 @@ Special Aspects:
             print(f"Error: CHTK file not found: {chtk_path}")
             sys.exit(1)
 
-        chart, person_name = extract_from_chtk(chtk_path)
+        chart, inp = cli_chart(chtk_path, args, frame)
+        person_name = inp.chart.title
+
+    if args.center_geometry:
+        print(json.dumps(echo(center_geometry_result(chart, person_name, args, lit), cfg),
+                         indent=2))
+        return
 
     # Set threshold
     threshold = args.threshold
@@ -823,7 +900,8 @@ Special Aspects:
             "mutual_aspects": aspects_data["mutual_aspects"],
             "by_planet": aspects_data["by_planet"]
         }
-        print(json.dumps(result, indent=2))
+        # The settings echo (SPEC-SET-003 §4.5): settings: {key: {value, source}}.
+        print(json.dumps(echo(result, cfg), indent=2))
     elif args.list:
         print(format_list_output(person_name, aspects_data, chart,
                                  threshold=threshold, show_full=args.full))

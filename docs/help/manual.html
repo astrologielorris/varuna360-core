@@ -213,9 +213,9 @@ capabilities.
   <li><b>Top</b> &mdash; Chart memory buttons (two rows of loaded charts, click to switch)</li>
   <li><b>Toolbar row</b> &mdash; View controls, chart title, action buttons (NOW, ADD CHART, SEARCH, etc.),
       zodiac mode toggles, and memory controls (LOAD FOLDER, SORT, CLEAR ALL)</li>
-  <li><b>Left panel</b> &mdash; Two dasha panels side by side:
-      the <b>left dasha</b> (Vedanga Jyotisha) and the <b>right dasha</b>
-      (switchable between Vimshottari and Planetary Ages with <kbd>F7</kbd>)</li>
+  <li><b>Left panel</b> &mdash; Two dasha panels side by side. Each one can show
+      Vimshottari, Planetary Ages or Zodiacal Releasing:
+      <kbd>Shift+F7</kbd> cycles the left panel, <kbd>F7</kbd> the right one</li>
   <li><b>Center</b> &mdash; Chart display (South Indian, Wheel, North Indian, Body Graph,
       Nakshatra or Cards of Truth)</li>
   <li><b>Right panel</b> &mdash; Info panels (Karakas, Strength, Aspects)</li>
@@ -284,9 +284,15 @@ the F2 cycle.</p>
 and their padas around your chart. It follows the zodiac frame buttons of the main tab and
 the ayanamsa chosen in Settings.</p>
 
+<p>To read the description of a nakshatra, double-click its name on the Nakshatra view. A
+window opens with its deity, symbol, yoni, gana, shakti, the Taittiriya verse and the other
+classical properties, with a table of contents on the left. This works in every edition,
+including Lite. Nakshatra descriptions by Ernst Wilhelm and Michael Reed, used with
+permission.</p>
+
 <p>Press <kbd>F</kbd> (or the status-bar fullscreen glyph) to send the current chart view
 fullscreen, and <kbd>F</kbd> or <kbd>Esc</kbd> to return. This works on every tab that shows a
-chart, not just the main Chart tab: the Nakshatra view, the Antikythera map, and the dual
+chart, not just the main Chart tab: the Nakshatra view and the dual
 comparison views (Eclipse Reading, Compatibility, Transit, Solar Return) each go fullscreen
 correctly. While a chart is fullscreen, <kbd>F2</kbd> still cycles the main chart style, and
 the comparison views keep refitting when you toggle their overlay. On a tab with no chart view
@@ -450,7 +456,7 @@ rings displaying multiple layers of data simultaneously.</p>
 <ul>
   <li><b>Retinue Rings</b> (<kbd>F5</kbd>) &mdash; Colored house rings showing planetary retinues.
       Each sector represents a retinue being (Gandharva, Rakshasa, Rishi, Yaksha, Apsara)
-      
+      with the being's name visible. Double-click any sector to open its details.</li>
 </ul>
 <p class="img-wrap"><img src="images/wheel_retinue_rings.webp"
    alt="Wheel with retinue rings showing all being names around the chart"></p>
@@ -517,8 +523,7 @@ Mitra's Gandharva activates. A tooltip shows the being's name and element.</p>
 
 <p><b>2. Hover over a house number</b> (in the center): all sectors connected to that house
 light up on the wheel. This is the reverse view, showing you every being across every sign
-
-
+that activates this house.</p>
 
 <p class="img-wrap"><img src="images/wheel_hover_house.webp"
    alt="Hovering over house 2 in the center, highlighting all sectors connected to that house"></p>
@@ -529,19 +534,13 @@ the full structural breakdown for that sign's retinue:</p>
   <li>The sign's <b>Hora structure</b> (Aditya side and Naga side, which houses each activates)</li>
   <li>The sign's <b>Trimsamsa beings</b> (Gandharva, Rakshasa, Rishi, Yaksha, Apsara) with their
       exact degree ranges, elements, and house activations</li>
-  
   <li>If a planet is in the clicked sector, the popup also shows its <b>uplifted and afflicted
       expression totals</b> (avastha virupas split into positive and negative)</li>
 </ul>
 
-
-   
-
 <div class="note">
-
-
-
-
+<b>Tip:</b> Each sector maps one being to specific houses. Double-click a sector to see
+its houses, degree ranges and elements in one place.
 </div>
 
 <h3>North Indian Chart</h3>
@@ -904,8 +903,8 @@ Rows are colored by trimsamsa being type.</p>
 <p class="img-wrap"><img src="images/panel_karakas_enriched.webp" class="panel-screenshot"
    alt="Karakas enriched view with sign, houses, avastha total, and condition per karaka"></p>
 
-
-
+<p><b>Hora</b>: the Hora divides each sign into two halves. The tab shows which half each
+planet is in:</p>
 
 <p class="img-wrap"><img src="images/panel_hora.webp" class="panel-screenshot"
    alt="Hora tab showing each planet's hora being name and Aditya/Naga ruler"></p>
@@ -914,38 +913,26 @@ Rows are colored by trimsamsa being type.</p>
   <tr><th></th><th>Sun Hora (Aditya side)</th><th>Moon Hora (Naga side)</th></tr>
   <tr><td><b>Degrees</b></td><td>0&deg;-15&deg; in odd signs, 15&deg;-30&deg; in even</td>
       <td>15&deg;-30&deg; in odd signs, 0&deg;-15&deg; in even</td></tr>
-  
-      
-  
-      
-  
-      
-  
-      
 </table>
 
-
-
-
-
 <p><b>Trimsamsa</b> &mdash; Each sign is divided into 5 unequal segments ruled by Mars, Saturn,
-
-
+Jupiter, Mercury, and Venus. Each segment carries the name of a <b>retinue being</b>,
+and the tab shows the being for each planet:</p>
 
 <p class="img-wrap"><img src="images/panel_trim.webp" class="panel-screenshot"
    alt="Trimsamsa tab showing each planet's being, type, and element"></p>
 <table>
-  <tr><th>Ruler</th><th>Being</th><th>Element</th><th>Hora</th><th>Role</th></tr>
-  
-  
-  
-  
-  
+  <tr><th>Ruler</th><th>Being</th><th>Element</th><th>Hora</th></tr>
+  <tr><td>Mars</td><td>Gandharva</td><td>Fire</td><td>Sun</td></tr>
+  <tr><td>Saturn</td><td>Rakshasa</td><td>Air</td><td>Sun</td></tr>
+  <tr><td>Jupiter</td><td>Rishi</td><td>Ether</td><td>Both</td></tr>
+  <tr><td>Mercury</td><td>Yaksha</td><td>Earth</td><td>Moon</td></tr>
+  <tr><td>Venus</td><td>Apsara</td><td>Water</td><td>Moon</td></tr>
 </table>
 
 <p><b>Houses</b> &mdash; The default view shows a <b>House Activation bar graph</b>,
 a visual summary of which houses are most activated by the chart's retinue beings.
-
+Taller bars mean more retinue beings are counted in that house.</p>
 
 <p class="img-wrap"><img src="images/panel_houses.webp" class="panel-screenshot"
    alt="Houses tab showing the house activation bar graph with retinue being icons"></p>
@@ -968,9 +955,8 @@ A <b>Copy All as JSON</b> button at the bottom right copies the entire page cont
 for use with AI tools.</p>
 
 <p>At the bottom of every zoom page, a <b>Five Being Types</b> reference strip
-
-
-the data above.</p>
+shows the five retinue beings (Gandharva, Rakshasa, Rishi, Yaksha, Apsara) with their
+planet and element, in the colour used for that being's rows above.</p>
 
 <p><b>Page 1: Karakas</b> &mdash; The basic karaka ranking table at full screen size.
 Three wide columns (Karaka, Planet, Cusp Lord) with each row colored by its trimsamsa
@@ -1018,13 +1004,6 @@ expression totals for that sector.</p>
 
 <p class="img-wrap"><img src="images/zoom_planetary_condition.webp" class="panel-screenshot"
    alt="Planetary Condition fullscreen zoom with houses, retinue, avastha matrix, and conditions for all planets"></p>
-
-<div class="note">
-
-
-for all 12 signs, visit
-
-</div>
 
 <h3>Strength / Elements / Modality / Dignities</h3>
 
@@ -1075,23 +1054,9 @@ both traditions, just different names:</p>
 <p class="img-wrap"><img src="images/panel_modality.webp" class="panel-screenshot"
    alt="Modality tab showing Moveable, Fixed, and Dual with descriptions"></p>
 
-
-
-
-<ul>
-  
-  
-  
-</ul>
-
-
-   
-
-
-
-
-
-   
+<p>Click the <b>swap icon</b> on the Modality tab to switch to the <b>Rajju, Musala and
+Nala</b> yoga names. Rajju is the movable group, Musala the fixed group and Nala the dual
+group. The table shows each yoga with its percentage and planets.</p>
 
 <p><b>Dignities</b> &mdash; Shows the dignity status of each planet across multiple
 divisional charts (vargas). The table displays whether each planet is in its own sign,
@@ -1220,24 +1185,14 @@ planet.</p>
 </ul>
 
 <div class="note">
-
-
-
-
-
-
+<b>New to Hora and Trimsamsa?</b> The <b>Hora</b> splits a sign into two halves. The
+<b>Trimsamsa</b> cuts it into five unequal sectors. Each piece carries the name of a
+<b>retinue being</b>, and these two rows show which one each planet is in. Section
+<b>Karakas / Hora / Trimsamsa / Houses</b> lists them.
 </div>
 
-
-
-
-
-<div class="note">
-
-
-
-not the program's.
-</div>
+<p><b>Click a SIGN, HORA or TRIMSAMSA cell</b> to open the same sector popup you reach by
+clicking a sector on the wheel, brought to where you are already reading the numbers.</p>
 
 <p><b>The diagonal is the planet's own strength.</b> Reading from the top-left corner
 downwards, each cell is where a planet meets itself, and it holds that planet's own base
@@ -1278,13 +1233,10 @@ measured in different ways, and each refined view uses a different one:</p>
 you can look up any number you see here.</p>
 
 <div class="note">
-
-
-
-
-
-
-
+<b>Help and harm scale in opposite directions.</b>
+Help scales with the actor's <b>strength</b>: a strong benefic (a helpful planet) gives a
+larger help figure. Harm scales with the actor's <b>weakness</b>: a weak malefic (a harmful
+planet) gives a larger harm figure, not a smaller one.
 </div>
 
 <p class="img-wrap"><img src="images/panel_avastha_refined.webp" class="panel-screenshot"
@@ -1310,90 +1262,56 @@ a summary count at the bottom. Shame occurs in two specific situations:</p>
   <li>A "cruel" planet is conjunct another planet in the <b>5th house</b>
       (same sign is enough &mdash; exact degree conjunction is not required)</li>
 </ul>
-
-
-
-
-
+<p>For example, Mars and Moon in the 5th house puts the Moon in shame.</p>
 
 <div class="note">
-
-
-
-
-
-
-
+<b>Note:</b> Combustion (planet too close to the Sun) is not shown in this panel. The panel
+shows the Lajjitaadi states only.
 </div>
 
 <p><b>Exchange Yogas</b> (Parivartana) &mdash; Shows exchange yogas between planets. An exchange
 occurs when two planets are in each other's signs (e.g., Mars in Cancer and Moon in Aries).
+Three types are detected:</p>
 
-
-
-   
 <ul>
-  
-      
-  
-      
-  
-      
+  <li><b>Maha Parivartana</b>: an exchange between the lords of houses 1, 2, 4, 5, 7, 9, 10
+      and 11.</li>
+  <li><b>Khala Parivartana</b>: an exchange involving the 3rd house lord.</li>
+  <li><b>Dainya Parivartana</b>: an exchange involving the lord of the 6th, 8th or 12th
+      house.</li>
 </ul>
+<p>Each exchange is shown with its type and the two planets, signs and houses involved.</p>
 
-
-
-
-
-
-   
-
-
-
-itself.</p>
+<p><b>The panel also shows final dispositors.</b> Above the exchange list sit two further
+sections.</p>
 
 <div class="note">
-
-
-
-
-
-
-
-
-
-reports to it.
+<b>What a dispositor is.</b> Every sign has a ruling planet. The planet that rules the sign
+a planet sits in is that planet's <b>dispositor</b>. If your Moon is in Aries, and Mars rules
+Aries, then Mars is the Moon's dispositor.<br><br>
+Follow the chain: the ruler of Mars' sign is Mars' dispositor, and so on. The chain ends in
+one of two ways: a planet in its own sign (it is its own dispositor), or a loop of two or more
+planets that lead back to each other. Either ending is a <b>final dispositor</b>.
 </div>
 
 <p class="img-wrap"><img src="images/panel_exchange_dispositor.webp" class="panel-screenshot"
    alt="Exchange panel showing Dominant Theme, Final Dispositor Themes, and Exchanges sections"></p>
 
 <ul>
-  
-      
-      
+  <li><b>Dominant Theme</b>: the final dispositor that the most planets lead to, with a bar
+      showing how many of the seven lead there and the houses it occupies. A planet in its own sign is marked <code>SELF</code>: it disposes itself, and
       the chain stops there.</li>
   <li><b>Final Dispositor Themes</b> &mdash; the endpoints of those chains, each shown with
       how many planets eventually arrive there and which houses are involved. A pair joined by
-      
-      
+      <code>&lt;-&gt;</code> is a loop: those two planets sit in each other's signs.</li>
   <li><b>Exchanges (Parivartana)</b> &mdash; the classical two-planet exchanges described
       above, each tagged <code>MAHA</code>, <code>KHALA</code> or <code>DAINYA</code>.</li>
 </ul>
 
-
-
-
-
-
-
-
-
-
-
-
-
-
+<p>The <b>?</b> button in the panel header opens the panel's tutorial. It explains how to
+use the cards: what the exchange classes mean as rules (which houses), how a final dispositor
+chain is followed, and what the bar, the chip and the colour show. It cites Phaladeepika
+VI.32-34 for the Maha, Khala and Dainya classes.</p>
 
 <h3>Nabhasa Yogas</h3>
 
@@ -1403,59 +1321,42 @@ Tajika mode with the swap icon and the tab appears.</p>
 
 <p>Where every other panel reads individual planets, Nabhasa reads the <b>shape of the whole
 chart</b>. It ignores what each planet is doing and asks one question instead: how are the
-
-
-
-
-
-<div class="note">
-
-
-
-
-
-</div>
+seven classical planets spread across the twelve houses? Then it names the pattern they make.</p>
 
 <p class="img-wrap"><img src="images/panel_nabhasa.webp" class="panel-screenshot"
    alt="Nabhasa panel showing the hero shape card, a strength bar, and the Foundation section"></p>
 
-
-
+<p>The panel is a stack of cards in four groups:</p>
 <ul>
   <li><b>The shape of your chart</b> &mdash; the single card at the top, in larger type. This
       is the <b>Akriti</b> ("shape") yoga your chart comes closest to forming, with its
       Sanskrit name, its plain-English meaning beside it (the example screenshot reads
       <i>Ardha Chandra &middot; half moon</i>), the houses involved, and how many of the seven
-      
+      planets take part.</li>
   <li><b>Foundation</b> &mdash; three simpler readings of the same distribution:
       <ul>
         <li><b>Asraya</b> ("support") asks which <i>kind</i> of sign your planets prefer,
             giving <b>Rajju</b>, <b>Musala</b> or <b>Nala</b>.</li>
         <li><b>Dala</b> ("petal") weighs the gentle planets against the cruel ones at the four
-            
-            
+            angles of the chart (houses 1, 4, 7 and 10).</li>
         <li><b>Sankhya</b> ("number") is the plainest of all: how many different houses are
-            
-            
+            occupied.</li>
       </ul></li>
   <li><b>Shape (Akriti)</b> &mdash; all 20 Akriti yogas, ranked by how nearly this chart forms
       each one.</li>
   <li><b>Personage</b> &mdash; the five <b>Pancha Mahapurusha</b> ("five great persons") yogas,
       shown whether they form or not. Each one forms when a planet is <i>both</i> dignified
-      
-      
+      (in its own sign or exalted) <i>and</i> sitting at one of the four angles.</li>
 </ul>
 
 <p><b>Nothing here is hidden because it did not form.</b> Every Akriti is listed with a bar
-
-
-
+showing how close it came, rather than only the ones that qualify. The count, for example
+"5/7 planets", shows how many of the seven planets already fit the shape.</p>
 
 <p><b>View Combination</b> &mdash; each Akriti card carries a <b>VIEW COMBINATION</b> button.
 It opens a small movable window drawing that yoga's defining house pattern in <i>both</i>
 North Indian and South Indian styles. The window is not modal: drag it next to your own chart
-
-head.</p>
+and compare the two grids side by side.</p>
 
 <p class="img-wrap"><img src="images/nabhasa_combination_popup.webp" class="panel-screenshot"
    alt="The view combination popup showing the Ardha Chandra house pattern in both North Indian and South Indian grids"></p>
@@ -1503,7 +1404,7 @@ Sorted by strength within each group.</p>
 
 <p><b>Page 6: Tajika Yogas</b> &mdash; Full Tajika yoga analysis at screen width.</p>
 
-
+<p><b>Page 7: Exchange Yogas</b> &mdash; The exchange and dispositor cards at screen width.</p>
 
 <!-- ============================================================ -->
 <a name="dasha-system"></a>
@@ -1514,14 +1415,24 @@ a given period of your life. Western astrology has similar concepts in <b>planet
 (Firdaria) and <b>annual profections</b>, but the Vedic dasha systems are far more
 detailed and precise, with nested sub-periods down to minutes.</p>
 
-<p>The left side of the window contains <b>two dasha panels side by side</b>:</p>
+<p>The left side of the window contains <b>two dasha panels side by side</b>. The two panels
+are identical: each one can show any of the three dashas below, and you choose them independently.</p>
 <ul>
-  <li><b>Left dasha panel</b> &mdash; Vimshottari dasha with its own independent ayanamsa setting
-      (default: Vedanga Jyotisha). Click the title bar dropdown arrow to change the ayanamsa.</li>
-  <li><b>Right dasha panel</b> &mdash; Switchable between Vimshottari and Planetary Ages (Nisarga).
-      Press <kbd>F7</kbd> to cycle, or change in Settings &gt; Zodiac &amp; Calculation &gt;
-      Right panel mode.</li>
+  <li><b>Vimshottari</b>, with its own ayanamsa per panel (left default: Vedanga Jyotisha).
+      Click the title to change the ayanamsa.</li>
+  <li><b>Planetary Ages</b> (Nisarga).</li>
+  <li><b>Zodiacal Releasing</b> (Valens), from Fortune or Spirit.</li>
 </ul>
+<p>To change what a panel shows:</p>
+<ul>
+  <li>Click the <b>swap button</b> at the top of the panel to go to the next dasha, or
+      <b>right-click</b> it to pick one from a menu.</li>
+  <li>Press <kbd>F7</kbd> for the right panel, <kbd>Shift+F7</kbd> for the left panel.</li>
+  <li>Or choose in Settings &gt; Zodiac &amp; Calculation: <b>Left panel mode</b> and
+      <b>Right panel mode</b>.</li>
+</ul>
+<p>Your choice is kept after a restart. Both panels can even show the same dasha, for example
+Vimshottari under two ayanamsas.</p>
 <p>Each dasha panel can use a <b>different ayanamsa</b>, letting you compare two ayanamsa
 systems side by side on the same chart. Both panels have the same Karaka/Cusp/House
 highlight filters at the bottom.</p>
@@ -1562,8 +1473,7 @@ the starting point of the Vimshottari dasha sequence.</p>
   <li><b>Title bar dropdown</b> &mdash; Click the small arrow on the dasha panel title bar
       to open the Ayanamsa selection dialog directly</li>
   <li><b>Settings</b> &mdash; Go to Settings &gt; Zodiac &amp; Calculation to set the ayanamsa
-      for each panel independently (left and right), plus the right panel mode
-      (Vimshottari or Planetary Ages)</li>
+      for each panel independently (left and right), plus the mode of each panel</li>
 </ul>
 
 <p class="img-wrap"><img src="images/dasha_ayanamsa_dialog.webp" class="panel-screenshot"
@@ -1589,8 +1499,8 @@ after a restart.
 </div>
 
 <h3>Nisarga Dasha (Planetary Ages)</h3>
-<p>A natural timing system based on planetary maturation ages. Press <kbd>F7</kbd> to switch
-the right dasha panel between Vimshottari and Planetary Ages mode.</p>
+<p>A natural timing system based on planetary maturation ages. Available on both panels
+(<kbd>F7</kbd> right, <kbd>Shift+F7</kbd> left, or right-click the swap button).</p>
 
 <p>The panel shows two sections in a single view:</p>
 <ul>
@@ -3345,7 +3255,7 @@ before you convert an archive and delete the originals.
   <tr><td><b>&mdash;</b></td><td>Save Chart As (.chtk / .toml) &mdash; <b>File</b> menu, no working shortcut</td></tr>
   <tr><td><kbd>Ctrl+R</kbd></td><td>Reload Current Chart</td></tr>
   <tr><td><kbd>F12</kbd></td><td>Screenshot to the program's <code>screenshot_debug</code> folder (always saves the South Indian chart)</td></tr>
-  <tr><td><kbd>F11</kbd></td><td>Planet labels: switch between degrees and planet names</td></tr>
+  <tr><td><kbd>F11</kbd></td><td>Under the planets: cycle degrees, planet names, Human Design gates and nakshatras</td></tr>
   <tr><td><kbd>Ctrl+Q</kbd></td><td>Quit</td></tr>
 </table>
 
@@ -3379,6 +3289,7 @@ so if a picture matters, open the folder and confirm it is there.
   <tr><td><kbd>F7</kbd></td><td>Cycle Right Dasha (Vimshottari / Planetary Ages)</td></tr>
   <tr><td><kbd>F8</kbd></td><td>Toggle Outer Planets (Uranus, Neptune, Pluto)</td></tr>
   <tr><td><kbd>F9</kbd></td><td>Cycle Cusp Line Glow</td></tr>
+  <tr><td><kbd>F10</kbd></td><td>Cycle the strength source of the retinue colours (DUC Bala, Digbala, Uccha, Chesta); Settings, Chart Display, "Show lord strength on retinue" turns the colours on. In the Strength table, a click on DIGBALA, UCCHA, CHESTA or DUC BALA turns the colours on with that strength, a second click turns them off. A click on PLANET makes the planets on the chart glow with that strength (DUC Bala if none is lit)</td></tr>
   <tr><td><kbd>Ctrl+P</kbd></td><td>Planet Placements Table</td></tr>
 </table>
 

@@ -20,6 +20,52 @@ class InterchangeController(PanelControllerBase):
     def __init__(self, gui):
         super().__init__(gui=gui, lazy=True)
         self._last_result = None
+        self._wired = None          # the widget whose THREAD key / cards are connected
+        self._switch = None         # the THREAD key's ExchangeChainSwitch (kept alive here)
+
+    # ---- THREAD key + chain focus (SPEC-EXCH-002, td-m79zy) ----------------
+    def _wire(self, widget):
+        """Connect the widget's THREAD key and card clicks to the chain manager
+        once, and keep its lamp on the setting whoever writes it."""
+        if getattr(self, "_wired", None) is widget or not hasattr(widget, "thread_pressed"):
+            return
+        from core import exchange_chain as xc
+        from managers.exchange_chain import ExchangeChainSwitch, toggle_focus
+        from managers.settings_manager import get_settings
+        # Held by the controller: PySide6 keeps a bound method's owner only
+        # weakly, so a local switch was collected and the key went dead.
+        self._switch = ExchangeChainSwitch(self._gui)
+        widget.thread_pressed.connect(self._switch.toggle)
+        widget.focus_requested.connect(lambda pair: self._focus(toggle_focus(pair)))
+        settings = get_settings()
+
+        def _lamp(_key, _value, w=widget):
+            import shiboken6
+            if shiboken6.isValid(w):
+                w.set_thread_lit(xc.chain_on(settings.get))
+        def _style(_key, _value, w=widget):
+            import shiboken6
+            if shiboken6.isValid(w):
+                w.restyle_chains()
+        settings.on_changed(xc.KEY_ON, _lamp)
+        settings.on_changed(xc.KEY_STYLE, _style)
+        widget.destroyed.connect(lambda *_: (settings.remove_on_changed(xc.KEY_ON, _lamp),
+                                             settings.remove_on_changed(xc.KEY_STYLE, _style)))
+        widget.set_thread_lit(xc.chain_on(settings.get))
+        self._wired = widget
+
+    def _dispatch_state_change(self, reason):
+        """A new chart or zodiac mode drops the chain focus at once, even while
+        the EXCH panel is hidden (the lazy refresh would only run at show)."""
+        if reason in ("active_chart", "aditya_mode"):
+            from managers.exchange_chain import set_focus
+            set_focus(None)
+        super()._dispatch_state_change(reason)
+
+    def _focus(self, pair):
+        widget = getattr(self._gui, "exchange_display", None)
+        if widget is not None and hasattr(widget, "set_focus"):
+            widget.set_focus(pair)
 
     def _on_chart_changed(self):
         self._refresh()
@@ -50,6 +96,8 @@ class InterchangeController(PanelControllerBase):
 
         chart = getattr(self._state, 'active_chart', None) if self._state else None
         if not chart:
+            from managers.exchange_chain import set_focus
+            set_focus(None)
             self._last_result = None
             if hasattr(widget, "clear"):
                 widget.clear()
@@ -69,6 +117,13 @@ class InterchangeController(PanelControllerBase):
             interchanges = get_all_interchanges(chart)
             themes = get_dispositor_themes(chart)
             self._last_result = {"themes": themes, "interchanges": interchanges}
+            self._wire(widget)
+            from core import exchange_chain as xc
+            from managers.exchange_chain import chart_changed
+            from apps.widgets.exchange_chain_items import focus
+            chart_changed(xc.links_from(interchanges, lambda _p: 0))
+            if hasattr(widget, "set_focus"):
+                widget.set_focus(focus())
             widget.refresh(themes, interchanges)
 
         except Exception as e:

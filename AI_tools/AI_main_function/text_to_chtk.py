@@ -801,6 +801,12 @@ def _extract_location(text: str, date_end: int) -> Dict[str, str]:
                                     found_city = True
                                     break
                     if not found_city:
+                        # "Boston Massachusetts USA": no commas, so peel a
+                        # trailing country, then a trailing US state, off the
+                        # end; what remains is the city.
+                        found_city, city, state, country = _split_city_state_country(
+                            parts[0].split(), state, country)
+                    if not found_city:
                         words = parts[0].split()
                         if (len(words) >= 2
                                 and all(w[0].isupper() for w in words if w)
@@ -846,6 +852,68 @@ def _extract_location(text: str, date_end: int) -> Dict[str, str]:
     if state:
         result["state"] = state
     return result
+
+
+_US_COUNTRY_WORDS = {"usa", "us", "u.s", "u.s.", "u.s.a.", "united states",
+                     "united states of america", "etats-unis", "états-unis", "e.-u."}
+
+_US_STATES = {
+    "alabama", "alaska", "arizona", "arkansas", "california", "colorado",
+    "connecticut", "delaware", "florida", "georgia", "hawaii", "idaho",
+    "illinois", "indiana", "iowa", "kansas", "kentucky", "louisiana", "maine",
+    "maryland", "massachusetts", "michigan", "minnesota", "mississippi",
+    "missouri", "montana", "nebraska", "nevada", "new hampshire", "new jersey",
+    "new mexico", "new york", "north carolina", "north dakota", "ohio",
+    "oklahoma", "oregon", "pennsylvania", "rhode island", "south carolina",
+    "south dakota", "tennessee", "texas", "utah", "vermont", "virginia",
+    "washington", "west virginia", "wisconsin", "wyoming",
+    "district of columbia",
+}
+
+
+def _is_country_word(tail: str) -> bool:
+    """A trailing word group that names a country. A bare US state never does
+    here: "Tbilisi Georgia" must not become USA (COUNTRY_ALIASES maps the
+    state names to USA)."""
+    if tail in _US_COUNTRY_WORDS:
+        return True
+    if tail in _US_STATES:
+        return False
+    return tail in COUNTRY_ALIASES or tail in _KNOWN_COUNTRIES
+
+
+def _split_city_state_country(words: List[str], state: str, country: str
+                              ) -> Tuple[bool, str, str, str]:
+    """Split a comma-less "City [State] Country" block from the end.
+
+    Only accepts when the last 1-4 words name a country; for the USA a state
+    just before it becomes the state. What remains must be one word or end in
+    a known city (taken alone), so a name typed after the date is not swept
+    into the city. Returns (found, city, state, country).
+    """
+    for n in range(min(4, len(words) - 1), 0, -1):
+        tail = " ".join(words[-n:]).lower()
+        if not _is_country_word(tail):
+            continue
+        head = words[:-n]
+        found_state = ""
+        if tail in _US_COUNTRY_WORDS:
+            for k in (3, 2, 1):
+                if len(head) > k and " ".join(head[-k:]).lower() in _US_STATES:
+                    found_state = " ".join(head[-k:])
+                    head = head[:-k]
+                    break
+        city = ""
+        for k in range(min(3, len(head)), 0, -1):
+            if " ".join(head[-k:]).lower() in _KNOWN_CITIES:
+                city = " ".join(head[-k:])
+                break
+        if not city and len(head) == 1:
+            city = head[0]
+        if city:
+            return True, city, found_state or state, " ".join(words[-n:])
+        return False, "", state, country
+    return False, "", state, country
 
 
 def _normalize_location(city: str, country: str) -> Tuple[str, str]:
@@ -1054,20 +1122,28 @@ def _validate_output_path(output_path: str) -> str:
 # =============================================================================
 
 def resolve_location(city: str, country: str,
-                     year: int, month: int, day: int) -> Dict[str, Any]:
+                     year: int, month: int, day: int,
+                     hour: int = 12, minute: int = 0) -> Dict[str, Any]:
     """
     Geocode a city and get its timezone offset for a given date.
 
     Delegates to existing geocode_city() and get_timezone_for_coordinates()
     from AI_tools/chart_generation/web_birth_data_to_chtk.py.
 
-    Returns dict: lat, lon, timezone_offset, dst_active, geocode_failed
+    hour/minute: local birth time; DST is resolved at that instant.
+
+    Returns dict: lat, lon, timezone_offset, dst_active, geocode_failed, and
+    dst_unverified (the IANA zone name) when the year is before 1970.
     """
     from tools.geocoding import geocode_city, get_timezone_for_coordinates
 
     _validate_location_input(city, country)
 
-    coords = geocode_city(city, country)
+    # "Unknown" is the parser's no-place placeholder, not a place: sent to
+    # the geocoder it resolves to whatever town is literally called that
+    # (Bahamas, India...), silently giving the chart a random location.
+    coords = (None if (city or "").strip().lower() in ("", "unknown")
+              else geocode_city(city, country))
     if not coords:
         import warnings
         warnings.warn(
@@ -1085,7 +1161,9 @@ def resolve_location(city: str, country: str,
     lat = coords["latitude"]
     lon = coords["longitude"]
 
-    birth_dt = datetime(year, month, day)
+    # Resolve at the birth TIME: DST starts and ends at a clock hour, and
+    # midnight sits on the wrong side of it on changeover days.
+    birth_dt = datetime(year, month, day, hour, minute)
     tz_info = get_timezone_for_coordinates(lat, lon, birth_dt)
 
     # Get IANA timezone name for get_all_planets_data().
@@ -1095,12 +1173,18 @@ def resolve_location(city: str, country: str,
     from core.tz_finder import timezone_at
     tz_name = timezone_at(lat, lon) or "UTC"
 
-    return {
+    result = {
         "lat": lat, "lon": lon,
         "timezone_offset": tz_info['offset'], "tz_name": tz_name,
         "dst_active": tz_info['dst_active'],
         "geocode_failed": False,
     }
+    from tools.geocoding import DST_RELIABLE_FROM_YEAR
+    if year < DST_RELIABLE_FROM_YEAR and tz_name != "UTC":
+        # IANA keeps pre-1970 history only for the zone's reference city
+        # (America/Chicago = Chicago, so Omaha 1925 gets Chicago's summer time).
+        result["dst_unverified"] = tz_name
+    return result
 
 
 # =============================================================================
@@ -1507,7 +1591,11 @@ def text_to_chtk(text: str, output_path: str = None,
             UTC+5:30 (India)  -> CHTK -05:30:00
         This inversion is handled automatically by create_chtk().
     """
-    pass  # Pro import stripped for Lite distribution
+    # The edition's CHTK writer (Pro registers its own, core/edition_hooks.py);
+    # Core's canonical writer otherwise.
+    from core.chtk_writer import create_chtk as core_create_chtk
+    from core.edition_hooks import CHTK_WRITER, resolve
+    create_chtk = resolve(CHTK_WRITER, core_create_chtk)
 
     # Step 1: Parse text
     parsed = parse_birth_text(text)
@@ -1530,11 +1618,18 @@ def text_to_chtk(text: str, output_path: str = None,
     loc = resolve_location(
         parsed["city"], parsed["country"],
         parsed["year"], parsed["month"], parsed["day"],
+        parsed["hour"], parsed["minute"],
     )
     if verbose:
         print(f"[Geocode] {loc['lat']:.4f}, {loc['lon']:.4f}  TZ: {loc['timezone_offset']}")
         if loc.get("geocode_failed"):
             print("[Geocode] WARNING: Geocoding failed — using (0,0)/UTC fallback!")
+    notes = ""
+    if loc.get("dst_unverified"):
+        from tools.geocoding import dst_unverified_note
+        notes = dst_unverified_note(loc["dst_active"], loc["dst_unverified"])
+        if verbose:
+            print(f"[TZ-CHECK] WARNING: {notes}")
 
     # Step 3: Create CHTK
     if output_path is None:
@@ -1561,6 +1656,7 @@ def text_to_chtk(text: str, output_path: str = None,
         dst_active=loc["dst_active"],
         gender=parsed["gender"],
         output_path=output_path,
+        notes=notes,
     )
 
     if verbose:
@@ -2480,7 +2576,17 @@ Examples:
                         help="Partial parse: never error on a missing date/field "
                              "(entry-bar mode; adds has_date to the JSON)")
 
+    # This command uses no setting (SPEC-SET-003 D-20): --set exists and
+
+    # refuses any key; --factory-defaults is accepted and changes nothing.
+
+    from core.settings_registry.cli import resolve_settings, use_settings
+
+    use_settings(parser, ())
+
     args = parser.parse_args()
+
+    resolve_settings(args)
 
     # --- Test mode ---
     if args.test:

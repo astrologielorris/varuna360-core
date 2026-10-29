@@ -82,20 +82,17 @@ class PlanetaryConditionController(PanelControllerBase):
             tally = _build_house_tally(chart_data["planets"])
             houses_by_planet = InfoPanelDialog._invert_house_tally(tally)
 
-            data = get_drishti_yuti_data(chart)
+            from core.avastha_frame import avastha_frame_chart
+            display_chart = avastha_frame_chart(chart, aditya_mode)
+            data = get_drishti_yuti_data(display_chart)
             matrix = data["matrix"]
             dignity_data = data["dignity_data"]
             shame_pairs = data.get("shame_pairs", set())
             shamed_planets = data.get("shamed_planets", set())
 
-            display_chart = chart
-            if aditya_mode == 'sidereal':
-                from core.chart_factory import rebuild_chart
-                display_chart = rebuild_chart(chart, mode="sidereal")
-
             lajjitaadi = {}
             try:
-                lajj_raw = chart.rashi().lajjitaadi_avasthas()
+                lajj_raw = display_chart.rashi().lajjitaadi_avasthas()
                 if isinstance(lajj_raw, dict):
                     lajjitaadi = lajj_raw
             except Exception:

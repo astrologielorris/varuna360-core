@@ -1,4 +1,4 @@
-"""Restricted Core/Lite Nakshatra wheel panel (SPEC-NAK-LITE-001).
+"""Core/Lite Nakshatra wheel panel (SPEC-NAK-LITE-001).
 
 A thin host for the shared ``NakshatraWheelView`` used as a normal F2 chart
 view (cycled with Wheel / South Indian), NOT a Pro tab. It is deliberately
@@ -10,18 +10,25 @@ minimal:
   redraws on the ``zodiac_settings.frame_changed`` signal (mode OR ayanamsa),
   and NOT on ``dasha.left`` changes — that binding is Pro's alone.
 - Sidereal nakshatras by default (the view's native frame).
-- Sector click is inert. No teacher-content descriptions, no info dialog, no
-  property outer ring: the view is constructed with ``summary_provider=None``.
+- Sector click opens the nakshatra info dialog (the descriptions by Ernst
+  Wilhelm and Michael Reed, used with permission, credited in the dialog), the
+  same dialog and entry point the Pro tab uses.
+- Property outer ring (amendment 2026-10-13): the view gets the summary provider
+  and a small corner button floating over the wheel (no toolbar row) chooses
+  the property it draws, or none (the dasha numbers). Same setting as the Pro
+  tab: ``display.nakshatra.property_mode``.
 - Planet click opens the shared Core planet dialog, via the same conversion the
   Pro panel uses (``show_planet_from_nakshatra_click``) so the two never drift.
 
 The Pro edition keeps its own full nakshatra panel with the toolbar, transit,
-Danishta and info dialog.
+Danishta and the ayanamsa button; none of those are in Core.
 """
 from PySide6.QtWidgets import QWidget, QVBoxLayout
 from PySide6.QtCore import QTimer
 
 from apps.widgets.nakshatra_wheel_view import NakshatraWheelView
+from apps.widgets.nakshatra_summary_provider import NakshatraSummaryProvider
+from apps.widgets.nakshatra_property_chooser import NakshatraPropertyChooser
 
 
 def show_planet_from_nakshatra_click(gui, wheel_view, name, info):
@@ -49,7 +56,7 @@ def show_planet_from_nakshatra_click(gui, wheel_view, name, info):
 
 
 class NakshatraCorePanel(QWidget):
-    """Restricted nakshatra wheel view for the Core/Lite F2 cycle."""
+    """Nakshatra wheel view for the Core/Lite F2 cycle."""
 
     def __init__(self, gui, parent=None):
         super().__init__(parent)
@@ -61,15 +68,19 @@ class NakshatraCorePanel(QWidget):
         layout.setSpacing(0)
 
         # Core binding: ayanamsa from zodiac.ayanamsa_id (mirrored on the gui as
-        # chart_sidereal_ayanamsa_id), NO teacher-content summary provider.
+        # chart_sidereal_ayanamsa_id); the summary provider draws the property
+        # outer ring, chosen with the corner button over the wheel.
         self.wheel_view = NakshatraWheelView(
             gui=gui,
             ayanamsa_source=lambda: getattr(gui, "chart_sidereal_ayanamsa_id", 100),
-            summary_provider=None,
+            summary_provider=NakshatraSummaryProvider(),
         )
-        # Planet click -> shared Core planet dialog. Sector click stays inert:
-        # nakshatra_click_signal is intentionally NOT connected in Core.
+        self.property_chooser = NakshatraPropertyChooser(self.wheel_view)
+        # Planet click -> shared Core planet dialog. Sector click -> the
+        # nakshatra info dialog, exactly as on the Pro tab.
         self.wheel_view.planet_click_signal.clicked.connect(self._on_planet_clicked)
+        self.wheel_view.nakshatra_click_signal.clicked.connect(
+            self._on_nakshatra_clicked)
 
         # Redraw on any zodiac frame change (mode from the main-tab buttons, or
         # zodiac.ayanamsa_id from Settings). frame_changed does NOT fire for
@@ -85,6 +96,11 @@ class NakshatraCorePanel(QWidget):
     def _on_planet_clicked(self, name, info):
         show_planet_from_nakshatra_click(self.gui, self.wheel_view, name, info)
 
+    def _on_nakshatra_clicked(self, nak_index):
+        """Open the nakshatra descriptions for the clicked sector."""
+        from apps.widgets.nakshatra_info_dialog import open_nakshatra_info_dialog
+        open_nakshatra_info_dialog(nak_index, parent=self)
+
     def _on_frame_changed(self, _keys):
         """Zodiac mode or ayanamsa changed -> redraw with the new frame."""
         chart = getattr(self.gui.state, "active_chart", None)
@@ -98,6 +114,9 @@ class NakshatraCorePanel(QWidget):
         # The F9 cusp mode is re-seeded by NakshatraWheelView.showEvent (shared
         # by the Core panel and the Pro tab), so the panel no longer seeds it
         # here (td-yi23 finding 2).
+        # The outer ring property is shared with the Pro tab's selector: adopt
+        # the saved choice before drawing.
+        self.property_chooser.adopt_saved()
         self.update_chart(getattr(self.gui.state, "active_chart", None))
         if self._initial_fit_pending:
             self._initial_fit_pending = False
@@ -118,6 +137,7 @@ class NakshatraCorePanel(QWidget):
 
     def refresh_theme(self):
         self.wheel_view.refresh_theme()
+        self.property_chooser.refresh_theme()
 
     # ── F9 house-cusp toggle (td-bu8s BUG3) ───────────────────────
     # core_gui_qt._cycle_cusp_glow reads current.cusp_glow_mode and calls

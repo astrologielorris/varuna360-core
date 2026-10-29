@@ -19,6 +19,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Dict, List, Optional
 
+from core.settings_registry import get as _registry_get
+
 
 class ProviderStatus(Enum):
     READY = "ready"
@@ -63,56 +65,23 @@ ACCOUNT_GROUPS = [
     (ACCOUNT_KEY, "API keys — one key per vendor",
      "Billed per token. One key unlocks every model listed under it."),
     (ACCOUNT_LOCAL, "Local AI — no key, no billing",
-     "Runs on this machine. Nothing leaves it, and nothing is charged."),
+     "Uses the server address below. For local processing, choose a server on this machine or your own network."),
 ]
 
-KEY_ACCOUNT_LABELS = {
-    "OPENAI_API_KEY": "OpenAI",
-    "Deepseek_API_KEY": "DeepSeek",
-    "Kimi_API_KEY": "Moonshot",
-    "Mistrale_API_KEY": "Mistral",
-    None: "LM Studio",
-}
+from core.ai_engines import catalog as _catalog  # noqa: E402
 
-EFFORT_LABELS = [
-    ("None", "none"), ("Low", "low"), ("Medium", "medium"),
-    ("High", "high"), ("Extra high", "xhigh"),
-]
+KEY_ACCOUNT_LABELS = _catalog.KEY_ACCOUNT_LABELS
+
+# (label, value) pairs of the effort combos: the registry's ai.effort choices
+# (SPEC-SET-003 W3e, one declaration).
+EFFORT_LABELS = [(c.label, c.value) for c in _registry_get("ai.effort").choices]
 _EFFORTS = {value for _label, value in EFFORT_LABELS}
 
-_KEY_PROVIDERS = [
-    {"name": "DeepSeek V4 Pro", "env_key": "Deepseek_API_KEY", "model": "deepseek-v4-pro", "url": "https://api.deepseek.com/v1/chat/completions", "vision": False, "vision_model": None, "context_window": 131072, "supports_tool_loop": True},
-    {"name": "DeepSeek V4 Flash", "env_key": "Deepseek_API_KEY", "model": "deepseek-v4-flash", "url": "https://api.deepseek.com/v1/chat/completions", "vision": False, "vision_model": None, "context_window": 131072, "supports_tool_loop": True},
-    {"name": "GPT-5.6 Sol", "env_key": "OPENAI_API_KEY", "model": "gpt-5.6-sol", "url": "https://api.openai.com/v1/chat/completions", "vision": True, "vision_model": "gpt-5.6-sol", "supports_reasoning_effort": True, "context_window": 400000, "supports_tool_loop": True},
-    {"name": "GPT-5.6 Terra", "env_key": "OPENAI_API_KEY", "model": "gpt-5.6-terra", "url": "https://api.openai.com/v1/chat/completions", "vision": True, "vision_model": "gpt-5.6-terra", "supports_reasoning_effort": True, "context_window": 400000, "supports_tool_loop": True},
-    {"name": "GPT-5.6 Luna", "env_key": "OPENAI_API_KEY", "model": "gpt-5.6-luna", "url": "https://api.openai.com/v1/chat/completions", "vision": True, "vision_model": "gpt-5.6-luna", "supports_reasoning_effort": True, "context_window": 400000, "supports_tool_loop": True},
-    {"name": "GPT-5.4 Nano", "env_key": "OPENAI_API_KEY", "model": "gpt-5.4-nano", "url": "https://api.openai.com/v1/chat/completions", "vision": True, "vision_model": "gpt-5.4-nano", "supports_reasoning_effort": True, "context_window": 400000, "supports_tool_loop": True},
-    {"name": "Kimi K3", "env_key": "Kimi_API_KEY", "model": "kimi-k3", "url": "https://api.moonshot.ai/v1/chat/completions", "vision": True, "vision_model": "kimi-k3", "context_window": 262144, "supports_tool_loop": True},
-    {"name": "Kimi K2.6", "env_key": "Kimi_API_KEY", "model": "kimi-k2.6", "url": "https://api.moonshot.ai/v1/chat/completions", "vision": True, "vision_model": "kimi-k3", "context_window": 262144, "supports_tool_loop": True},
-    {"name": "Mistral Large", "env_key": "Mistrale_API_KEY", "model": "mistral-large-latest", "url": "https://api.mistral.ai/v1/chat/completions", "vision": True, "vision_model": "mistral-small-latest", "context_window": 131072, "supports_tool_loop": True},
-    {"name": "Qwen 3.5 9B", "env_key": None, "model": "qwen/qwen3.5-9b", "url": "http://localhost:1234/v1/chat/completions", "vision": False, "vision_model": None, "context_window": 131072, "supports_tool_loop": True},
-]
-
-_SESSION_MODELS = {
-    "Claude": (("Claude Opus 4.6", "claude-opus-4-6"),
-               ("Claude Sonnet 4.6", "claude-sonnet-4-6"),
-               ("Claude Opus 5", "claude-opus-5"),
-               ("Claude Sonnet 5", "claude-sonnet-5")),
-    "Codex": (("Codex GPT-5.6 Sol", "gpt-5.6-sol"),
-              ("Codex GPT-5.6 Terra", "gpt-5.6-terra"),
-              ("Codex GPT-5.6 Luna", "gpt-5.6-luna")),
-}
-
-_LEGACY_NAMES = {
-    "GPT-5.5": "GPT-5.6 Terra", "GPT-5.4 Mini": "GPT-5.6 Luna",
-    "GPT-4.1 Mini": "GPT-5.6 Luna", "GPT-4.1 Nano": "GPT-5.4 Nano",
-    "Kimi K2.5": "Kimi K2.6", "GPT-5.6": "GPT-5.6 Sol",
-    "DeepSeek": "DeepSeek V4 Flash", "Mistral": "Mistral Large",
-    "LM Studio": "Qwen 3.5 9B", "Codex": "Codex GPT-5.6 Terra",
-    "Claude Opus (High Think)": "Claude Opus 5",
-    "Claude Opus (Medium Think)": "Claude Opus 5",
-    "Claude Sonnet (Medium Think)": "Claude Sonnet 5",
-}
+# One model table for every edition (core/ai_engines/catalog.py, td-2nxmo).
+_KEY_PROVIDERS = _catalog.KEY_PROVIDERS
+_SESSION_MODELS = {"Claude": _catalog.CLAUDE_SESSION_MODELS,
+                   "Codex": _catalog.CODEX_SESSION_MODELS}
+_LEGACY_NAMES = _catalog.LEGACY_NAMES
 
 
 @dataclass(frozen=True)
@@ -197,6 +166,14 @@ class _Instance:
             return ProviderSnapshot(ProviderStatus.READY, "No API key required.",
                                     models=[self.driver.model])
         canonical = LEGACY_ENV_KEY_ALIASES.get(key, key)
+        if key in _catalog.SUBSCRIPTION_ENV_KEYS:
+            _key, _url, source = _catalog.glm_route()
+            if not _key:
+                return ProviderSnapshot(ProviderStatus.LOGGED_OUT,
+                                        "Sign in to a GLM Coding Plan in ZCode, or enter "
+                                        "a key under GLM pay-per-use in AI Settings.")
+            return ProviderSnapshot(ProviderStatus.READY, f"Using your {source}.",
+                                    models=[self.driver.model])
         from managers.settings_manager import get_settings
         if not get_settings().get_api_key(canonical):
             return ProviderSnapshot(ProviderStatus.MISSING_KEY,
@@ -262,8 +239,9 @@ class LiteProviderBackend:
 
     def builtin_key_provider_config(self, name):
         canonical = self.canonical_provider_name(name)
-        return next((dict(c) for c in _KEY_PROVIDERS
-                     if c["name"] == canonical), None)
+        from core.local_ai_config import local_provider_config
+        cfg = next((c for c in _KEY_PROVIDERS if c["name"] == canonical), None)
+        return local_provider_config(cfg) if cfg is not None else None
 
     def vision_provider_configs(self):
         # Only what core.chart_image_extraction can route; anything else
@@ -274,8 +252,8 @@ class LiteProviderBackend:
         configs = [dict(c, kind="openai") for c in _KEY_PROVIDERS
                    if c.get("vision") and c["name"] in routable]
         configs.append({"name": "Anthropic API", "env_key": "ANTHROPIC_API_KEY",
-                        "model": "claude-haiku-4-5", "url": None,
-                        "vision": True, "vision_model": "claude-haiku-4-5",
+                        "model": "claude-haiku-5-5", "url": None,
+                        "vision": True, "vision_model": "claude-haiku-5-5",
                         "kind": "anthropic"})
         # Claude Code / Codex subscriptions read images through their CLI.
         configs += [{"name": c["name"], "env_key": None, "model": c["model"],
@@ -283,7 +261,8 @@ class LiteProviderBackend:
                      "kind": c["kind"]}
                     for c in VISION_PROVIDERS
                     if c["kind"] in ("claude_cli", "codex_cli")]
-        return configs
+        from core.local_ai_config import local_provider_config
+        return [local_provider_config(c) for c in configs]
 
     def builtin_accounts(self):
         rows = [ProviderAccountRow({"Claude": "claude-code",
@@ -297,7 +276,8 @@ class LiteProviderBackend:
         for cfg in _KEY_PROVIDERS:
             grouped.setdefault(cfg["env_key"], []).append(cfg)
         for key, configs in grouped.items():
-            kind = ACCOUNT_KEY if key else ACCOUNT_LOCAL
+            kind = (ACCOUNT_SUBSCRIPTION if key in _catalog.SUBSCRIPTION_ENV_KEYS
+                    else ACCOUNT_KEY if key else ACCOUNT_LOCAL)
             rows.append(ProviderAccountRow(
                 key or f"local:{configs[0]['url']}",
                 KEY_ACCOUNT_LABELS.get(key, key or "Local"), kind,

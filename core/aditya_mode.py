@@ -18,6 +18,9 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
+from core.i18n import term  # noqa: E402
+from core.i18n.languages import ENGLISH  # noqa: E402
+
 # Sign names
 ADITYA_NAMES = ['Dhata', 'Aryama', 'Mitra', 'Varuna', 'Indra', 'Vivasvan',
                 'Tvasta', 'Vishnu', 'Amzu', 'Bhaga', 'Pusha', 'Parjanya']
@@ -25,87 +28,68 @@ ADITYA_NAMES = ['Dhata', 'Aryama', 'Mitra', 'Varuna', 'Indra', 'Vivasvan',
 TROPICAL_NAMES = ['Aries', 'Taurus', 'Gemini', 'Cancer', 'Leo', 'Virgo',
                   'Libra', 'Scorpio', 'Sagittarius', 'Capricorn', 'Aquarius', 'Pisces']
 
-# Localized Western sign names keyed by language code.
-# This dict is the single source of truth for sign labels across all chart views.
-# "en" falls back to TROPICAL_NAMES (not duplicated here).
-LOCALIZED_SIGN_NAMES = {
-    "fr": ['Bélier', 'Taureau', 'Gémeaux', 'Cancer', 'Lion', 'Vierge',
-           'Balance', 'Scorpion', 'Sagittaire', 'Capricorne', 'Verseau', 'Poissons'],
-    "es": ['Aries', 'Tauro', 'Géminis', 'Cáncer', 'Leo', 'Virgo',
-           'Libra', 'Escorpio', 'Sagitario', 'Capricornio', 'Acuario', 'Piscis'],
-    "pt": ['Áries', 'Touro', 'Gêmeos', 'Câncer', 'Leão', 'Virgem',
-           'Libra', 'Escorpião', 'Sagitário', 'Capricórnio', 'Aquário', 'Peixes'],
-    "pt-PT": ['Carneiro', 'Touro', 'Gémeos', 'Caranguejo', 'Leão', 'Virgem',
-              'Balança', 'Escorpião', 'Sagitário', 'Capricórnio', 'Aquário', 'Peixes'],
-    "de": ['Widder', 'Stier', 'Zwillinge', 'Krebs', 'Löwe', 'Jungfrau',
-           'Waage', 'Skorpion', 'Schütze', 'Steinbock', 'Wassermann', 'Fische'],
-    "it": ['Ariete', 'Toro', 'Gemelli', 'Cancro', 'Leone', 'Vergine',
-           'Bilancia', 'Scorpione', 'Sagittario', 'Capricorno', 'Acquario', 'Pesci'],
-    "ru": ['Овен', 'Телец', 'Близнецы', 'Рак', 'Лев', 'Дева',
-           'Весы', 'Скорпион', 'Стрелец', 'Козерог', 'Водолей', 'Рыбы'],
-    "zh": ['白羊座', '金牛座', '双子座', '巨蟹座', '狮子座', '处女座',
-           '天秤座', '天蝎座', '射手座', '摩羯座', '水瓶座', '双鱼座'],
-}
+# Localized Western sign names and planet display names (SPEC-LOC-001, SPEC-PLM-001)
+# now live in the i18n catalogs as terms (SPEC-LOC-002 §4.4):
+# i18n/<code>/terms/sign.json and planet.json; English is generated from
+# TROPICAL_NAMES and the engine planet names. The two names below stay importable
+# as plain dicts built from the catalogs on access (never a second copy):
+#   LOCALIZED_SIGN_NAMES[code] -> 12 sign names, for each non-English language
+#                                 that has its own sign terms ("en" falls back
+#                                 to TROPICAL_NAMES, not listed, as before)
+#   PLANET_DISPLAY_NAMES[code] -> {planet: name}, for each language with planet terms
+# FRENCH_NAMES (backward compat alias) is LOCALIZED_SIGN_NAMES["fr"].
 
-PLANET_DISPLAY_NAMES = {
-    "en": {
-        "Sun": "Sun", "Moon": "Moon", "Mars": "Mars",
-        "Mercury": "Mercury", "Jupiter": "Jupiter", "Venus": "Venus",
-        "Saturn": "Saturn", "Uranus": "Uranus", "Neptune": "Neptune",
-        "Pluto": "Pluto", "Rahu": "Rahu", "Ketu": "Ketu",
-    },
-    "fr": {
-        "Sun": "Soleil", "Moon": "Lune", "Mars": "Mars",
-        "Mercury": "Mercure", "Jupiter": "Jupiter", "Venus": "Vénus",
-        "Saturn": "Saturne", "Uranus": "Uranus", "Neptune": "Neptune",
-        "Pluto": "Pluton", "Rahu": "Rahu", "Ketu": "Ketu",
-    },
-    "es": {
-        "Sun": "Sol", "Moon": "Luna", "Mars": "Marte",
-        "Mercury": "Mercurio", "Jupiter": "Júpiter", "Venus": "Venus",
-        "Saturn": "Saturno", "Uranus": "Urano", "Neptune": "Neptuno",
-        "Pluto": "Plutón", "Rahu": "Rahu", "Ketu": "Ketu",
-    },
-    "pt": {
-        "Sun": "Sol", "Moon": "Lua", "Mars": "Marte",
-        "Mercury": "Mercúrio", "Jupiter": "Júpiter", "Venus": "Vênus",
-        "Saturn": "Saturno", "Uranus": "Urano", "Neptune": "Netuno",
-        "Pluto": "Plutão", "Rahu": "Rahu", "Ketu": "Ketu",
-    },
-    "pt-PT": {
-        "Sun": "Sol", "Moon": "Lua", "Mars": "Marte",
-        "Mercury": "Mercúrio", "Jupiter": "Júpiter", "Venus": "Vénus",
-        "Saturn": "Saturno", "Uranus": "Urano", "Neptune": "Neptuno",
-        "Pluto": "Plutão", "Rahu": "Rahu", "Ketu": "Ketu",
-    },
-    "de": {
-        "Sun": "Sonne", "Moon": "Mond", "Mars": "Mars",
-        "Mercury": "Merkur", "Jupiter": "Jupiter", "Venus": "Venus",
-        "Saturn": "Saturn", "Uranus": "Uranus", "Neptune": "Neptun",
-        "Pluto": "Pluto", "Rahu": "Rahu", "Ketu": "Ketu",
-    },
-    "it": {
-        "Sun": "Sole", "Moon": "Luna", "Mars": "Marte",
-        "Mercury": "Mercurio", "Jupiter": "Giove", "Venus": "Venere",
-        "Saturn": "Saturno", "Uranus": "Urano", "Neptune": "Nettuno",
-        "Pluto": "Plutone", "Rahu": "Rahu", "Ketu": "Ketu",
-    },
-    "ru": {
-        "Sun": "Солнце", "Moon": "Луна", "Mars": "Марс",
-        "Mercury": "Меркурий", "Jupiter": "Юпитер", "Venus": "Венера",
-        "Saturn": "Сатурн", "Uranus": "Уран", "Neptune": "Нептун",
-        "Pluto": "Плутон", "Rahu": "Раху", "Ketu": "Кету",
-    },
-    "zh": {
-        "Sun": "太阳", "Moon": "月亮", "Mars": "火星",
-        "Mercury": "水星", "Jupiter": "木星", "Venus": "金星",
-        "Saturn": "土星", "Uranus": "天王星", "Neptune": "海王星",
-        "Pluto": "冥王星", "Rahu": "罗睺", "Ketu": "计都",
-    },
-}
 
-# Backward compat alias
-FRENCH_NAMES = LOCALIZED_SIGN_NAMES["fr"]
+def _languages_with_terms(kind, include_english):
+    """Registry languages with their own i18n/<code>/terms/<kind>.json."""
+    from core.i18n import languages as langs
+    root = langs.data_root()
+    return [lang.code for lang in langs.user_languages()
+            if (include_english or lang.code != ENGLISH)
+            and (root / lang.code / "terms" / f"{kind}.json").is_file()]
+
+
+# Built once from the catalogs on first access (no load at import), then served
+# from memory: cache/chart_index_cache.py reads LOCALIZED_SIGN_NAMES per chart.
+# Cleared with the i18n caches (core.i18n.languages.clear_caches), the one
+# invalidation entry point. Each access returns a fresh copy, so a caller that
+# edits its mapping never changes the cache.
+_COMPAT_CACHE = {}
+
+
+def _build_compat(name):
+    from core.i18n.catalog import term_idents
+    if name == "LOCALIZED_SIGN_NAMES":
+        return {code: tuple(term("sign", i, lang=code) for i in range(12))
+                for code in _languages_with_terms("sign", False)}
+    return {code: {p: term("planet", p, lang=code) for p in term_idents("planet", code)}
+            for code in _languages_with_terms("planet", True)}
+
+
+def _compat(name):
+    table = _COMPAT_CACHE.get(name)
+    if table is None:
+        table = _COMPAT_CACHE[name] = _build_compat(name)
+    return table
+
+
+def __getattr__(name):
+    if name == "LOCALIZED_SIGN_NAMES":
+        return {code: list(names) for code, names in _compat(name).items()}
+    if name == "PLANET_DISPLAY_NAMES":
+        return {code: dict(names) for code, names in _compat(name).items()}
+    if name == "FRENCH_NAMES":      # backward compat alias
+        return list(_compat("LOCALIZED_SIGN_NAMES")["fr"])
+    raise AttributeError(name)
+
+
+def _register_compat_invalidation():
+    from core.i18n import languages as _i18n_languages
+    _i18n_languages.on_clear(_COMPAT_CACHE.clear)
+
+
+_register_compat_invalidation()
+
 
 # Ordinal equivalence: Division #1 = Dhata = Aries (SPEC-ZOD-001 §4.2)
 ADITYA_CIRCLE_TO_WESTERN = {
@@ -182,22 +166,21 @@ def displayed_sign_name(sign_index, aditya_mode, use_western_names, sign_languag
         use_western_names=True:  Western names (Aries, Taurus ...)
         use_western_names=False: Aditya names (Dhata, Aryama ...)
 
-    sign_language only affects the Western set ("fr" selects French names). The
-    index is never re-mapped (ordinal Dhata = Aries); only the list is swapped.
+    sign_language only affects the Western set (term("sign", idx) in that
+    language, SPEC-LOC-002; an unknown code reads English). The index is never
+    re-mapped (ordinal Dhata = Aries); only the list is swapped.
     """
     idx = sign_index % 12
     show_aditya = not use_western_names
     if show_aditya:
         return ADITYA_NAMES[idx]
-    if sign_language in LOCALIZED_SIGN_NAMES:
-        return LOCALIZED_SIGN_NAMES[sign_language][idx]
-    return TROPICAL_NAMES[idx]
+    return term("sign", idx, lang=sign_language or ENGLISH)
 
 
 def get_planet_display_name(lang, planet):
-    """Return localized planet name, falling back to English, then raw key."""
-    names = PLANET_DISPLAY_NAMES.get(lang, PLANET_DISPLAY_NAMES["en"])
-    return names.get(planet, PLANET_DISPLAY_NAMES["en"].get(planet, planet))
+    """Return localized planet name, falling back to English, then raw key
+    (a facade over term("planet", ...) with an explicit language)."""
+    return term("planet", planet, lang=lang or ENGLISH)
 
 
 def get_ascendant_sign(pdata, mode="aditya", ayanamsa_offset=0.0):
@@ -304,7 +287,7 @@ def load_chart_from_chtk(chtk_path, mode="aditya"):
     from core.chart_factory import build_chart_from_params
 
     # SPEC-IMPORT-001 §6.1: format-agnostic dispatch (.chtk or .toml).
-    bd = BirthDataManager.create_birth_data_from_file(str(chtk_path))
+    bd = BirthDataManager.create_birth_data_from_file(str(chtk_path), canonicalize=False)
 
     # SPEC-IMPORT-001 §5.3 ("jd wins"): a .toml carries an authoritative,
     # sub-second julian_day. Re-deriving JD from the integer civil fields would

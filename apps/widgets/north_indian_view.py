@@ -35,6 +35,8 @@ from PySide6.QtWidgets import (
     QGraphicsRectItem,
 )
 from PySide6.QtCore import Qt, QPointF
+
+from apps.widgets.paint_on_show import cancel_paint, defer_paint
 from PySide6.QtGui import (
     QPen, QBrush, QColor, QPainter, QFont, QImage, QPixmap, QPolygonF
 )
@@ -52,8 +54,17 @@ from .north_indian_items import (
 from .north_indian_glyph_badges import draw_glyph_only_badges
 
 # Import theme
+from apps.widgets.north_indian_planet_layout import (
+    LABEL_GAP, MIN_PLANET_SIZE, layout_cell)
 from ui.qt_theme import GOLD, get_theme_colors, scaled_area_font, desat_image, sat_key, get_area_font_size, AREA_DEFAULTS
-from core.aditya_mode import displayed_sign_name, get_planet_display_name
+from core.aditya_mode import displayed_sign_name
+from core.planet_label import PlanetCaptions, degree_text
+from core import settings_registry as _registry
+
+
+def registry_default(key, fallback):
+    """``key``'s factory value from the settings registry, else ``fallback``."""
+    return _registry.default(key) if _registry.has(key) else fallback
 
 # SPEC-COT-001 §4.10 — the in-chart card index. The setting, the memoised
 # spread and the plaque art are shared with the wheel and South Indian views;
@@ -66,9 +77,12 @@ TAG_COT_CARD = "ni.cot_card"
 
 
 def draw_sign_badges(view, geometry=None, tag=None):
-    from managers.settings_manager import get_settings
-    mode = get_settings().get('display.sign_display', 'zodiac')
-    if mode != 'josh_only':
+    from ui.sign_numbers import effective_sign_display
+    # Each pass starts with no ASC label: _draw_ascendant_degree records it.
+    for geom in (geometry if geometry is not None else view.house_geometry).values():
+        geom['asc_rect'] = None
+    mode = effective_sign_display('north_indian')
+    if mode not in ('josh_only', 'vector_only'):  # ui.sign_display_modes.hides_sign_names
         return view._draw_sign_badge(geometry=geometry, tag=tag)
     settings = view.display_settings.get('sign_name', {})
     return draw_glyph_only_badges(
@@ -182,7 +196,7 @@ class NorthIndianView(CotIndexMixin, QGraphicsView):
         self.ayanamsa_offset = 0.0
         self.use_western_names = False
         self.sign_language = "en"
-        self.show_planet_names = False
+        self.planet_label = "degrees"   # core.planet_label mode (F11)
 
         # Show outer planets toggle
         self.show_outer_planets = True  # Default ON
@@ -1101,20 +1115,11 @@ class NorthIndianView(CotIndexMixin, QGraphicsView):
             print(f"[NORTH INDIAN] Warning: Icon not found for {western_name}")
             return None
 
-        qimage = QImage(str(icon_path))
-        if qimage.isNull():
+        # Shared decode + scale + desaturation (sign_icon_loader)
+        from apps.widgets.sign_icon_loader import scaled_sign_pixmap
+        pixmap = scaled_sign_pixmap(icon_path, size)
+        if pixmap is None:
             return None
-
-        qimage = qimage.scaled(
-            size, size,
-            Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.SmoothTransformation
-        )
-
-        # Desaturate AFTER scale (SPEC-SAT-001 WI-4; no-op at 100)
-        qimage = desat_image(qimage)
-
-        pixmap = QPixmap.fromImage(qimage)
         self.zodiac_icons[cache_key] = pixmap
         return pixmap
 
@@ -1177,6 +1182,8 @@ class NorthIndianView(CotIndexMixin, QGraphicsView):
 
     def draw_chart(self):
         """Main drawing method - draws all chart components."""
+        if defer_paint(self, "draw_chart"):       # hidden: drawn at its next show
+            return
         self.scene.clear()
         self.house_cells = {}
 
@@ -1200,7 +1207,8 @@ class NorthIndianView(CotIndexMixin, QGraphicsView):
         # search reads it — a card drawn after would be sat on.
         self._draw_cot_cards()
 
-        # Layer 5.5: Ascendant degree marker (SPEC-NIC-001)
+        # Layer 5.5: Ascendant degree marker (SPEC-NIC-001); writes
+        # geom['asc_rect'] for the planet zone search.
         if self._cusps and self.ascendant_override is None:
             self._draw_ascendant_degree()
 
@@ -1316,10 +1324,11 @@ class NorthIndianView(CotIndexMixin, QGraphicsView):
         qt_weight = QFont.Weight.Bold if font_weight == "bold" else QFont.Weight.Normal
         cjk_lang = self.sign_language in ("zh",)
 
-        from managers.settings_manager import get_settings
-        sign_display = get_settings().get('display.sign_display', 'zodiac')
-        # Anything but 'names' shows an icon (unknown -> zodiac, like the Wheel).
-        show_icon = sign_display != 'names'
+        from ui.sign_numbers import (NUMBERS, TEXT_ONLY, effective_sign_display,
+                                     sign_number)
+        sign_display = effective_sign_display('north_indian')
+        # Anything but 'names'/'numbers' shows an icon (unknown -> zodiac, like the Wheel).
+        show_icon = sign_display not in TEXT_ONLY
 
         # Badge layout constants (scene units — scene is 2048px)
         ICON_LABEL_GAP = 4
@@ -1342,9 +1351,10 @@ class NorthIndianView(CotIndexMixin, QGraphicsView):
             icon_h = icon_size if show_icon else 0
             gap = ICON_LABEL_GAP if show_icon else 0
 
-            sign_name = displayed_sign_name(sign_index, self.aditya_mode,
-                                            self.use_western_names,
-                                            self.sign_language)
+            sign_name = (sign_number(sign_index) if sign_display == NUMBERS else
+                         displayed_sign_name(sign_index, self.aditya_mode,
+                                             self.use_western_names,
+                                             self.sign_language))
 
             base_font_size = max(1, round((font_size_diamond if is_diamond else font_size_triangle) * get_area_font_size('chart_labels') / AREA_DEFAULTS['chart_labels']))  # G2c §11.8: chart_labels preset only
 
@@ -1458,7 +1468,7 @@ class NorthIndianView(CotIndexMixin, QGraphicsView):
                 label_x = badge_left + (badge_w - lbl_w) / 2
                 label_y = badge_top + icon_h + gap
                 label_item.setPos(label_x, label_y)
-                label_item.setZValue(5); label_item.setVisible(sign_display != 'josh_only')  # below planets (z=6)
+                label_item.setZValue(5); label_item.setVisible(sign_display not in ('josh_only', 'vector_only'))  # below planets (z=6)
                 if tag:
                     label_item.setData(Qt.ItemDataRole.UserRole, tag)
                 self.scene.addItem(label_item)
@@ -1485,6 +1495,7 @@ class NorthIndianView(CotIndexMixin, QGraphicsView):
         """
         for house_num in range(1, 13):
             self.house_geometry[house_num]['cot_rect'] = None
+            self.house_geometry[house_num]['cot_items'] = None
 
         if not self._cot_enabled():
             return
@@ -1553,7 +1564,7 @@ class NorthIndianView(CotIndexMixin, QGraphicsView):
                 continue
 
             cx, cy = placed
-            plaque.add_to(self.scene, cx, cy, tag=TAG_COT_CARD)
+            geom['cot_items'] = plaque.add_to(self.scene, cx, cy, tag=TAG_COT_CARD)
             geom['cot_rect'] = (cx - half_w, cy - half_h,
                                 plaque.width, plaque.height)
 
@@ -1630,6 +1641,8 @@ class NorthIndianView(CotIndexMixin, QGraphicsView):
             ly = cy - lh / 2
 
         label.setPos(lx, ly)
+        # The planet zone search keeps clear of it (north_indian_planet_zone).
+        cell['asc_rect'] = (lx, ly, lw, lh)
         if tag:
             label.setData(Qt.ItemDataRole.UserRole, tag)
         self.scene.addItem(label)
@@ -1689,8 +1702,9 @@ class NorthIndianView(CotIndexMixin, QGraphicsView):
     def _draw_planets_in_house(self, house_num: int, planets: list,
                               geometry=None, tag=None):
         """
-        Draw planets in a specific house using the 4-candidate planet zone
-        search recommended by the Codex council judge.
+        Draw planets in a specific house in the cell's free room: never over
+        the sign badge, the Cards of Truth plaque or the ASC label
+        (north_indian_planet_layout.layout_cell).
 
         Args:
             house_num: 1-12
@@ -1702,132 +1716,69 @@ class NorthIndianView(CotIndexMixin, QGraphicsView):
         geom = geo[house_num]
         polygon = geom['polygon']
         centroid = geom['center']
-        is_diamond = geom.get('shape') == 'diamond'
-        badge_rect = geom.get('badge_rect')  # may be None if badge failed
-        # SPEC-COT-001 §4.10: the card index reserves the OPPOSITE end of the
-        # cell — which is exactly the "opposite" candidate below. None whenever
-        # the index is off or did not fit, so the zone is unchanged then.
-        cot_rect = geom.get('cot_rect')
-        avoid_rects = [r for r in (badge_rect, cot_rect) if r is not None]
-
-        inner_vertex = geom.get('inner_vertex', centroid)
+        if not planets:
+            return
 
         # Get display settings for planet sizes and degrees
         planet_sizes = self.display_settings.get("planet_sizes", {})
         deg_settings = self.display_settings.get("planet_degrees", {})
-        deg_font_size = deg_settings.get("font_size", 14)
+        # Font Sizes > Planet Degrees, as the area RATIO only (this fit-to-view
+        # scene never took Display Scale here; SPEC-FONT-001 §11.8/§11.9).
+        base_deg = deg_settings.get("font_size", 14)
+        deg_font_size = max(1, round(base_deg * get_area_font_size('planet_degrees') / AREA_DEFAULTS['planet_degrees']))
         deg_font_color = deg_settings.get("font_color", "#FFFFFF")
         deg_font_weight = deg_settings.get("font_weight", "normal")
         deg_offset_x = deg_settings.get("offset_x", 0)
         deg_offset_y = deg_settings.get("offset_y", 0)
 
-        count = len(planets)
-        if count == 0:
-            return
-
-        # ---- Step 1: Four candidate planet-zone centers ----
-        aspect = 1.0 if is_diamond else 1.3
-        rect_margin = 20.0 if is_diamond else 28.0
-
-        if badge_rect is not None:
-            badge_cx = badge_rect[0] + badge_rect[2] / 2
-            badge_cy = badge_rect[1] + badge_rect[3] / 2
-            # OPPOSITE: mirror badge across centroid
-            opp_x = 2 * centroid[0] - badge_cx
-            opp_y = 2 * centroid[1] - badge_cy
-        else:
-            opp_x, opp_y = centroid
-
-        ix, iy = inner_vertex
-
-        candidates = [
-            ("opposite", (opp_x, opp_y)),
-            ("centroid", (centroid[0], centroid[1])),
-            ("inner-mid", (centroid[0] + 0.5 * (ix - centroid[0]),
-                            centroid[1] + 0.5 * (iy - centroid[1]))),
-            ("inner-deep", (centroid[0] + 0.75 * (ix - centroid[0]),
-                             centroid[1] + 0.75 * (iy - centroid[1]))),
-        ]
-
-        best_rect = None
-        best_area = -1.0
-        for _name, cand_center in candidates:
-            cand_rect = self._inscribed_rect_avoiding(
-                polygon, cand_center, avoid_rects,
-                aspect=aspect, margin=rect_margin
-            )
-            _, _, cw, ch = cand_rect
-            area = cw * ch
-            if area > best_area:
-                best_area = area
-                best_rect = cand_rect
-
-        rect_left, rect_top, rect_w, rect_h = best_rect
-        # Fallback if the 4-candidate search found nothing usable
-        if rect_w < 20 or rect_h < 20:
-            rect_left, rect_top, rect_w, rect_h = self._inscribed_rect(
-                polygon, centroid, aspect=aspect, margin=rect_margin
-            )
-
-        # Center used by the pull-toward-centroid safety fallback later
-        cx = rect_left + rect_w / 2
-        cy = rect_top + rect_h / 2
-
-        # ---- Step 2: Choose grid dimensions ----
-        # Favor wider grids for low counts, square-ish grids for high counts.
-        if count == 1:
-            cols, rows = 1, 1
-        elif count == 2:
-            cols, rows = 2, 1
-        elif count == 3:
-            cols, rows = 3, 1
-        elif count == 4:
-            cols, rows = 2, 2
-        elif count <= 6:
-            cols, rows = 3, 2
-        elif count <= 9:
-            cols, rows = 3, 3
-        else:
-            cols = 4
-            rows = (count + cols - 1) // cols
-
-        # ---- Step 3: Size each planet ----
-        cell_w = rect_w / cols
-        cell_h = rect_h / rows
-        # Leave 10% of slot as internal padding; reserve ~22px at slot bottom
-        # for the degree label so planet + label both fit.
-        label_reserve = 22
-        slot_w = cell_w * 0.90
-        slot_h = max(cell_h * 0.90 - label_reserve, cell_h * 0.55)
-
-        # Planet icon side length — square, fits in the smaller slot dimension.
-        max_fit = min(slot_w, slot_h)
-        base_ref_size = 100  # "nominal" size to scale toward
-        # Start from the user's configured size, cap to max_fit, clamp min.
-        MIN_PLANET_SIZE = 48
+        # The user's size, capped to MAX_PLANET_SIZE at the factory size, a
+        # cap that follows the size setting (RD-4); the zone bounds it next.
         MAX_PLANET_SIZE = 110
 
-        # ---- Step 4: Row-major placement inside the inscribed rect ----
-        planet_items = []  # (x, y, size, planet) for post-placement label draw
+        def capped(name):
+            user = planet_sizes.get(name, self.PLANET_SIZES.get(name, 100))
+            factory = registry_default(f"north_indian_display.planet_sizes.{name}", user)
+            return min(user, MAX_PLANET_SIZE * max(1.0, user / (factory or 1)))
 
-        for i, planet in enumerate(planets):
-            row = i // cols
-            col = i % cols
+        # ---- Step 1: Layout over the cell's free room ----
+        # Badge, card plaque (SPEC-COT-001 §4.10) and ASC label are never
+        # crossed; a crowded cell shrinks its planets, drops its plaque, then
+        # shrinks its captions (north_indian_planet_layout).
+        captions = PlanetCaptions(self.planet_label, self.sign_language)
+        texts = [captions.text(p["name"], p["planet_obj"], p["deg_in_sign"])
+                 if p.get("planet_obj") is not None else "" for p in planets]
+        shown = [t or degree_text(p["deg_in_sign"]) for t, p in zip(texts, planets)]
+        cot_rect = geom.get('cot_rect')
+        reserved = [r for r in (geom.get('badge_rect'), cot_rect, geom.get('asc_rect')) if r]
+        points = [(polygon.at(i).x(), polygon.at(i).y()) for i in range(polygon.size())]
+        args = (max(capped(p["name"]) for p in planets), shown,
+                deg_font_size - 2 if len(planets) > 4 else deg_font_size, base_deg,
+                deg_font_weight, self.planet_label == "names",
+                20.0 if geom.get('shape') == 'diamond' else 28.0,
+                (deg_offset_x, deg_offset_y))
+        layout = (layout_cell(points, reserved, cot_rect, *args)
+                  or layout_cell(points, [], None, *args))
+        if layout["drop_plaque"]:
+            for item in geom.pop('cot_items', None) or ():
+                self.scene.removeItem(item)
+            geom['cot_rect'] = None
 
-            # Grid slot center (inside the inscribed rectangle).
-            # Vertical slot center is shifted up to leave room for label below.
-            px_slot = rect_left + (col + 0.5) * cell_w
-            py_slot = rect_top + (row + 0.5) * cell_h - label_reserve / 2
+        # Center used by the pull-toward-centroid safety fallback later
+        cx, cy = layout["center"]
+        max_fit = layout["max_fit"]
+        # The 48 px floor only applies where it fits: a planet never grows
+        # over the badge to reach it.
+        min_size = min(MIN_PLANET_SIZE, max_fit)
 
-            # Per-planet size = user setting clamped to slot fit
-            user_size = planet_sizes.get(
-                planet["name"], self.PLANET_SIZES.get(planet["name"], base_ref_size)
-            )
-            size = int(max(MIN_PLANET_SIZE, min(user_size, max_fit, MAX_PLANET_SIZE)))
+        # ---- Step 2: Place each planet at its slot centre ----
+        # (shifted up in its slot to leave room for the label below).
+        planet_items = []  # (x, y, size, planet, caption) for post-placement label draw
+        for planet, label_override, (px_slot, py_slot) in zip(planets, texts, layout["centres"]):
+            size = int(max(min_size, min(capped(planet["name"]), max_fit)))
 
-            # ---- Step 5: Pull-toward-centroid safety check ----
+            # ---- Step 3: Pull-toward-centroid safety check ----
             # If the slot center escaped the polygon (triangle tips), blend
-            # with centroid until it's safely inside.
+            # with the zone centre until it's safely inside.
             pt = QPointF(px_slot, py_slot)
             if not self._point_in_polygon_with_margin(pt, polygon, margin=size * 0.45):
                 for blend in (0.2, 0.4, 0.6, 0.8):
@@ -1839,7 +1790,7 @@ class NorthIndianView(CotIndexMixin, QGraphicsView):
                         px_slot, py_slot = test_x, test_y
                         break
                 else:
-                    # Last resort — place at centroid
+                    # Last resort — place at the zone centre
                     px_slot, py_slot = cx, cy
 
             pixmap = self.load_planet_image(planet["name"], size=size)
@@ -1854,38 +1805,20 @@ class NorthIndianView(CotIndexMixin, QGraphicsView):
                 if tag:
                     item.setData(Qt.ItemDataRole.UserRole, tag)
                 self.scene.addItem(item)
-                planet_items.append((px_slot, py_slot, size, planet))
+                planet_items.append((px_slot, py_slot, size, planet, label_override))
 
-        # ---- Step 6: Draw degree labels, clamped to polygon ----
-        for px, py, size, planet in planet_items:
-            font_size = deg_font_size - 2 if count > 4 else deg_font_size
-
-            # Create a dummy label to measure its bounding rect, then clamp.
-            # We can't easily measure PlanetDegreeLabel before instantiation,
-            # so we use a naive position then push toward centroid if needed.
-            naive_y = py + size / 2 + 12 + deg_offset_y
-            naive_x = px + deg_offset_x
-
-            # Approximate label bounding box (3–5 chars × font_size × 0.6 width)
-            approx_label_w = font_size * 3.5
-            approx_label_h = font_size * 1.4
-            label_tl_x = naive_x - approx_label_w / 2
-            label_tl_y = naive_y
-
+        # ---- Step 4: Draw the F11 captions under their planets ----
+        label_w, label_h = layout["label_w"], layout["label_h"]
+        for px, py, size, planet, label_override in planet_items:
+            # Top-left just under the planet, then nudged inside the cell.
             clamped_x, clamped_y = self._clamp_text_inside(
-                approx_label_w, approx_label_h, label_tl_x, label_tl_y,
+                label_w, label_h, px + deg_offset_x - label_w / 2,
+                py + size / 2 + LABEL_GAP + deg_offset_y,
                 polygon, centroid, margin=8.0
             )
-            # Convert back from top-left to center for PlanetDegreeLabel
-            label_center_x = clamped_x + approx_label_w / 2
-            label_center_y = clamped_y + approx_label_h / 2
-
-            label_override = ""
-            if self.show_planet_names:
-                label_override = get_planet_display_name(
-                    self.sign_language, planet["name"])
             label = PlanetDegreeLabel(
-                label_center_x, label_center_y, planet["deg_in_sign"], font_size,
+                clamped_x + label_w / 2, clamped_y + label_h / 2,
+                planet["deg_in_sign"], layout["font_size"],
                 font_color=deg_font_color, font_weight=deg_font_weight,
                 label_override=label_override
             )
@@ -1895,6 +1828,7 @@ class NorthIndianView(CotIndexMixin, QGraphicsView):
 
     def clear_chart(self):
         """Clear the chart display."""
+        cancel_paint(self)
         self._has_chart = False
         self._chart = None
         self._planets = None
@@ -2159,12 +2093,8 @@ class NorthIndianView(CotIndexMixin, QGraphicsView):
             except (KeyError, AttributeError, TypeError):
                 continue
 
-        for house_num, planets in planets_by_house.items():
-            if planets:
-                self._draw_planets_in_house(
-                    house_num, planets, geometry=geo, tag=tag)
-
-        # Ring ascendant marker (SPEC-TRN-003 S5.4), mapped into the natal
+        # Ring ascendant marker (SPEC-TRN-003 S5.4), before the planets
+        # so their zone keeps clear of it, mapped into the natal
         # house frame — the ring is a second set of bodies over the natal
         # houses, for a varga exactly as for a transit (SPEC-VGO-001 D-9).
         if source.cusps and self._cusps:
@@ -2179,6 +2109,11 @@ class NorthIndianView(CotIndexMixin, QGraphicsView):
                     source_is_varga=source.is_varga)
             except (IndexError, AttributeError, TypeError):
                 pass
+
+        for house_num, planets in planets_by_house.items():
+            if planets:
+                self._draw_planets_in_house(
+                    house_num, planets, geometry=geo, tag=tag)
 
         self.scene.update()
         self.viewport().update()

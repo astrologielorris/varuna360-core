@@ -127,7 +127,7 @@ class PanelControllerBase:
             or (reason == "current_varga" and hasattr(self, '_on_varga_changed'))
         )
         if in_chart_bucket:
-            if not self._is_visible:
+            if not self._effective_visible():
                 self._pending_chart_refresh = True
                 return
             self._schedule_chart_refresh()
@@ -151,7 +151,7 @@ class PanelControllerBase:
         # Visibility can have flipped off between scheduling and this flush (a tab
         # switch in a later turn); re-check so a coalesced refresh never runs on a
         # now-hidden panel — it re-defers to the next show, hardening td-7932.
-        if not self._is_visible:
+        if not self._effective_visible():
             self._pending_chart_refresh = True
             return
         self._on_chart_changed()
@@ -179,7 +179,9 @@ class PanelControllerBase:
         """
         was_visible = self._is_visible
         self._is_visible = visible
-        if visible and not was_visible:
+        # SPEC-LAYOUT-001 B.6: a held controller (folded panel / hidden Chart
+        # tab) keeps its pending refresh; reconcile_visibility drains it.
+        if visible and not was_visible and self._effective_visible():
             # MED-1: a show-drain satisfies BOTH a deferred pending refresh AND an
             # already-scheduled flush timer (the panel was hidden after a visible
             # emit scheduled one). Consume _chart_refresh_scheduled so that stale
@@ -195,6 +197,28 @@ class PanelControllerBase:
             if self._pending_mode_refresh and hasattr(self, '_on_mode_changed'):
                 self._pending_mode_refresh = False
                 self._on_mode_changed()
+
+    def _effective_visible(self) -> bool:
+        """SPEC-LAYOUT-001 B.6: effective visibility = the sub-tab is selected
+        (``_is_visible``) AND the info panel holding it is open AND the Chart
+        tab is shown. The last two come from the InfoPanelStack (read, never
+        written, through the gui); a gui without one (tests, other windows)
+        never holds."""
+        if not self._is_visible:
+            return False
+        stack = getattr(self._gui, "right_panels", None)
+        held = getattr(stack, "holds_controller", None)
+        return not (callable(held) and held(self) is True)
+
+    def reconcile_visibility(self):
+        """Drain a deferred refresh once the outside hold lifts (the panel is
+        unfolded, the Chart tab shown again): the same show-drain as
+        set_visible, one refresh, the stale scheduled flush consumed (MED-1)."""
+        if self._effective_visible() and (self._pending_chart_refresh
+                                          or self._chart_refresh_scheduled):
+            self._pending_chart_refresh = False
+            self._chart_refresh_scheduled = False
+            self._on_chart_changed()
 
     def _on_chart_changed(self):
         """MUST be implemented by every subclass.

@@ -99,7 +99,7 @@ TAG_PLANET = "si.vector.planet"
 
 TAG_PLANET_TEXT = "si.vector.planet_text"
 
-TAG_COMPASS_HOUSE = "si.vector.compass_house"
+TAG_PLANET_LABEL = "si.vector.planet_label"
 
 TAG_LAGNA = "si.vector.lagna"
 
@@ -144,8 +144,8 @@ def crowded_planet_size(base_size: int, num_planets: int) -> int:
 def lone_planet_zone(deg: float) -> int:
     """Degree-zone third (0/1/2) for a lone planet's in-cell degree
     (SPEC-SIC-001, classic chart_view.py:2880): 0-10° left, 10-20° middle,
-    20-30° right. The degree is the placement degree (SPEC-SIC-004 INV-6): the
-    in-sign degree in the sky frame, the in-band degree in the compass frame."""
+    20-30° right. The degree is the placement degree (INV-6): the in-sign
+    degree in the sign frame, a placement frame's own degree while one is set."""
     if deg < 10:
         return 0
     if deg < 20:

@@ -34,6 +34,7 @@ from ui.qt_theme import (
     TEXT_PRIMARY, TEXT_SECONDARY, SURFACE, BG, BORDER, HOVER,
     get_theme_accent, scaled_area_px, desat_hex
 )
+from ui.accent_ink import on_accent_ink
 from ui.popup_fonts import tier_px, popup_group_px
 
 
@@ -473,6 +474,13 @@ class ChartInfoDialog(QDialog):
     # -------------------------------------------------------------------------
     # Section A — Chart Metadata
     # -------------------------------------------------------------------------
+    def keyPressEvent(self, event):
+        """Enter in the tag box runs it once, never also a button (ui.dialog_keys)."""
+        from ui.dialog_keys import field_enter
+        if field_enter(self, event):
+            return
+        super().keyPressEvent(event)
+
     def _build_metadata_section(self, parent_layout):
         """Build the always-visible chart metadata section (SPEC-IMPORT-001 §7.3)."""
         cd = self._chart_data
@@ -511,10 +519,13 @@ class ChartInfoDialog(QDialog):
         rodden_row.addWidget(rodden_key)
 
         self.rodden_combo = QComboBox()
-        self.rodden_combo.addItems(self.RODDEN_OPTIONS)
+        # itemData = the stored Rodden code (None = Not rated): the value saved
+        # is read from data, never from the label (SPEC-LOC-002 INV-3).
+        for _opt in self.RODDEN_OPTIONS:
+            self.rodden_combo.addItem(_opt, None if _opt == self._NOT_RATED else _opt)
         self._set_rodden_combo_value(rodden)
         # Re-tint on selection so the dropdown text keeps the semantic color.
-        self.rodden_combo.currentTextChanged.connect(
+        self.rodden_combo.currentIndexChanged.connect(
             lambda _t: self._restyle_rodden_combo())
         self._restyle_rodden_combo()
         rodden_row.addWidget(self.rodden_combo)
@@ -616,13 +627,12 @@ class ChartInfoDialog(QDialog):
     def _set_rodden_combo_value(self, rodden):
         """Select the combo entry matching `rodden` (None/blank/unknown -> Not rated)."""
         code = str(rodden).strip().upper() if rodden else ""
-        idx = self.rodden_combo.findText(code) if code else -1
+        idx = self.rodden_combo.findData(code) if code else -1
         self.rodden_combo.setCurrentIndex(idx if idx >= 0 else 0)
 
     def _restyle_rodden_combo(self):
         """Tint the combo with the semantic rodden color of the current selection."""
-        sel = self.rodden_combo.currentText()
-        rodden = None if sel == self._NOT_RATED else sel
+        rodden = self.rodden_combo.currentData()  # code, None = Not rated
         self.rodden_combo.setStyleSheet(f"""
             QComboBox {{
                 color: {desat_hex(rodden_color(rodden))};
@@ -716,8 +726,7 @@ class ChartInfoDialog(QDialog):
     # ====================================================================== #
     def _collect_metadata(self):
         """Read edited widgets into (rodden, tags, notes); blank -> None."""
-        sel = self.rodden_combo.currentText()
-        new_rodden = None if sel == self._NOT_RATED else sel
+        new_rodden = self.rodden_combo.currentData()  # code, None = Not rated
         new_tags = list(self._tag_values) if self._tag_values else None
         notes_text = self.notes_edit.toPlainText().strip()
         new_notes = notes_text if notes_text else None
@@ -848,8 +857,8 @@ class ChartInfoDialog(QDialog):
                                              new_rodden, new_tags, new_notes)
         if bd is None:
             return False  # no safe canonical source; metadata kept in recipe/session
-        from core.toml_chart import TOMLChartWriter
-        return bool(TOMLChartWriter().update_toml_birth_data(chart_path, bd))
+        from core.library.tables import save_birth_data  # keeps [library] (D-23)
+        return bool(save_birth_data(chart_path, bd))
 
     def _write_chtk_metadata(self, gui, chart_path, recipe,
                              new_rodden, new_tags, new_notes):
@@ -911,7 +920,7 @@ class ChartInfoDialog(QDialog):
         return f"""
             QPushButton {{
                 background-color: {accent["base"]};
-                color: {TEXT_PRIMARY};
+                color: {on_accent_ink(accent["base"], TEXT_PRIMARY)};
                 border: none;
                 border-radius: 6px;
                 padding: {padding};

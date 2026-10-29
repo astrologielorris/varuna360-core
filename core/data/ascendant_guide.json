@@ -1,5 +1,5 @@
 {
-  "version": 2,
+  "version": 4,
   "adityas": {
     "0": {
       "title": "Foundation",
@@ -69,7 +69,7 @@
     },
     "11": {
       "title": "Spiritual presence and artistic imagination",
-      "text": "Parjanya marks the final destination, the end of the road: spiritual awakening, closeness to God and contemplation of the cycle of rebirth. It concerns the experience of communion through meditation, prayer, reading, acceptance and being present. Its expression can be quiet. A teacher may offer wisdom through a steady presence, without needing to perform or prove anything.\n\nDhata in the second house gives this spiritual orientation a concrete foundation. The second concerns Artha: the resources and means that sustain life. Spiritual aspiration still belongs to someone living on Earth, with a body to care for and practical needs to meet. Food, shelter, rest and the means to maintain bodily well-being help make a practice sustainable. The question is how you build the conditions to return to that closeness consistently.\n\nThis foundation also concerns dependable presence: being there for others, cultivating steady companionship and expressing your practice through care. Are you consistent in what you do? Do you attend to the people beside you on the path? Are you developing the resources to support the life you wish to lead? These ordinary responsibilities give spiritual intention a tangible expression.\n\nThe image of Pisces as the feet and Aries as the head illustrates their relationship. The feet carry you along the path, while the head supplies awareness, judgment and direction. Receptivity and surrender need the support of conscious care. Someone may long to remain absorbed in prayer yet overlook bodily needs; hunger, discomfort or a headache can then draw attention back to what has been neglected.\n\nWhen this foundation is weak, the longing for communion may be strong while the practical support and consistency are missing. Dhata asks you to build that support through regular care and sensible steps. This can be demanding work, but it belongs to the spiritual path itself: tending the body and the life that sustain your practice, even when your attention is directed toward God.\n\nParjanya also expresses itself through art. Venus is exalted here, bringing an affinity with beauty, imagination, film, dance and images that speak to the unconscious. An artist may inhabit a rich dream world and find profound meaning there. Dhata’s foundation helps that inner vision meet the world through lived experience, awareness of the body and an understanding of how reality works.\n\nConsider a filmmaker with a vivid imagination. When this foundation is weak, the film may carry deep personal meaning yet offer viewers too little connection to recognizable experience to understand what it is expressing. The difficulty lies in communicating the vision, rather than in a lack of imagination. Contact with ordinary life gives the artist a way to translate an inner world into images, movement or stories that others can enter. Grounding supports both prayer and art: it helps what is inwardly meaningful become present and accessible in the world.",
+      "text": "Parjanya marks the final destination, the end of the road: spiritual awakening, closeness to God and contemplation of the cycle of rebirth. It concerns the experience of communion through meditation, prayer, reading, acceptance and being present. Its expression can be quiet. A teacher may offer wisdom through a steady presence, without needing to perform or prove anything.\n\nDhata in the second house gives this spiritual orientation a concrete foundation. The second concerns Artha: the resources and means that sustain life. Spiritual aspiration still belongs to someone living on Earth, with a body to care for and practical needs to meet. Food, shelter, rest and the means to maintain bodily well-being help make a practice sustainable. The question is how you build the conditions to return to that closeness consistently.\n\nThis foundation also concerns dependable presence: being there for others, cultivating steady companionship and expressing your practice through care. Are you consistent in what you do? Do you attend to the people beside you on the path? Are you developing the resources to support the life you wish to lead? These ordinary responsibilities give spiritual intention a tangible expression.\n\nThe image of Parjanya as the feet and Dhata as the head illustrates their relationship. The feet carry you along the path, while the head supplies awareness, judgment and direction. Receptivity and surrender need the support of conscious care. Someone may long to remain absorbed in prayer yet overlook bodily needs; hunger, discomfort or a headache can then draw attention back to what has been neglected.\n\nWhen this foundation is weak, the longing for communion may be strong while the practical support and consistency are missing. Dhata asks you to build that support through regular care and sensible steps. This can be demanding work, but it belongs to the spiritual path itself: tending the body and the life that sustain your practice, even when your attention is directed toward God.\n\nParjanya also expresses itself through art. Venus is exalted here, bringing an affinity with beauty, imagination, film, dance and images that speak to the unconscious. An artist may inhabit a rich dream world and find profound meaning there. Dhata’s foundation helps that inner vision meet the world through lived experience, awareness of the body and an understanding of how reality works.\n\nConsider a filmmaker with a vivid imagination. When this foundation is weak, the film may carry deep personal meaning yet offer viewers too little connection to recognizable experience to understand what it is expressing. The difficulty lies in communicating the vision, rather than in a lack of imagination. Contact with ordinary life gives the artist a way to translate an inner world into images, movement or stories that others can enter. Grounding supports both prayer and art: it helps what is inwardly meaningful become present and accessible in the world.",
       "source": "Lorris Turpin",
       "reviewed": true
     }
@@ -77,7 +77,78 @@
   "planets": {
     "Sun": "Soul and purpose: who you are and what you need to do to be yourself. Your dharma and ideals.",
     "Moon": "Your emotional personality, intuition, connections and inner needs. Your love life and your ability to give yourself love.",
-    "Venus": "Love and relationships."
+    "Venus": "Love and relationships, exchange, diplomacy"
   },
-  "source": "Written by Lorris Turpin, 360 Hearts in the Sky. General descriptions, not personalized predictions."
+  "source": "Written by Lorris Turpin, 360 Hearts in the Sky. General descriptions, not personalized predictions.",
+  "lagnas": {
+    "asc": {
+      "name": "Ascendant",
+      "meaning": "Overall life.",
+      "houses": {},
+      "source": "Lorris Turpin"
+    },
+    "sun": {
+      "name": "Surya Lagna",
+      "planet": "Sun",
+      "meaning": "The Sun is reliability, consistency and dharma.",
+      "houses": {
+        "10": "Career and dharma. Career is often part of dharma, but dharma is wider, one's action",
+        "4": "How the person feels in their work: do they feel at ease there? Difficulty here can mean lying in one's career, or emotional trouble at work.",
+        "7": "Are they a reliable, consistent partner, able to deliver?"
+      },
+      "source": "Lorris Turpin"
+    },
+    "moon": {
+      "name": "Chandra Lagna",
+      "planet": "Moon",
+      "meaning": "The Moon is emotional life: does the person live as their fullest self, enjoy being themself, love themself? The Moon leans toward relationships and how one feels about oneself and others.",
+      "houses": {
+        "4": "Do they feel at home with themself? This is as important as the Moon itself.",
+        "7": "How they feel about their partner."
+      },
+      "source": "Lorris Turpin"
+    },
+    "karaka": {
+      "AK": {
+        "meaning": "The Atmakaraka, the soul planet. Read from it somewhat like Surya Lagna.",
+        "houses": {},
+        "source": "Lorris Turpin"
+      },
+      "DK": {
+        "meaning": "The Darakaraka is a 7th-house type significator: read the houses from it for the partner. For example, Saturn 7th from the Darakaraka can mean feeling bad about the partner.",
+        "houses": {},
+        "source": "Lorris Turpin"
+      },
+      "AmK": {
+        "meaning": "[COPY PENDING]",
+        "copy_pending": true
+      },
+      "BK": {
+        "meaning": "[COPY PENDING]",
+        "copy_pending": true
+      },
+      "MK": {
+        "meaning": "[COPY PENDING]",
+        "copy_pending": true
+      },
+      "PiK": {
+        "meaning": "[COPY PENDING]",
+        "copy_pending": true
+      },
+      "GK": {
+        "meaning": "[COPY PENDING]",
+        "copy_pending": true
+      }
+    }
+  },
+  "axis": {
+    "foundation": {
+      "meaning": "Dhata is the foundation, from every lagna: the house where Dhata falls is what that viewpoint stands on. Read both the planets in Dhata and the lord of Dhata, Mars: both matter for the reading. When Dhata is empty, its lord Mars carries the foundation alone.",
+      "source": "Lorris Turpin"
+    },
+    "relationship": {
+      "meaning": "Tvasta, always the 7th from Dhata, is the relationship with the foundation: you and others, the first sign against the seventh. Every question has a relationship side, not only love: clients, how a person presents themself to others and welcomes them, money exchanged. Read Tvasta next, after Dhata: the planets in it and its lord, Venus; when Tvasta is empty, Venus carries it. For example, when Dhata falls in the 8th, a foundation in esoteric practice, Tvasta falls in the 2nd: the person's clients, their lasting presence with them and their money.",
+      "source": "Lorris Turpin"
+    }
+  }
 }

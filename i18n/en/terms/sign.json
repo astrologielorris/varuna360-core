@@ -1,0 +1,38 @@
+{
+ "0": {
+  "name": "Aries"
+ },
+ "1": {
+  "name": "Taurus"
+ },
+ "10": {
+  "name": "Aquarius"
+ },
+ "11": {
+  "name": "Pisces"
+ },
+ "2": {
+  "name": "Gemini"
+ },
+ "3": {
+  "name": "Cancer"
+ },
+ "4": {
+  "name": "Leo"
+ },
+ "5": {
+  "name": "Virgo"
+ },
+ "6": {
+  "name": "Libra"
+ },
+ "7": {
+  "name": "Scorpio"
+ },
+ "8": {
+  "name": "Sagittarius"
+ },
+ "9": {
+  "name": "Capricorn"
+ }
+}

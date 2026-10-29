@@ -7,7 +7,7 @@ from PySide6.QtCore import QRectF
 class RetinueEligibility:
     center_enabled: bool
     drawable: bool
-    compass: bool
+    frame: str
 
 @dataclass(frozen=True)
 class RetinueInput:
@@ -28,7 +28,7 @@ class RetinueController:
 
     def effective(self, eligibility):
         return bool(self.rings and eligibility.center_enabled and eligibility.drawable
-                    and self.style_active and not eligibility.compass)
+                    and self.style_active and not eligibility.frame)
 
     def state(self, eligibility):
         reason = None
@@ -36,14 +36,14 @@ class RetinueController:
             reason = 'miniature'
         elif not self.style_active:
             reason = 'Hora + Trimshamsha available in vector style.'
-        elif eligibility.compass:
+        elif eligibility.frame:
             reason = 'Hora + Trimshamsha available in sign view.'
         elif not eligibility.drawable:
             reason = 'No chart'
         effective = self.effective(eligibility)
         return dict(requested=self.rings, ruler_requested=self.ruler, effective=effective,
                     suppression_reason=reason, outer_sign_count=12 if effective else 0,
-                    frame='compass' if eligibility.compass else 'sign', omissions=list(self.omissions))
+                    frame=eligibility.frame or 'sign', omissions=list(self.omissions))
 
     def set_rings(self, on):
         on = bool(on)
@@ -75,14 +75,14 @@ class RetinueController:
         self.generation += 1
         self.layer.dirty = True
 
-    def materialize(self, inputs, expected_generation=None):
-        if expected_generation is not None and expected_generation != self.generation:
+    def materialize(self, inputs, expected_generation=None, strength=None):
+        if expected_generation not in (None, self.generation):
             return False
         self.layer.dirty = False
         self.layer.services = replace(self.layer.services, style=inputs.style, ruler=self.ruler)
         self.omissions = inputs.omissions
         if self.effective(inputs.eligibility):
-            self.layer.rebuild(inputs.placements, inputs.labels, inputs.ascendant)
+            self.layer.rebuild(inputs.placements, inputs.labels, inputs.ascendant, strength)
             self.layer.services.scene.setSceneRect(-SCENE_SIZE/2,-SCENE_SIZE/2,2*SCENE_SIZE,2*SCENE_SIZE)
         else:
             self.layer.clear()
@@ -91,7 +91,7 @@ class RetinueController:
 
     def notice_margin(self, eligibility):
         if not (self.rings and eligibility.center_enabled and eligibility.drawable
-                and eligibility.compass and self.style_active):
+                and eligibility.frame and self.style_active):
             return 0
         notice = self.layer.services.notice
         notice.setText(self.state(eligibility)['suppression_reason'])

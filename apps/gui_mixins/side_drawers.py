@@ -16,26 +16,19 @@ class SideDrawersMixin:
     """SIDE DRAWERS & ANIMATION behaviour for ChartGUI (see module docstring)."""
 
     def _toggle_side_drawer(self, side):
-        """Toggle a group of side panels with slide animation."""
-        if side == "left":
-            panels = [self.vedanga_panel, self.varga_column]
-            is_open = self._left_drawer_open
-            # Close the other side first
-            if self._right_drawer_open:
-                self._close_drawer("right")
+        """Toggle a side drawer. The right side is owned by ChartLayoutManager
+        (SPEC-LAYOUT-001): its drawer only exists as the last-resort fallback
+        and never interacts with the left drawer."""
+        if side != "left":
+            self.chart_layout.toggle_right_drawer()
+            return
+        if self._left_drawer_open:
+            self._close_drawer("left")
         else:
-            panels = [self.right_scroll, self.vimshottari_panel]
-            is_open = self._right_drawer_open
-            if self._left_drawer_open:
-                self._close_drawer("left")
-
-        if is_open:
-            self._close_drawer(side)
-        else:
-            self._open_drawer(side, panels)
+            self._open_drawer("left", [self.vedanga_panel, self.varga_column])
 
     def _open_drawer(self, side, panels):
-        """Slide panels in from the edge."""
+        """Slide the left panels in from the edge."""
         self._stop_all_anims()
 
         for panel in panels:
@@ -56,23 +49,14 @@ class SideDrawersMixin:
             anim.start()
             self._running_anims.append(anim)
 
-        if side == "left":
-            self._left_drawer_open = True
-            self._left_toggle.setText("\u25c0")  # arrow points left = "close"
-        else:
-            self._right_drawer_open = True
-            self._right_toggle.setText("\u25b6")  # arrow points right = "close"
+        self._left_drawer_open = True
+        self._left_toggle.setText("\u25c0")  # arrow points left = "close"
 
     def _close_drawer(self, side):
-        """Slide panels out toward the edge."""
+        """Slide the left panels out toward the edge."""
         self._stop_all_anims()
 
-        if side == "left":
-            panels = [self.vedanga_panel, self.varga_column]
-        else:
-            panels = [self.right_scroll, self.vimshottari_panel]
-
-        for panel in panels:
+        for panel in [self.vedanga_panel, self.varga_column]:
             current_w = self._panel_target_widths[panel]
             panel.setMinimumWidth(0)
 
@@ -85,12 +69,8 @@ class SideDrawersMixin:
             anim.start()
             self._running_anims.append(anim)
 
-        if side == "left":
-            self._left_drawer_open = False
-            self._left_toggle.setText("\u25b6")
-        else:
-            self._right_drawer_open = False
-            self._right_toggle.setText("\u25c0")
+        self._left_drawer_open = False
+        self._left_toggle.setText("\u25b6")
 
     def _stop_all_anims(self):
         """Stop all running drawer animations."""

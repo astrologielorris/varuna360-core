@@ -19,6 +19,7 @@ from PySide6.QtWidgets import QTableWidgetItem
 from PySide6.QtCore import Qt
 
 from state import PanelControllerBase
+from ui.item_roles import ITEM_KEY_ROLE
 
 
 class ElementsController(PanelControllerBase):
@@ -75,6 +76,7 @@ class ElementsController(PanelControllerBase):
                 dominant_marker = " ★" if percent >= 30 else ""
                 elem_text = f"{symbol} {element}{dominant_marker}"
                 item0 = QTableWidgetItem(elem_text)
+                item0.setData(ITEM_KEY_ROLE, element)  # INV-3: the key, not the label
                 item0.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
                 if percent >= 30:
                     item0.setForeground(Qt.GlobalColor.yellow)
@@ -113,6 +115,7 @@ class ElementsController(PanelControllerBase):
                         break
                     symbol, _ = element_display.get(element, ("", "#FFFFFF"))
                     item0 = QTableWidgetItem(f"{symbol} {element}")
+                    item0.setData(ITEM_KEY_ROLE, element)
                     item0.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
                     gui.elements_table.setItem(row, 0, item0)
 

@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">
+<!-- SPEC-FIND-005 Find Chart glyph, extracted from the chosen round 2 mockup
+     mockups_find-chart_20261018-2300/round2/mockup_1.html <symbol id="i-folder">.
+     Ink is currentColor: paint_controls substitutes the state foreground. -->
+  <path d="M1.8 4.4a1 1 0 0 1 1-1h3.4l1.4 1.5h5.6a1 1 0 0 1 1 1v6.7a1 1 0 0 1-1 1H2.8a1 1 0 0 1-1-1Z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
+</svg>

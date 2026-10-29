@@ -1,0 +1,4 @@
+{
+ "menu.view.varga.action": "D-{label} ({name})",
+ "menu.view.varga.tip": "Show {name} ({code}) chart"
+}

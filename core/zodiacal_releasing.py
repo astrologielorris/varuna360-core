@@ -32,9 +32,9 @@ from core.aditya_mode import (
 from core.lots import is_day_chart, lot_of_fortune, lot_of_spirit
 
 __all__ = [
-    "WEIGHTS", "RULERS", "VALID_RIGHT_MODES", "DEFAULT_ANCHOR",
+    "WEIGHTS", "RULERS", "DEFAULT_ANCHOR",
     "build", "drill", "find_current", "resolve_releaser", "anchor_jd",
-    "format_level", "zr_tooltip", "RULER_ABBREV",
+    "format_level", "zr_tooltip", "RULER_ABBREV", "zr_display_rows",
 ]
 
 # By POSITION 0..11 (division number - 1). WEIGHTS are the classical Valens
@@ -57,7 +57,6 @@ _EPS = 1e-9
 # TODO(D-2): confirm with Lorris before wiring the settings default.
 DEFAULT_ANCHOR = "birth"
 
-VALID_RIGHT_MODES = ("vimshottari", "nisarga", "zr")
 _VALID_ZODIAC_MODES = ("aditya", "tropical_classic", "sidereal")
 
 
@@ -578,3 +577,23 @@ def zr_tooltip(entry, meta):
                  % meta.get("fortune_sign_label", ""))
     lines.append("Zodiac: %s" % _ZODIAC_DISPLAY.get(mode, mode))
     return "\n".join(lines)
+
+
+def zr_display_rows(result, level, parent_chain):
+    """The Period rows shown at ``level`` for the drilled ``parent_chain``
+    (the panel and get_zodiacal_releasing share it, SPEC-DSH-004)."""
+    rows = result["rows"]           # L1 + L2 (interleaved) from build()
+    if level == 1:
+        return [r for r in rows if r["level"] == 1]
+    if level == 2:
+        parent = parent_chain[0]
+        return [r for r in rows if r["level"] == 2
+                and r["parent_pos"] == parent["pos"]
+                and parent["start_jd"] <= r["start_jd"] < parent["end_jd"]]
+    drilled = drill(parent_chain[1], result["fortune_pos"])
+    if level == 3:
+        return [r for r in drilled if r["level"] == 3]
+    l3 = parent_chain[2]
+    return [r for r in drilled if r["level"] == 4
+            and r["parent_pos"] == l3["pos"]
+            and l3["start_jd"] <= r["start_jd"] < l3["end_jd"]]

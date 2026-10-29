@@ -3,6 +3,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QStyledItemDelegate
 from ui.qt_theme import get_theme_colors
+from ui.accent_ink import on_accent_ink  # SPEC-THM-001 §13
 
 class AccentSelectionForegroundDelegate(QStyledItemDelegate):
     """Paint selected item text directly so global QSS cannot replace it."""
@@ -15,7 +16,7 @@ class AccentSelectionForegroundDelegate(QStyledItemDelegate):
         text_rect = option.rect.adjusted(icon_offset, 0, 0, 0)
         painter.save()
         painter.fillRect(text_rect, QColor(theme["primary"]))
-        painter.setPen(QColor(theme["primary_text"]))
+        painter.setPen(QColor(on_accent_ink(theme["primary"], theme["primary_text"])))
         painter.drawText(text_rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
                          str(index.data(Qt.ItemDataRole.DisplayRole) or ""))
         painter.restore()

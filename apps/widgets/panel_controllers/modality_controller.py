@@ -8,10 +8,11 @@ Same shape as ElementsController; 3 rows (Moveable/Fixed/Dual) vs 4 elements.
 Supports yoga mode toggle: Movable/Fixed/Dual <-> Rajju/Musala/Nala.
 """
 
-from PySide6.QtWidgets import QTableWidgetItem, QMessageBox
+from PySide6.QtWidgets import QTableWidgetItem
 from PySide6.QtCore import Qt
 
 from state import PanelControllerBase
+from ui.item_roles import ITEM_KEY_ROLE
 
 
 class ModalityController(PanelControllerBase):
@@ -53,7 +54,6 @@ class ModalityController(PanelControllerBase):
             from AI_tools.AI_main_function.dominant import get_dominant_modality
             from AI_tools.AI_main_function.constants import (
                 MODALITY_DESCRIPTIONS, MODALITY_YOGA_NAMES,
-                MODALITY_YOGA_SHORT, MODALITY_YOGA_FULL,
             )
 
             modality_data = get_dominant_modality(chart, luminary_weight=1.5)
@@ -68,7 +68,7 @@ class ModalityController(PanelControllerBase):
             highlight_cells = set()
 
             if self._yoga_mode:
-                gui.modality_table.setHorizontalHeaderLabels(["Yoga", "%", "Description"])
+                gui.modality_table.setHorizontalHeaderLabels(["Yoga", "%", "Planets"])
             else:
                 gui.modality_table.setHorizontalHeaderLabels(["Modality", "%", "Planets"])
 
@@ -87,6 +87,10 @@ class ModalityController(PanelControllerBase):
                     mod_text = f"{symbol} {modality}{dominant_marker}"
 
                 item0 = QTableWidgetItem(mod_text)
+                if not self._yoga_mode:
+                    # INV-3: the popup colours the row by this key. Yoga-mode
+                    # rows carry none, as their label never matched before.
+                    item0.setData(ITEM_KEY_ROLE, modality)
                 item0.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
                 if percent >= 40:
                     item0.setForeground(Qt.GlobalColor.yellow)
@@ -100,25 +104,22 @@ class ModalityController(PanelControllerBase):
                     item1.setForeground(Qt.GlobalColor.yellow)
                 gui.modality_table.setItem(i, 1, item1)
 
-                if self._yoga_mode:
-                    desc = MODALITY_YOGA_SHORT.get(modality, "")
-                    item2 = QTableWidgetItem(desc)
-                    item2.setData(Qt.ItemDataRole.UserRole, modality)
-                else:
-                    planet_display = []
-                    for p in planet_list:
-                        if p == "Sun":
-                            planet_display.append("☉Sun")
-                        elif p == "Moon":
-                            planet_display.append("☽Moon")
-                        else:
-                            planet_display.append(p)
-                    planets_text = ", ".join(planet_display)
-                    desc = MODALITY_DESCRIPTIONS.get(modality, "")
-                    if desc:
-                        planets_text += f"\n{desc}"
-                    item2 = QTableWidgetItem(planets_text)
-                    item2.setData(Qt.ItemDataRole.UserRole, modality)
+                planet_display = []
+                for p in planet_list:
+                    if p == "Sun":
+                        planet_display.append("☉Sun")
+                    elif p == "Moon":
+                        planet_display.append("☽Moon")
+                    else:
+                        planet_display.append(p)
+                planets_text = ", ".join(planet_display)
+                # Yoga mode shows the planets only (the yoga description texts
+                # were removed from the LTS branch, legal cleanup 2026-10-12).
+                desc = "" if self._yoga_mode else MODALITY_DESCRIPTIONS.get(modality, "")
+                if desc:
+                    planets_text += f"\n{desc}"
+                item2 = QTableWidgetItem(planets_text)
+                item2.setData(Qt.ItemDataRole.UserRole, modality)
 
                 item2.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
                 gui.modality_table.setItem(i, 2, item2)
@@ -140,6 +141,7 @@ class ModalityController(PanelControllerBase):
                         item0 = QTableWidgetItem(f"{symbol} {yoga_name}")
                     else:
                         item0 = QTableWidgetItem(f"{symbol} {modality}")
+                        item0.setData(ITEM_KEY_ROLE, modality)  # INV-3
                     item0.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
                     gui.modality_table.setItem(row, 0, item0)
 
@@ -147,10 +149,7 @@ class ModalityController(PanelControllerBase):
                     item1.setTextAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
                     gui.modality_table.setItem(row, 1, item1)
 
-                    if self._yoga_mode:
-                        desc = MODALITY_YOGA_SHORT.get(modality, "")
-                    else:
-                        desc = MODALITY_DESCRIPTIONS.get(modality, "")
+                    desc = "" if self._yoga_mode else MODALITY_DESCRIPTIONS.get(modality, "")
                     item2 = QTableWidgetItem(f"{desc}" if desc else "")
                     item2.setData(Qt.ItemDataRole.UserRole, modality)
                     item2.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
@@ -164,29 +163,3 @@ class ModalityController(PanelControllerBase):
             print(f"Error updating Modality: {e}")
             import traceback
             traceback.print_exc()
-
-    @staticmethod
-    def show_yoga_detail(gui, row):
-        """"""
-        from AI_tools.AI_main_function.constants import (
-            MODALITY_YOGA_NAMES, MODALITY_YOGA_FULL,
-        )
-        table = gui.modality_table
-        item = table.item(row, 2)
-        if not item:
-            return
-        modality = item.data(Qt.ItemDataRole.UserRole)
-        if not modality:
-            return
-
-        yoga_name = MODALITY_YOGA_NAMES.get(modality, modality)
-        full_text = MODALITY_YOGA_FULL.get(modality, "")
-        if not full_text:
-            return
-
-        msg = QMessageBox(gui)
-        msg.setWindowTitle(f"{yoga_name} Yoga ({modality})")
-        msg.setText(full_text)
-        msg.setIcon(QMessageBox.Icon.Information)
-        msg.setStyleSheet("QMessageBox { min-width: 500px; }")
-        msg.exec()

@@ -294,8 +294,7 @@ class CotIndexMixin:
         exports cannot briefly rewrite (or accidentally retain) a person's
         desktop preferences.
         """
-        if order == "week_day":
-            order = "vedic"
+        # One spelling per order (SPEC-SET-003 V-9): the engine keys only.
         if order is not None and order not in ORDER_LABELS:
             raise ValueError(f"unknown Cards of Truth order: {order}")
         self._cot_enabled_override = (None if enabled is None else bool(enabled))

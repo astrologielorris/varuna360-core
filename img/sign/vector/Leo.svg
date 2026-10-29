@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="512" height="512">
+  <title>Leo</title>
+  <g fill="none" stroke="#E57373" stroke-width="7" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="28" cy="64" r="13"/>
+    <path d="M37 55 C28 42 28 16 52 14 C74 12 80 34 68 52 C60 64 58 80 70 84 C78 86 84 80 86 74"/>
+  </g>
+</svg>

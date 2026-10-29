@@ -1,0 +1,44 @@
+{
+ "Chiron": {
+  "name": "Chiron"
+ },
+ "Earth": {
+  "name": "Earth"
+ },
+ "Jupiter": {
+  "name": "Jupiter"
+ },
+ "Ketu": {
+  "name": "Ketu"
+ },
+ "Mars": {
+  "name": "Mars"
+ },
+ "Mercury": {
+  "name": "Mercury"
+ },
+ "Moon": {
+  "name": "Moon"
+ },
+ "Neptune": {
+  "name": "Neptune"
+ },
+ "Pluto": {
+  "name": "Pluto"
+ },
+ "Rahu": {
+  "name": "Rahu"
+ },
+ "Saturn": {
+  "name": "Saturn"
+ },
+ "Sun": {
+  "name": "Sun"
+ },
+ "Uranus": {
+  "name": "Uranus"
+ },
+ "Venus": {
+  "name": "Venus"
+ }
+}

@@ -3,31 +3,51 @@ from __future__ import annotations
 import base64
 import json
 
-VISION_PROVIDERS = (
-    {"name":"GPT-5.6 Luna","key":"OPENAI_API_KEY","model":"gpt-5.6-luna","url":"https://api.openai.com/v1/chat/completions","kind":"openai","reasoning":True},
-    {"name":"GPT-5.6 Terra","key":"OPENAI_API_KEY","model":"gpt-5.6-terra","url":"https://api.openai.com/v1/chat/completions","kind":"openai","reasoning":True},
-    {"name":"GPT-5.6 Sol","key":"OPENAI_API_KEY","model":"gpt-5.6-sol","url":"https://api.openai.com/v1/chat/completions","kind":"openai","reasoning":True},
-    {"name":"Kimi K3","key":"KIMI_API_KEY","model":"kimi-k3","url":"https://api.moonshot.ai/v1/chat/completions","kind":"openai","reasoning":False},
-    {"name":"Mistral Large","key":"MISTRAL_API_KEY","model":"mistral-small-latest","url":"https://api.mistral.ai/v1/chat/completions","kind":"openai","reasoning":False},
-    {"name":"Anthropic API","key":"ANTHROPIC_API_KEY","model":"claude-haiku-4-5","url":None,"kind":"anthropic","reasoning":False},
+def _vision_providers():
+    """The image readers, from the one model table (core/ai_engines/catalog,
+    td-2nxmo): the local server, every vision-capable HTTP model, the
+    Anthropic API, then the Claude Code and Codex logins (no API key)."""
+    from core.ai_engines import catalog
+    from core.ai_engines.env import LEGACY_ENV_KEY_ALIASES
+    out = []
+    for row in catalog.KEY_PROVIDERS:
+        if not row.get("vision"):
+            continue
+        env_key = row.get("env_key")
+        entry = {"name": row["name"], "key": LEGACY_ENV_KEY_ALIASES.get(env_key, env_key),
+                 "model": row.get("vision_model") or row["model"], "url": row["url"],
+                 "kind": "openai", "reasoning": bool(row.get("supports_reasoning_effort"))}
+        if env_key is None:
+            entry.update(env_key=None, vision=True)
+        else:
+            entry["env_key"] = env_key      # GLM: local_provider_config picks its route
+        out.append(entry)
+    out.append({"name": "Anthropic API", "key": "ANTHROPIC_API_KEY", "model": "claude-haiku-5-5",
+                "url": None, "kind": "anthropic", "reasoning": False})
     # Subscription CLIs: no API key, the installed Claude Code / Codex login pays.
-    {"name":"Claude Code Haiku 4.5","key":None,"model":"claude-haiku-4-5","url":None,"kind":"claude_cli","reasoning":False},
-    {"name":"Claude Code Sonnet 5","key":None,"model":"claude-sonnet-5","url":None,"kind":"claude_cli","reasoning":False},
-    {"name":"Claude Code Opus 5","key":None,"model":"claude-opus-5","url":None,"kind":"claude_cli","reasoning":False},
-    {"name":"Codex GPT-5.6 Luna","key":None,"model":"gpt-5.6-luna","url":None,"kind":"codex_cli","reasoning":True},
-    {"name":"Codex GPT-5.6 Terra","key":None,"model":"gpt-5.6-terra","url":None,"kind":"codex_cli","reasoning":True},
-    {"name":"Codex GPT-5.6 Sol","key":None,"model":"gpt-5.6-sol","url":None,"kind":"codex_cli","reasoning":True},
-)
+    out += [{"name": name.replace("Claude ", "Claude Code ", 1), "key": None, "model": model,
+             "url": None, "kind": "claude_cli", "reasoning": False}
+            for name, model in catalog.CLAUDE_SESSION_MODELS]
+    out += [{"name": name, "key": None, "model": model, "url": None, "kind": "codex_cli",
+             "reasoning": True} for name, model in catalog.CODEX_SESSION_MODELS]
+    return tuple(out)
+
+
+VISION_PROVIDERS = _vision_providers()
 CLI_TIMEOUT = 240
 _IMAGE_EXT = {"image/png":".png","image/jpeg":".jpg","image/jpg":".jpg","image/webp":".webp","image/gif":".gif"}
-DEFAULT_VISION_PROVIDER = "GPT-5.6 Luna"
-LEGACY_VISION_NAMES = {"GPT-5.4 Mini":"GPT-5.6 Luna","Kimi K2.6":"Kimi K3"}
+DEFAULT_VISION_PROVIDER = "GPT-6 Luna"
+LEGACY_VISION_NAMES = {"GPT-5.4 Mini":"GPT-6 Luna","GPT-5.6 Luna":"GPT-6 Luna","LM Studio":"Qwen 3.5 9B","Local LLM":"Qwen 3.5 9B",
+    "Mistral Medium 3.5":"Mistral Medium","Claude Code Haiku 4.5":"Claude Code Haiku 5.5",
+    "Claude Code Sonnet 5":"Claude Code Sonnet 5.5","Claude Code Opus 5":"Claude Code Opus 5.5",
+    "Codex GPT-5.6 Luna":"Codex GPT-6 Luna","Codex GPT-5.6 Sol":"Codex GPT-6.1 Sol"}
 PROMPT = '''Extract EVERY astrological chart in this image. Reply with ONLY JSON:
 {"charts":[{"name":"...","date":"YYYY-MM-DD","time":"HH:MM","place":"City, Country","tz_hint":"...","kind":"birth|transit|event|return|unknown"}],"confidence":0.0,"ambiguous":false,"notes":"..."}
 Return charts in visual order; a dual wheel is two charts. Each chart requires a date. Never invent optional data. Dates are ISO and times are 24-hour.'''
 
 def vision_provider_configs():
-    return [dict(x) for x in VISION_PROVIDERS]
+    from core.local_ai_config import local_provider_config
+    return [local_provider_config(x) for x in VISION_PROVIDERS]
 
 def _fail(error, unavailable=False, provider="", model=""):
     return {"ok":False,"error":error,"provider_unavailable":unavailable,"charts":[],"confidence":0.0,"ambiguous":False,"notes":"","provider":provider,"model":model}
@@ -62,10 +82,10 @@ def _looks_logged_out(text):
     low=str(text or "").lower()
     return any(w in low for w in ("login","log in","logged out","not logged","authenticat","/login","api key"))
 
-def _claude_cli_reply(path, model, data, media_type, workdir):
+def _claude_cli_reply(path, model, data, media_type, workdir, prompt=PROMPT, user_text="Extract every chart."):
     from core.session_cli import run_cli
-    message={"type":"user","message":{"role":"user","content":[{"type":"image","source":{"type":"base64","media_type":media_type,"data":base64.b64encode(data).decode("ascii")}},{"type":"text","text":"Extract every chart."}]}}
-    proc=run_cli(path,["-p","--input-format","stream-json","--output-format","stream-json","--verbose","--model",model,"--tools","","--setting-sources","","--strict-mcp-config","--no-session-persistence","--system-prompt",PROMPT],CLI_TIMEOUT,input_text=json.dumps(message)+"\n",cwd=workdir)
+    message={"type":"user","message":{"role":"user","content":[{"type":"image","source":{"type":"base64","media_type":media_type,"data":base64.b64encode(data).decode("ascii")}},{"type":"text","text":user_text}]}}
+    proc=run_cli(path,["-p","--input-format","stream-json","--output-format","stream-json","--verbose","--model",model,"--tools","","--setting-sources","","--strict-mcp-config","--no-session-persistence","--system-prompt",prompt],CLI_TIMEOUT,input_text=json.dumps(message)+"\n",cwd=workdir)
     result=None
     for line in (proc.stdout or "").splitlines():
         try:
@@ -79,7 +99,7 @@ def _claude_cli_reply(path, model, data, media_type, workdir):
         return None,detail
     return str(result.get("result") or ""),""
 
-def _codex_cli_reply(path, model, data, media_type, workdir, effort):
+def _codex_cli_reply(path, model, data, media_type, workdir, effort, prompt=PROMPT, user_text="Extract every chart in the attached image."):
     import os
     from core.session_cli import run_cli
     image=os.path.join(workdir,"chart"+_IMAGE_EXT.get(str(media_type).lower(),".png"))
@@ -89,7 +109,7 @@ def _codex_cli_reply(path, model, data, media_type, workdir, effort):
     args=["exec","--skip-git-repo-check","--ephemeral","-s","read-only","-m",model]
     if effort:
         args+=["-c",f'model_reasoning_effort="{effort}"']
-    args+=["-i",image,"--output-last-message",out,PROMPT+"\n\nExtract every chart in the attached image."]
+    args+=["-i",image,"--output-last-message",out,prompt+"\n\n"+user_text]
     proc=run_cli(path,args,CLI_TIMEOUT,cwd=workdir)
     reply=""
     if os.path.exists(out):
@@ -99,7 +119,7 @@ def _codex_cli_reply(path, model, data, media_type, workdir, effort):
         return None,str(proc.stderr or proc.stdout or "").strip()[-300:]
     return reply,""
 
-def _cli_extract(cfg, model, data, media_type, effort):
+def _cli_extract(cfg, model, data, media_type, effort, prompt=PROMPT, user_text=None):
     """Read the image through the installed Claude Code / Codex CLI, on the
     user's subscription. Returns (reply, failure_dict)."""
     import subprocess
@@ -109,13 +129,13 @@ def _cli_extract(cfg, model, data, media_type, effort):
     label="Claude Code" if binary=="claude" else "Codex"
     path=find_cli(binary)
     if not path:
-        return None,_fail(f"{cfg['name']} needs the {label} app installed and signed in. Install it, or choose another vision model in Settings > AI Providers.",True,cfg["name"],model)
+        return None,_fail(f"{cfg['name']} needs the {label} app installed and signed in. Install it, or choose another vision model in Settings > AI Settings.",True,cfg["name"],model)
     try:
         with tempfile.TemporaryDirectory(prefix="v360_vision_") as workdir:
             if binary=="claude":
-                reply,detail=_claude_cli_reply(path,model,data,media_type,workdir)
+                reply,detail=_claude_cli_reply(path,model,data,media_type,workdir,prompt,user_text or "Extract every chart.")
             else:
-                reply,detail=_codex_cli_reply(path,model,data,media_type,workdir,effort)
+                reply,detail=_codex_cli_reply(path,model,data,media_type,workdir,effort,prompt,user_text or "Extract every chart in the attached image.")
     except subprocess.TimeoutExpired:
         return None,_fail(f"{cfg['name']} did not answer within {CLI_TIMEOUT} seconds.",False,cfg["name"],model)
     except OSError as exc:
@@ -127,6 +147,14 @@ def _cli_extract(cfg, model, data, media_type, effort):
         return None,_fail(f"AI vision call failed ({cfg['name']}): {detail or 'no answer'}",False,cfg["name"],model)
     return reply,None
 
+def cli_vision_reply(cfg, data, media_type, effort, prompt, user_text):
+    """One image question to the Claude Code / Codex login named by ``cfg``
+    (a VISION_PROVIDERS row of kind claude_cli / codex_cli), for a caller with
+    its own prompt (Pro's reading-date paste, td-2nxmo): (reply, None) or
+    (None, failure dict with error and provider_unavailable)."""
+    return _cli_extract(cfg, cfg["model"], data, media_type, effort, prompt, user_text)
+
+
 def extract_charts_from_image(data: bytes, media_type: str):
     if not data or not str(media_type).startswith("image/"):
         return _fail("The pasted content is not a readable image.")
@@ -134,18 +162,28 @@ def extract_charts_from_image(data: bytes, media_type: str):
     settings=get_settings()
     selected=settings.get("vision.provider",DEFAULT_VISION_PROVIDER)
     selected=LEGACY_VISION_NAMES.get(selected,selected)
-    cfg=next((x for x in VISION_PROVIDERS if x["name"]==selected),None)
+    cfg=next((x for x in vision_provider_configs() if x["name"]==selected),None)
     if not cfg:
-        return _fail(f"Vision provider {selected!r} is unavailable. Choose one in Settings > AI Providers.",True,str(selected))
+        return _fail(f"Vision provider {selected!r} is unavailable. Choose one in Settings > AI Settings.",True,str(selected))
+    if cfg.get("local_config_error"):
+        return _fail(cfg["local_config_error"],True,cfg["name"])
     model=settings.get("vision.model","") or cfg["model"]
     if cfg["kind"] in ("claude_cli","codex_cli"):
         reply,failure=_cli_extract(cfg,model,data,media_type,settings.get("vision.effort","medium"))
         if failure:
             return failure
         return _finish(reply,cfg,model)
-    key=settings.get_api_key(cfg["key"])
-    if not key:
-        return _fail(f"Reading images via {cfg['name']} needs {cfg['key']} in Settings > AI Providers.",True,cfg["name"],model)
+    key=""
+    if cfg["key"]:
+        from core.ai_engines.catalog import ZAI_CODING_PLAN_KEY, glm_route, provider_key
+        if cfg["key"]==ZAI_CODING_PLAN_KEY:
+            # GLM: the key and the endpoint of the same route, in one read.
+            key,url,_source=glm_route()
+            cfg=dict(cfg,url=url)
+        else:
+            key=settings.get_api_key(cfg["key"]) or provider_key(cfg["key"])
+    if cfg["key"] and not key:
+        return _fail(f"Reading images via {cfg['name']} needs {cfg['key']} in Settings > AI Settings.",True,cfg["name"],model)
     try:
         encoded=base64.b64encode(data).decode("ascii")
         if cfg["kind"]=="anthropic":

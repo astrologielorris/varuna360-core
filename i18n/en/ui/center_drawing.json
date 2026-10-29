@@ -1,0 +1,43 @@
+{
+ "center_drawing.cli.both_families": "Use the --tajika-* or the --vedic-* flags, not both: the center shows one drawing at a time",
+ "center_drawing.cli.casters_help": "With chart.vedic_center_on: draw what these planets cast in the Vedic center (codes like SA,JU; case-insensitive)",
+ "center_drawing.cli.focus_help": "With chart.vedic_center_on: the tour's picture of one drawn cast (SA,JU: caster, receiver) or Yuti (ME+SA); exits 2 on one that is not drawn",
+ "center_drawing.cli.focus_needs_drawing": "--vedic-focus needs the Vedic center drawn: chart.vedic_center_on, the vector South Indian chart, D1",
+ "center_drawing.cli.focus_not_drawn": "--vedic-focus needs one drawn cast (caster,receiver like SA,JU) or Yuti (like ME+SA). Drawn: {drawn}",
+ "center_drawing.cli.needs_on": "Note: {flag} needs chart.vedic_center_on; rendering without the Vedic center.",
+ "center_drawing.cli.needs_vector": "Warning: the Vedic center is drawn on the vector South Indian chart only; rendering without it.",
+ "center_drawing.cli.none": "none",
+ "center_drawing.cli.not_drawn": "Warning: the Vedic center is not drawn here ({reason}); it is shown on the D1 chart.",
+ "center_drawing.cli.receivers_help": "With chart.vedic_center_on: draw what these bodies receive in the Vedic center (codes like KE; case-insensitive)",
+ "center_drawing.rail.label": "Min. virupas",
+ "center_drawing.toggle.draw": "Draw these aspects inside the South Indian chart",
+ "center_drawing.toggle.guide": "Hidden while the Ascendant Guide is shown",
+ "center_drawing.toggle.no_chart": "Shown when a chart is open",
+ "center_drawing.toggle.south_indian": "Shown on the South Indian chart",
+ "center_drawing.toggle.time_adjust": "Hidden while adjusting the time",
+ "center_drawing.toggle.varga": "Shown on the D1 chart",
+ "center_drawing.tour.label": "Tour",
+ "center_drawing.tour.start": "Show the aspects one by one",
+ "center_drawing.tour.stop": "Stop the tour",
+ "center_drawing.vedic.back": "{body} casts {value} back",
+ "center_drawing.vedic.cast_title": "{caster} casts on {receiver}",
+ "center_drawing.vedic.key_caster": {
+  "one": "{body} as caster: draw what {body} casts ({count} cast)",
+  "other": "{body} as caster: draw what {body} casts ({count} casts)"
+ },
+ "center_drawing.vedic.key_receiver": {
+  "one": "{body} as receiver: draw what {body} receives ({count} cast)",
+  "other": "{body} as receiver: draw what {body} receives ({count} casts)"
+ },
+ "center_drawing.vedic.nothing_back": "{body} casts nothing back",
+ "center_drawing.vedic.rail_tip": "Casts weaker than this are left out of the center drawing",
+ "center_drawing.vedic.receives_only": "{body} receives only",
+ "center_drawing.vedic.special": "special aspect ({house})",
+ "center_drawing.vedic.strong": "strong",
+ "center_drawing.vedic.stud_casts": "{body} · {sign} {degree} · casts",
+ "center_drawing.vedic.stud_receives": "{body} · {sign} {degree} · receives only",
+ "center_drawing.vedic.virupas": "{value} virupas",
+ "center_drawing.vedic.yuti_detail": "Yuti · same sign, no virupa value",
+ "center_drawing.vedic.yuti_title": "{a} and {b} together in {sign}",
+ "center_drawing.vedic.yuti_word": "yuti"
+}

@@ -24,6 +24,74 @@ Format rules, because a script parses this file:
 
 ---
 
+## 6.0.0 (2026-10-29)
+
+Varuna360 6.0.0 brings a new Find Chart tab, the strength of the chart drawn
+directly on the chart, six new layers on the South Indian chart, and a design
+that adapts to every screen size.
+
+Some descriptions were removed from this version for copyright reasons. The
+Trimsamsa descriptions are among them; new ones are being written and should
+come back in a coming version.
+
+### Added
+
+- **A new Find Chart tab.** Built by Josh on a design by Lorris. Search your
+  whole chart library in many systems at once: planet positions in the
+  Aditya Circle, Tropical and Sidereal zodiacs, whole sign houses,
+  nakshatras, dignities, avasthas, the retinue, Human Design gates and
+  channels, Cards of Truth and Shayanadi. Each result opens as a quick
+  chart preview, and long searches show their progress in the status bar.
+- **The Library.** Check Charts finds damaged chart files, wrong time zones
+  and copies of the same chart that disagree. Old CHTK files convert to the
+  open TOML format, with every original kept as a backup. Rate and Sort
+  lets you rate your charts and sort the library by your ratings.
+- **Strength shown on the chart.** Click a strength key in the Strength panel
+  (Digbala, Uccha, Chesta, Duc Bala) and the chart lights up: the planets
+  glow with their strength, and each sign takes the colour of its lord's
+  strength, Aditya signs included. Two styles, V1 and V2.
+- **Six new layers on the South Indian chart:**
+  - the strength display above, in the sign squares;
+  - the Vedic aspects drawn in the center;
+  - the Tajika aspects drawn in the center, with a Tour key that plays them
+    one by one;
+  - exchange chains (THREAD key), every sign exchange drawn as a metal chain,
+    ranked from gold to rust, on the wheel too;
+  - the dignity overlay (DIGNITY key), one varga at a time;
+  - an optional degree ruler around the center drawings.
+- **A design for every screen size.** The main chart tab adapts to small and
+  large screens. The info panels beside the chart fold away and can be
+  swapped. The dasha column can be full, folded into a thin rail, or moved
+  below the chart, so the chart gets the space it needs.
+- **The macOS style panel headers** across the main chart tab, and an
+  improved design in almost every part of the app.
+- **Two charts side by side**, with a quick swap between them.
+- **Back and forward** through the charts you viewed in a session.
+- **Text under the planets.** F11 cycles between degrees, names, Human Design
+  gates and nakshatras.
+- **The full Nakshatra panel**, and the nakshatra descriptions, credited to
+  Ernst Wilhelm and Michael Reed. Double click a nakshatra on the wheel to
+  read it.
+- **Hover the Hora and Trimsamsa rings** on the wheel to read their house
+  position.
+- **Custom ayanamsa** in Settings.
+- **Simple vector sign symbols**, signs shown as numbers if you prefer, and a
+  colour editor for the sign symbols.
+- **Dark Orange theme** and a Deep dark option. A new install opens in the
+  Light Blue theme, with the strength colours ready to use.
+- **French descriptions** of the Adityas.
+- **Screen recorder** on Linux, Windows and macOS, and **local voice input**.
+
+## 5.0.1a (2026-10-09)
+
+A preview build of the 5.0 line for a colleague, not a public release. It
+carries the repairs made on the 5.0 line since 5.0.0.
+
+### Fixed
+
+- **Body Graph aspect chart.** It now follows the South Indian style you
+  chose in Settings (classic or vector).
+
 ## 5.0.0 (2026-09-23)
 
 The most requested change was less color. This release is for everyone who

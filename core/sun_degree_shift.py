@@ -130,6 +130,30 @@ def shift_sun_degrees(birth_jd, lat, lon, degrees_shift, mode="aditya", utcoffse
     return new_jd, chart
 
 
+DESIGN_SHIFT_DEGREES = -88
+
+
+def design_jd(birth_jd):
+    """The Human Design Design instant: when the Sun stood 88 degrees before
+    its birth longitude (the JD ``shift_sun_degrees(birth_jd, ..., -88)``
+    returns, without building a chart)."""
+    sun_pos, _ = swe.calc_ut(birth_jd, swe.SUN, swe.FLG_SWIEPH)
+    target_lon = (sun_pos[0] + DESIGN_SHIFT_DEGREES) % 360
+    return find_sun_at_longitude(target_lon, birth_jd, "backward", DESIGN_SHIFT_DEGREES)
+
+
+def build_design_chart(birth_jd, lat, lon, *, mode, ayanamsa, hsys, utcoffset=0.0, name=""):
+    """The -88 Design astrology chart the app shows in Human Design mode
+    (``ChartGUI._recalculate_chart``): the birth place at ``design_jd``, built
+    in ``mode`` (``HDManager.design_chart_mode``, i.e.
+    ``core.hd_model.design_chart_mode_for``) with the chart ayanamsa and the
+    app's house system. One build for the GUI and the tools."""
+    from core.chart_factory import build_chart_from_params
+    return build_chart_from_params(
+        jd=design_jd(birth_jd), lat=lat, lon=lon, mode=mode, utcoffset=utcoffset,
+        ayanamsa=ayanamsa, name=name, hsys=hsys)
+
+
 def load_chart_with_jd(chtk_path, mode="aditya"):
     """
     Load a CHTK file and return a Chart along with Julian Day and coordinates.
@@ -142,21 +166,17 @@ def load_chart_with_jd(chtk_path, mode="aditya"):
         tuple: (chart, birth_jd, lat, lon, birth_data)
         birth_data is a canonical dict from BirthDataManager.
     """
-    from managers.birth_data_manager import BirthDataManager
     from core.chart_factory import build_chart_from_params
 
-    # SPEC-IMPORT-001 §6.1: format-agnostic dispatch (.chtk or .toml).
-    bd = BirthDataManager.create_birth_data_from_file(str(chtk_path))
+    # The app's loading path (ChartManager.load_chart): format-agnostic
+    # dispatch (.chtk or .toml, SPEC-IMPORT-001 §6.1) and the single
+    # birth-data -> JD rule (td-7q5s.3 C1): a .toml's authoritative sub-second
+    # julian_day wins (§5.3), else the calendar-aware time_utils.julday.
+    from core.chart_loading import load_birth_data_and_jd
+    bd, birth_jd = load_birth_data_and_jd(chtk_path)
 
     lat = bd['latitude']
     lon = bd['longitude']
-
-    # SPEC-IMPORT-001 §5.3 ("jd wins"): honor a .toml's authoritative sub-second
-    # julian_day, else compute from UTC civil via the calendar-aware
-    # time_utils.julday. Single birth-data -> JD home (td-7q5s.3 C1), shared with
-    # chart_manager so the paths cannot drift.
-    from core.chart_factory import jd_from_birth_data
-    birth_jd = jd_from_birth_data(bd)
 
     utcoffset = bd.get('utc_offset_hours', 0.0)
     chart = build_chart_from_params(jd=birth_jd, lat=lat, lon=lon, mode=mode,

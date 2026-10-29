@@ -22,6 +22,7 @@ ui.qt_theme is already imported at module top by a sibling mixin (profile_menu).
 """
 
 from PySide6.QtGui import QAction, QActionGroup, QKeySequence
+from core.i18n import t as _t
 from core.varga_codes import VARGA_NAMES
 from ui.qt_theme import apply_menu_bar_style
 
@@ -93,7 +94,6 @@ class MenuBuilderMixin:
 
         # Save Chart as PNG (high quality, file dialog)
         save_chart_png_action = QAction("Save &Chart as PNG...", self)
-        save_chart_png_action.setShortcut(QKeySequence("Ctrl+Shift+S"))
         save_chart_png_action.setStatusTip("Export current chart as high-quality PNG")
         save_chart_png_action.triggered.connect(self._save_chart_as_png)
         file_menu.addAction(save_chart_png_action)
@@ -172,16 +172,20 @@ class MenuBuilderMixin:
         self.outer_planets_action.triggered.connect(self._toggle_outer_planets)
         view_menu.addAction(self.outer_planets_action)
 
-        # Planet Labels toggle action (F11)
-        self.planet_names_action = QAction(
-            "Planet Labels: Show &Names (F11)", self)
+        # Planet Labels cycle action (F11): degrees, names, gates, nakshatras
+        self.planet_names_action = QAction("Cycle Planet &Labels (F11)", self)
         self.planet_names_action.setShortcut(QKeySequence("F11"))
-        self.planet_names_action.setCheckable(True)
-        self.planet_names_action.setChecked(False)
         self.planet_names_action.setStatusTip(
-            "Switch planet labels between degrees and names (F11)")
+            "Under the planets: degrees, names, Human Design gates, nakshatras (F11)")
         self.planet_names_action.triggered.connect(self._toggle_planet_names)
         view_menu.addAction(self.planet_names_action)
+
+        # Retinue strength source cycle (F10, SPEC-RST-001 D-18): the action is
+        # a child of the window, no ChartGUI attribute (Rule 4b).
+        from managers.retinue_strength_shortcut import install_strength_source_action
+        install_strength_source_action(self, view_menu)
+        from managers.dignity_overlay import install_interlock   # SPEC-DIG-001 INV-2
+        install_interlock(self)
 
         # Cycle Sign as Ascendant action (F4)
         self.cycle_ascendant_action = QAction("Cycle &Sign as Ascendant", self)
@@ -197,12 +201,54 @@ class MenuBuilderMixin:
         self.cycle_view_action.triggered.connect(self._cycle_chart_view)
         view_menu.addAction(self.cycle_view_action)
 
-        # Cycle Right Dasha action (F7)
-        self.cycle_right_dasha_action = QAction("Cycle Right &Dasha", self)
-        self.cycle_right_dasha_action.setShortcut(QKeySequence("F7"))
-        self.cycle_right_dasha_action.setStatusTip("Cycle right panel: Vimshottari / Planetary Ages (F7)")
-        self.cycle_right_dasha_action.triggered.connect(self._cycle_right_dasha)
-        view_menu.addAction(self.cycle_right_dasha_action)
+        # Cycle the dasha panels' modes (SPEC-DSH-004): F7 right, Shift+F7 left,
+        # in the mode registry's order.
+        from managers.dasha.modes import MODES as _DASHA_MODES
+        _modes_tip = " / ".join(m.label for m in _DASHA_MODES)
+        # The manager owns the actions (Rule 4b: no new ChartGUI attribute);
+        # cycle_right_dasha_action is the pre-existing alias of the right one.
+        for side, text, key in (("right", "Cycle Right &Dasha", "F7"),
+                                ("left", "Cycle &Left Dasha", "Shift+F7")):
+            act = QAction(text, self)
+            act.setShortcut(QKeySequence(key))
+            act.setStatusTip(f"Cycle {side} panel: {_modes_tip} ({key})")
+            act.triggered.connect(lambda _=False, s=side: self.dasha_manager.cycle_mode(s))
+            view_menu.addAction(act)
+            self.dasha_manager.cycle_actions[side] = act
+        self.cycle_right_dasha_action = self.dasha_manager.cycle_actions["right"]
+
+        # SPEC-LAYOUT-001: Chart-tab layout actions. The keys live on
+        # ChartLayoutManager's Chart-tab QShortcuts (built after this menu), so
+        # these entries only show them; the collaborator is resolved on trigger.
+        view_menu.addSeparator()
+        for text, key, op in (("Fold Right Dasha Column", "Ctrl+]", "toggle_fold"),
+                              ("Dock Right Dasha at Bottom", "Ctrl+Shift+D", "toggle_dock"),
+                              ("Exchange Info Panels", "Alt+X", "exchange_panels"),
+                              ("Fold Karakas Panel", "Alt+1", "fold_karakas")):
+            act = QAction(f"{text}\t{key}", self)
+            act.setStatusTip(f"{text} ({key})")
+            act.triggered.connect(lambda _=False, o=op: getattr(self.chart_layout, o)())
+            view_menu.addAction(act)
+        # SPEC-DUAL-001: two charts side by side. The keys live on
+        # ChartPairManager's Chart-tab QShortcuts; resolved on trigger.
+        # "Two charts" is checkable; "Swap charts" is enabled with B filled;
+        # both re-read the pair when the menu opens (no new ChartGUI attribute).
+        pair_acts = []
+        for text, key, op in ((_t("chart.pair.menu_two", "Two charts"), "Alt+2", "toggle"),
+                              (_t("chart.pair.menu_swap", "Swap charts"), "Ctrl+Shift+2", "swap")):
+            act = QAction(f"{text}\t{key}", self)
+            act.setStatusTip(f"{text} ({key})")
+            act.triggered.connect(lambda _=False, o=op: getattr(self.chart_pair, o)())
+            view_menu.addAction(act)
+            pair_acts.append(act)
+        pair_acts[0].setCheckable(True)
+
+        def _sync_pair_actions(acts=pair_acts):
+            pair = getattr(self, "chart_pair", None)
+            two = pair is not None and pair.mode() == "two"
+            acts[0].setChecked(two)
+            acts[1].setEnabled(two and pair.b() is not None)
+        view_menu.aboutToShow.connect(_sync_pair_actions)
 
         # Toggle Transit Overlay (F3)
         self.transit_action = QAction("Toggle &Transit Overlay", self)
@@ -366,6 +412,16 @@ class MenuBuilderMixin:
         view_plans_action.triggered.connect(self._show_tier_dialog)
         license_menu.addAction(view_plans_action)
 
+        # AI Menu (SPEC-AIC-001 D-1: File · View · License · AI · Help), Pro and
+        # up (SPEC-EDN-002 P4: no AI file ships in Lite)
+        from core.edition_features import ai_features
+        if ai_features() is not None:
+            ai_features().build_menus(self, menubar)
+
+        # Recorder menu (SPEC-REC-001): the Ctrl+Alt+R recorder
+        from apps.recorder.entry_points import build_recorder_menu
+        build_recorder_menu(self, menubar)
+
         # Help Menu
         help_menu = menubar.addMenu("&Help")
 
@@ -375,6 +431,15 @@ class MenuBuilderMixin:
         manual_action.setStatusTip("Open the Varuna360 help manual (F1)")
         manual_action.triggered.connect(self._show_manual)
         help_menu.addAction(manual_action)
+
+        # Report a problem (SPEC-EDN-002 D-18): every edition; Pro and up the
+        # AI writes it, Lite opens the basic report.
+        from ui import bug_report_dialog as _report
+        report_action = QAction(_report.HELP_TEXT["report"], self)
+        report_action.setObjectName(_report.HELP_ACTION_NAME)
+        report_action.setStatusTip(_report.help_tip())
+        report_action.triggered.connect(lambda: _report.open_help_report(self))
+        help_menu.addAction(report_action)
 
         help_menu.addSeparator()
 

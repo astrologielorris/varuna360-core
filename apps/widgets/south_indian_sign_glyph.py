@@ -3,6 +3,8 @@
 
     names  -> no accompaniment icon (the sign-name text stands alone)
     zodiac -> the zodiac symbol artwork (SignIconItem)
+    vector -> the simple vector zodiac symbol: CARVED on wood finishes with the
+              same lit/dark passes, inked flat like josh on the standard finish
     josh   -> the Aditya division glyph: wood finishes CARVE it
               (south_indian_material.glyph_svg_passes); the standard finish INKS
               it flat with the same wood-free renderer the Wheel and North Indian
@@ -23,17 +25,23 @@ from apps.widgets.south_indian_items import SignIconItem
 from apps.widgets.south_indian_material import JoshGlyphItem, glyph_svg_passes
 from apps.widgets.sign_shadow import apply_sign_shadow
 from ui.qt_theme import get_ui_saturation
+from ui.sign_display_modes import glyph_family
+from ui.sign_glyph_ink import vector_passes
 
 
 def accompaniment_item(style, sign_index, signals):
     """The sign-accompaniment QGraphicsItem for a cell, or None for names mode.
     Honours display.sign_display identically on the wood and standard finishes."""
     mode = style.sign_display
-    if mode == 'names':
+    if mode in ('names', 'numbers'):  # text only (ui.sign_numbers.TEXT_ONLY)
         return None
-    if mode in ('josh', 'josh_only'):
-        if style.wood:
+    family = glyph_family(mode)
+    if family:
+        if family == 'josh' and style.wood:
             passes = glyph_svg_passes(style.finish, sign_index, get_ui_saturation())
+        elif family == 'vector':
+            # User SVG colour scheme, else carved on wood, else the theme ink.
+            passes = vector_passes(sign_index, theme_glyph_ink(), style.finish)
         else:
             ink = theme_glyph_ink()
             data = glyph_svg(sign_index, ink)

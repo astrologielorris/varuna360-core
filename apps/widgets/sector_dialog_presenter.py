@@ -2,6 +2,7 @@
 # Licensed under AGPL-3.0 — see LICENSE file for details.
 """Open retinue details for the clicked chart, independently of ChartGUI state."""
 import logging
+from functools import partial
 
 from PySide6.QtCore import Qt
 
@@ -15,19 +16,20 @@ def show_chart_sector(view, sign_name: str, ring: str, being_type: str) -> None:
     Summary calculation is deferred until a click, never a chart redraw.
     """
     from apps.widgets.sector_dialog import SectorInfoDialog
-    from AI_tools.AI_main_function.avastha_sign import sign_summaries_all_views
-
+    from apps.widgets.sector_popup_follow import follow_duc_method, sector_summaries
+    compute = partial(sector_summaries, view._chart, view._aditya_mode, sign_name, ring,
+                      being_type)       # by the DUC Bala method (SPEC-STR-001 §7.5)
     summaries = None
     if view._chart is not None:
         try:
-            summaries = sign_summaries_all_views(
-                view._chart, view._aditya_mode, sign_name, ring, being_type)
+            summaries = compute()
         except Exception:
             # Match the main dialog's structure-only fallback, with diagnostics.
             _LOG.exception('Could not calculate sector summaries for %s', sign_name)
     dialog = SectorInfoDialog(
         sign_name, focus_ring=ring, focus_type=being_type,
         avastha_summaries=summaries, layer=ring, parent=view.window())
+    follow_duc_method(dialog, compute)          # an open popup follows a method change
     try:
         dialog.exec()
     finally:

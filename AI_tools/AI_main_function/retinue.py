@@ -25,8 +25,8 @@ Usage:
 # ADITYA RETINUE DATA + Hora / Trimsamsa lookups
 # =============================================================================
 # Srimad Bhagavatam 12.11.33-44. The named-being tables and the Hora /
-# Trimsamsa lookups moved to core/retinue_constants.py (dependency-free) in the
-# Aditya FT wave 0 refactor (SPEC-ANT-FT-001 §2.3, §3.2). They are re-imported
+# Trimsamsa lookups moved to core/retinue_constants.py (dependency-free) in a
+# Pro refactor. They are re-imported
 # here so every existing consumer of this module keeps working unchanged, and
 # so this module remains the single home for the chart-facing helpers below.
 from core.retinue_constants import (
@@ -291,7 +291,10 @@ def _build_summary(results: list) -> dict:
 # =============================================================================
 
 def format_retinue_table(chart_data: dict) -> str:
-    """Format chart retinue data as a human-readable table."""
+    """Format chart retinue data as a human-readable table.
+
+    When the rows carry ``lord_strength`` (show_retinue with the retinue strength
+    display on, SPEC-RST-001) two columns give each lord's ``q`` (0..1)."""
     name = chart_data["chart_name"]
     planets = chart_data["planets"]
     summary = chart_data["summary"]
@@ -304,6 +307,10 @@ def format_retinue_table(chart_data: dict) -> str:
         f"  {'Planet':<12} {'Sign':<22} {'Deg':>6}  {'Hora Being':<20} {'HH':>2}  {'Trimsamsa Being':<18} {'Type':<12} {'Element':<7} {'TH':<5}",
         f"  {'─' * 11}  {'─' * 21}  {'─' * 5}  {'─' * 19}  {'─' * 2}  {'─' * 17}  {'─' * 11}  {'─' * 7} {'─' * 5}",
     ]
+    strength = any("lord_strength" in r["hora"] for r in planets)
+    if strength:
+        lines[3] += f" {'Hq':>4} {'Tq':>4}"
+        lines[4] += f" {'─' * 4} {'─' * 4}"
 
     for r in planets:
         planet = r["planet"]
@@ -323,9 +330,13 @@ def format_retinue_table(chart_data: dict) -> str:
         th_list = r["trimsamsa"].get("house_connections", [])
         th = ",".join(str(h) for h in th_list)
 
-        lines.append(
-            f"  {planet:<12} {sign_label:<22} {deg_str:>6}  {hora_label:<20} {hh:>2}  {trim_being:<18} {trim_type:<12} {trim_element:<7} {th:<5}"
-        )
+        row = (f"  {planet:<12} {sign_label:<22} {deg_str:>6}  {hora_label:<20} {hh:>2}  "
+               f"{trim_being:<18} {trim_type:<12} {trim_element:<7} {th:<5}")
+        if strength:
+            hq = r["hora"].get("lord_strength", {}).get("q")
+            tq = r["trimsamsa"].get("lord_strength", {}).get("q")
+            row += "".join(f" {v:>4.2f}" if v is not None else f" {'':>4}" for v in (hq, tq))
+        lines.append(row)
 
     # Hora summary
     lines.append("")

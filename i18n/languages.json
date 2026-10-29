@@ -1,0 +1,222 @@
+{
+ "_comment": [
+  "SPEC-LOC-002 §3.5: the ONE list of languages. Adding a language = one row here + an i18n/<code>/ folder (INV-1).",
+  "cardinal/ordinal: CLDR plural rule strings copied verbatim (samples included) from CLDR release 48, common/supplemental/plurals.xml and ordinals.xml.",
+  "pt-PT has no ordinal row in CLDR ordinals.xml; it inherits pt's (CLDR parent locale), copied here so every row is self-contained.",
+  "endonym: the menu name; Settings choice label = endonym, plus ' (english_name)' when the two differ.",
+  "fonts: font families that must cover the script (zh relies on system CJK fonts today; no bundled family yet).",
+  "status: terms_only | partial | complete. dev_only rows (qps pseudo-locale) are never offered to users.",
+  "pseudo: true makes the catalog render every text through core/i18n/pseudo.py (the qps developer tool, §4.9).",
+  "qt_qm_fallback (optional): Qt locales whose qtbase .qm file is loaded when Qt ships none for qt_locale (pt_PT -> pt_BR). Formatting stays qt_locale; QLocale.setDefault is never called (§4.3, OD-7)."
+ ],
+ "cldr_version": "48",
+ "languages": [
+  {
+   "code": "en",
+   "endonym": "English",
+   "english_name": "English",
+   "parent": null,
+   "qt_locale": "en",
+   "script": "Latn",
+   "cardinal": {
+    "one": "i = 1 and v = 0 @integer 1",
+    "other": "@integer 0, 2~16, 100, 1000, 10000, 100000, 1000000, … @decimal 0.0~1.5, 10.0, 100.0, 1000.0, 10000.0, 100000.0, 1000000.0, …"
+   },
+   "ordinal": {
+    "one": "n % 10 = 1 and n % 100 != 11 @integer 1, 21, 31, 41, 51, 61, 71, 81, 101, 1001, …",
+    "two": "n % 10 = 2 and n % 100 != 12 @integer 2, 22, 32, 42, 52, 62, 72, 82, 102, 1002, …",
+    "few": "n % 10 = 3 and n % 100 != 13 @integer 3, 23, 33, 43, 53, 63, 73, 83, 103, 1003, …",
+    "other": "@integer 0, 4~18, 100, 1000, 10000, 100000, 1000000, …"
+   },
+   "fonts": [
+    "Inter"
+   ],
+   "status": "complete"
+  },
+  {
+   "code": "fr",
+   "endonym": "Français",
+   "english_name": "French",
+   "parent": null,
+   "qt_locale": "fr",
+   "script": "Latn",
+   "cardinal": {
+    "one": "i = 0,1 @integer 0, 1 @decimal 0.0~1.5",
+    "many": "e = 0 and i != 0 and i % 1000000 = 0 and v = 0 or e != 0..5 @integer 1000000, 1c6, 2c6, 3c6, 4c6, 5c6, 6c6, … @decimal 1.0000001c6, 1.1c6, 2.0000001c6, 2.1c6, 3.0000001c6, 3.1c6, …",
+    "other": "@integer 2~17, 100, 1000, 10000, 100000, 1c3, 2c3, 3c3, 4c3, 5c3, 6c3, … @decimal 2.0~3.5, 10.0, 100.0, 1000.0, 10000.0, 100000.0, 1000000.0, 1.0001c3, 1.1c3, 2.0001c3, 2.1c3, 3.0001c3, 3.1c3, …"
+   },
+   "ordinal": {
+    "one": "n = 1 @integer 1",
+    "other": "@integer 0, 2~16, 100, 1000, 10000, 100000, 1000000, …"
+   },
+   "fonts": [
+    "Inter"
+   ],
+   "status": "terms_only"
+  },
+  {
+   "code": "es",
+   "endonym": "Español",
+   "english_name": "Spanish",
+   "parent": null,
+   "qt_locale": "es",
+   "script": "Latn",
+   "cardinal": {
+    "one": "n = 1 @integer 1 @decimal 1.0, 1.00, 1.000, 1.0000",
+    "many": "e = 0 and i != 0 and i % 1000000 = 0 and v = 0 or e != 0..5 @integer 1000000, 1c6, 2c6, 3c6, 4c6, 5c6, 6c6, … @decimal 1.0000001c6, 1.1c6, 2.0000001c6, 2.1c6, 3.0000001c6, 3.1c6, …",
+    "other": "@integer 0, 2~16, 100, 1000, 10000, 100000, 1c3, 2c3, 3c3, 4c3, 5c3, 6c3, … @decimal 0.0~0.9, 1.1~1.6, 10.0, 100.0, 1000.0, 10000.0, 100000.0, 1000000.0, 1.0001c3, 1.1c3, 2.0001c3, 2.1c3, 3.0001c3, 3.1c3, …"
+   },
+   "ordinal": {
+    "other": "@integer 0~15, 100, 1000, 10000, 100000, 1000000, …"
+   },
+   "fonts": [
+    "Inter"
+   ],
+   "status": "terms_only"
+  },
+  {
+   "code": "pt",
+   "endonym": "Português BR",
+   "english_name": "Brazilian",
+   "parent": null,
+   "qt_locale": "pt_BR",
+   "script": "Latn",
+   "cardinal": {
+    "one": "i = 0..1 @integer 0, 1 @decimal 0.0~1.5",
+    "many": "e = 0 and i != 0 and i % 1000000 = 0 and v = 0 or e != 0..5 @integer 1000000, 1c6, 2c6, 3c6, 4c6, 5c6, 6c6, … @decimal 1.0000001c6, 1.1c6, 2.0000001c6, 2.1c6, 3.0000001c6, 3.1c6, …",
+    "other": "@integer 2~17, 100, 1000, 10000, 100000, 1c3, 2c3, 3c3, 4c3, 5c3, 6c3, … @decimal 2.0~3.5, 10.0, 100.0, 1000.0, 10000.0, 100000.0, 1000000.0, 1.0001c3, 1.1c3, 2.0001c3, 2.1c3, 3.0001c3, 3.1c3, …"
+   },
+   "ordinal": {
+    "other": "@integer 0~15, 100, 1000, 10000, 100000, 1000000, …"
+   },
+   "fonts": [
+    "Inter"
+   ],
+   "status": "terms_only"
+  },
+  {
+   "code": "pt-PT",
+   "endonym": "Português PT",
+   "english_name": "European",
+   "parent": "pt",
+   "qt_locale": "pt_PT",
+   "qt_qm_fallback": [
+    "pt_BR"
+   ],
+   "script": "Latn",
+   "cardinal": {
+    "one": "i = 1 and v = 0 @integer 1",
+    "many": "e = 0 and i != 0 and i % 1000000 = 0 and v = 0 or e != 0..5 @integer 1000000, 1c6, 2c6, 3c6, 4c6, 5c6, 6c6, … @decimal 1.0000001c6, 1.1c6, 2.0000001c6, 2.1c6, 3.0000001c6, 3.1c6, …",
+    "other": "@integer 0, 2~16, 100, 1000, 10000, 100000, 1c3, 2c3, 3c3, 4c3, 5c3, 6c3, … @decimal 0.0~1.5, 10.0, 100.0, 1000.0, 10000.0, 100000.0, 1000000.0, 1.0001c3, 1.1c3, 2.0001c3, 2.1c3, 3.0001c3, 3.1c3, …"
+   },
+   "ordinal": {
+    "other": "@integer 0~15, 100, 1000, 10000, 100000, 1000000, …"
+   },
+   "fonts": [
+    "Inter"
+   ],
+   "status": "terms_only"
+  },
+  {
+   "code": "de",
+   "endonym": "Deutsch",
+   "english_name": "German",
+   "parent": null,
+   "qt_locale": "de",
+   "script": "Latn",
+   "cardinal": {
+    "one": "i = 1 and v = 0 @integer 1",
+    "other": "@integer 0, 2~16, 100, 1000, 10000, 100000, 1000000, … @decimal 0.0~1.5, 10.0, 100.0, 1000.0, 10000.0, 100000.0, 1000000.0, …"
+   },
+   "ordinal": {
+    "other": "@integer 0~15, 100, 1000, 10000, 100000, 1000000, …"
+   },
+   "fonts": [
+    "Inter"
+   ],
+   "status": "terms_only"
+  },
+  {
+   "code": "it",
+   "endonym": "Italiano",
+   "english_name": "Italian",
+   "parent": null,
+   "qt_locale": "it",
+   "script": "Latn",
+   "cardinal": {
+    "one": "i = 1 and v = 0 @integer 1",
+    "many": "e = 0 and i != 0 and i % 1000000 = 0 and v = 0 or e != 0..5 @integer 1000000, 1c6, 2c6, 3c6, 4c6, 5c6, 6c6, … @decimal 1.0000001c6, 1.1c6, 2.0000001c6, 2.1c6, 3.0000001c6, 3.1c6, …",
+    "other": "@integer 0, 2~16, 100, 1000, 10000, 100000, 1c3, 2c3, 3c3, 4c3, 5c3, 6c3, … @decimal 0.0~1.5, 10.0, 100.0, 1000.0, 10000.0, 100000.0, 1000000.0, 1.0001c3, 1.1c3, 2.0001c3, 2.1c3, 3.0001c3, 3.1c3, …"
+   },
+   "ordinal": {
+    "many": "n = 11,8,80,800 @integer 8, 11, 80, 800",
+    "other": "@integer 0~7, 9, 10, 12~17, 100, 1000, 10000, 100000, 1000000, …"
+   },
+   "fonts": [
+    "Inter"
+   ],
+   "status": "terms_only"
+  },
+  {
+   "code": "ru",
+   "endonym": "Русский",
+   "english_name": "Russian",
+   "parent": null,
+   "qt_locale": "ru",
+   "script": "Cyrl",
+   "cardinal": {
+    "one": "v = 0 and i % 10 = 1 and i % 100 != 11 @integer 1, 21, 31, 41, 51, 61, 71, 81, 101, 1001, …",
+    "few": "v = 0 and i % 10 = 2..4 and i % 100 != 12..14 @integer 2~4, 22~24, 32~34, 42~44, 52~54, 62, 102, 1002, …",
+    "many": "v = 0 and i % 10 = 0 or v = 0 and i % 10 = 5..9 or v = 0 and i % 100 = 11..14 @integer 0, 5~19, 100, 1000, 10000, 100000, 1000000, …",
+    "other": "@decimal 0.0~1.5, 10.0, 100.0, 1000.0, 10000.0, 100000.0, 1000000.0, …"
+   },
+   "ordinal": {
+    "other": "@integer 0~15, 100, 1000, 10000, 100000, 1000000, …"
+   },
+   "fonts": [
+    "Inter"
+   ],
+   "status": "terms_only"
+  },
+  {
+   "code": "zh",
+   "endonym": "中文",
+   "english_name": "Chinese",
+   "parent": null,
+   "qt_locale": "zh_CN",
+   "script": "Hans",
+   "cardinal": {
+    "other": "@integer 0~15, 100, 1000, 10000, 100000, 1000000, … @decimal 0.0~1.5, 10.0, 100.0, 1000.0, 10000.0, 100000.0, 1000000.0, …"
+   },
+   "ordinal": {
+    "other": "@integer 0~15, 100, 1000, 10000, 100000, 1000000, …"
+   },
+   "fonts": [],
+   "status": "terms_only"
+  },
+  {
+   "code": "qps",
+   "endonym": "Pseudo",
+   "english_name": "Pseudo",
+   "parent": null,
+   "qt_locale": null,
+   "script": "Latn",
+   "cardinal": {
+    "one": "i = 1 and v = 0 @integer 1",
+    "other": "@integer 0, 2~16, 100, 1000, 10000, 100000, 1000000, … @decimal 0.0~1.5, 10.0, 100.0, 1000.0, 10000.0, 100000.0, 1000000.0, …"
+   },
+   "ordinal": {
+    "one": "n % 10 = 1 and n % 100 != 11 @integer 1, 21, 31, 41, 51, 61, 71, 81, 101, 1001, …",
+    "two": "n % 10 = 2 and n % 100 != 12 @integer 2, 22, 32, 42, 52, 62, 72, 82, 102, 1002, …",
+    "few": "n % 10 = 3 and n % 100 != 13 @integer 3, 23, 33, 43, 53, 63, 73, 83, 103, 1003, …",
+    "other": "@integer 0, 4~18, 100, 1000, 10000, 100000, 1000000, …"
+   },
+   "fonts": [
+    "Inter"
+   ],
+   "status": "partial",
+   "dev_only": true,
+   "pseudo": true
+  }
+ ]
+}

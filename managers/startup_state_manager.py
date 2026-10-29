@@ -50,6 +50,14 @@ def apply_persisted_ui_state(gui, settings):
     want_pies = settings.get("chart.show_element_pies", True)
     want_house_display = settings.get("chart.wheel_house_display", "sign_based")
     gui.wheel_view.set_cusp_glow_mode(want_cusp)
+    # The "+ Tropical" rim (chart.show_tropical_rim): ChartGUI loads the saved
+    # value into its flag (cleared when the F5 rings are saved on, as
+    # set_show_retinue_rings clears it on the wheel below), but nothing applied
+    # it to the wheel or the button, so the button showed off over a rim-less
+    # wheel while the flag said on, and the first click turned it "off".
+    # Apply it BEFORE the rings so the wheel's own rule (rings clear the rim)
+    # decides, then check the button from what the wheel draws.
+    gui.wheel_view.set_show_tropical_rim(bool(getattr(gui, "show_tropical_rim", False)))
     gui.wheel_view.set_show_retinue_rings(want_retinue)
     if hasattr(gui.wheel_view, "set_house_display_mode"):
         gui.wheel_view.set_house_display_mode(want_house_display)
@@ -64,22 +72,23 @@ def apply_persisted_ui_state(gui, settings):
         gui.trimsamsha_degrees_action.setChecked(bool(want_trim_deg))
     if hasattr(gui, "pie_charts_action"):
         gui.pie_charts_action.setChecked(bool(want_pies))
+    if getattr(gui, "dual_rim_btn", None) is not None:
+        gui.dual_rim_btn.setChecked(bool(gui.wheel_view.show_tropical_rim))
     if gui.wheel_view._chart:
         gui.wheel_view.draw_wheel()
 
     # --- outer planets: sync the action then toggle only if needed ---
-    want_outer = settings.get("chart.show_outer_planets", True)
+    from core.settings_registry import default as _registry_default
+    want_outer = settings.get("chart.show_outer_planets",
+                              _registry_default("chart.show_outer_planets"))
     if gui.outer_planets_action.isChecked() != want_outer:
         gui.outer_planets_action.setChecked(want_outer)
         gui._toggle_outer_planets()
     # NOTE: do NOT touch zodiac.mode here (owned by core_gui_qt.py:286-292).
 
-    # --- planet labels: sync the action then toggle only if needed ---
-    want_names = settings.get("chart.show_planet_names", False)
-    if hasattr(gui, 'planet_names_action'):
-        if gui.planet_names_action.isChecked() != want_names:
-            gui.planet_names_action.setChecked(want_names)
-            gui._toggle_planet_names()
+    # --- the text under the planets (F11, SPEC-PLM-001 v2) ---
+    from managers import planet_label_manager
+    planet_label_manager.restore(gui, settings)
 
     # --- Chart-tab sub-panel toggle groups (SPEC-SET-002 Phase 5) ---
     _apply_panel_tabs(gui, settings)
@@ -148,6 +157,9 @@ def _apply_panel_tabs(gui, settings):
         tab = settings.get("ui.panel.aspects_tab", 0)
         mode, tab = migrate_aspects_selection(mode, tab)
         gui._aspects_mode = mode
+        _mode_btn = getattr(gui, 'aspects_mode_btn', None)
+        if _mode_btn is not None and hasattr(_mode_btn, 'set_on'):
+            _mode_btn.set_on(mode == "tajika")      # SPEC-PANELS-001 §2.6: ON = Tajika
         if mode == "tajika":
             # Tajika row: 0=Aspects Table 1=Relations 2=Yogas(annual) 3=Nabhasa.
             if not isinstance(tab, int) or tab < 0 or tab > 3:
@@ -155,13 +167,9 @@ def _apply_panel_tabs(gui, settings):
             _relabel(gui, "Aspects T", "Relations", "Yogas")
             if hasattr(gui, 'exchange_tab_btn'):
                 gui.exchange_tab_btn.setVisible(False)
-            if hasattr(gui, '_asp_sep3'):
-                gui._asp_sep3.setVisible(False)
             # The Nabhasa tab is the Tajika row's 4th tab -> visible here.
             if hasattr(gui, 'nabhasa_tab_btn'):
                 gui.nabhasa_tab_btn.setVisible(True)
-            if hasattr(gui, '_asp_sep4'):
-                gui._asp_sep4.setVisible(True)
             switchers = [getattr(gui, "switch_to_tajika_matrix_tab", None),
                          getattr(gui, "switch_to_tajika_relationships_tab", None),
                          getattr(gui, "switch_to_tajika_yogas_tab", None),
@@ -180,12 +188,8 @@ def _apply_panel_tabs(gui, settings):
             _relabel(gui, "Aspects V", _avastha_label, "Shame")
             if hasattr(gui, 'exchange_tab_btn'):
                 gui.exchange_tab_btn.setVisible(True)
-            if hasattr(gui, '_asp_sep3'):
-                gui._asp_sep3.setVisible(True)
             if hasattr(gui, 'nabhasa_tab_btn'):
                 gui.nabhasa_tab_btn.setVisible(False)
-            if hasattr(gui, '_asp_sep4'):
-                gui._asp_sep4.setVisible(False)
             switchers = [getattr(gui, "switch_to_aspects_tab", None),
                          getattr(gui, "switch_to_avastha_tab", None),
                          getattr(gui, "switch_to_shame_tab", None),

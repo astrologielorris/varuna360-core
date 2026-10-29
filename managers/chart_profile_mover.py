@@ -22,6 +22,7 @@ transient duplicate, never a loss.
 
 from datetime import datetime, timezone
 from pathlib import Path
+from core.chart_kind import entry_kind, is_transit_kind
 
 try:
     from utils.debug import debug_print
@@ -98,7 +99,8 @@ def serialize_entry(entry: dict) -> dict:
         'ayanamsa': entry.get('ayanamsa', 1),
         # str(): a Path is not JSON-serializable and would fail the save.
         'chtk_path': str(chtk_path) if chtk_path is not None else None,
-        'is_transit': entry.get('is_transit', False),
+        'kind': entry_kind(entry),
+        'is_transit': is_transit_kind(entry_kind(entry)),
         'updated_at': _utc_now(),
     }
 

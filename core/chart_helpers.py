@@ -291,7 +291,8 @@ def planet_sign_probe(jd, lat, lon, mode, ayanamsa, planet_name):
     vedanga = sysflg == const.SID and ayanamsa in (99, 100)
     if sysflg == const.SID and not vedanga:
         eff_ayanamsa = 36 if ayanamsa == 98 else ayanamsa
-        swe.set_sid_mode(eff_ayanamsa)
+        from libaditya.custom_ayanamsa import apply_sid_mode
+        apply_sid_mode(eff_ayanamsa)
         if eff_ayanamsa == 97:
             utils.set_swe_true_sidereal_ayanamsa()
 
@@ -320,6 +321,37 @@ def planet_sign_probe(jd, lat, lon, mode, ayanamsa, planet_name):
     )
     sign_index = Longitude(longitude_raw, amsha=1, context=ctx).amsha_sign_index()
     return sign_index, longitude_raw, speed_raw
+
+
+def longitude_sign_index(longitude, mode, ayanamsa):
+    """Circle-correct sign index (0-11) of a longitude ALREADY in ``mode``'s
+    frame (tropical for aditya / tropical_classic, sidereal for sidereal, as
+    planet_sign_probe returns it). Same Circle/sysflg basis and the same
+    Longitude.amsha_sign_index() binning as planet_sign_probe, for a value that
+    is not a planet: a sign band on a plot, an axis tick, a station position.
+    The index is the wheel ordinal (0 = Dhata = Aries); label it with
+    core.aditya_mode.displayed_sign_name."""
+    from core.chart_factory import mode_to_circle_sysflg
+    from libaditya.objects.context import EphContext
+    from libaditya.objects.julian_day import JulianDay
+    from libaditya.objects.location import Location
+    from libaditya.objects.longitude import Longitude
+
+    circle, sysflg, sign_names = mode_to_circle_sysflg(mode, ayanamsa)
+    ctx = EphContext(
+        timeJD=JulianDay(2451545.0, utcoffset=0.0),
+        location=Location(lat=0.0, long=0.0, alt=0, utcoffset=0.0),
+        sysflg=sysflg,
+        amsha=1,
+        ayanamsa=ayanamsa,
+        hsys="C",
+        circle=circle,
+        signize=True,
+        toround=(True, 3),
+        names_type="mixed",
+        sign_names=sign_names,
+    )
+    return Longitude(longitude % 360.0, amsha=1, context=ctx).amsha_sign_index()
 
 
 def has_planet(chart, planet_name: str) -> bool:

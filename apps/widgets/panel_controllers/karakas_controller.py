@@ -18,6 +18,7 @@ from PySide6.QtWidgets import QTableWidgetItem
 from PySide6.QtCore import Qt
 
 from state import PanelControllerBase
+from ui.item_roles import ITEM_KEY_ROLE
 from core.sidereal_helpers import (
     ADITYA_NAMES,
     TROPICAL_NAMES,
@@ -52,6 +53,9 @@ class KarakasController(PanelControllerBase):
 
     def __init__(self, gui):
         super().__init__(gui=gui, lazy=False)
+        # The chart the table currently shows (None = not rendered): the AI
+        # capture marks the region 'stale' otherwise (SPEC-AIC-001 INV-2).
+        self.rendered_chart = None
 
     def _on_chart_changed(self):
         self._refresh()
@@ -68,83 +72,44 @@ class KarakasController(PanelControllerBase):
         if not chart:
             return
         gui.karakas_table.clearContents()
+        self.rendered_chart = None
 
         try:
-            from core.chart_helpers import (
-                get_planet_in_sign_longitude, has_planet,
-                ADITYA_NAMES as _AD, TROPICAL_NAMES as _TR,
-            )
-
-            planet_degrees = []
-            for name in _PLANET_NAMES_FOR_RANKING:
-                if has_planet(chart, name):
-                    deg = get_planet_in_sign_longitude(chart, name)
-                    planet_degrees.append({"name": name, "degree": deg})
-
-            planet_degrees.sort(key=lambda x: x["degree"], reverse=True)
-
-            # Cusp lords using Whole Sign Houses from Ascendant
-            cusp_lords = {}
-            current_aditya_mode = self._state.aditya_mode
-            asc_sign_index = -1
-            try:
-                asc_cusp = chart.rashi().cusps()[1]
-                asc_sign_index = (asc_cusp.sign() - 1) % 12
-            except (KeyError, IndexError, TypeError):
-                pass
-
-            if asc_sign_index >= 0:
-                house_nums = {"1st": 1, "2nd": 2, "3rd": 3, "4th": 4, "7th": 7, "9th": 9, "10th": 10}
-
-                for cusp_id, house_num in house_nums.items():
-                    sign_index = (asc_sign_index + house_num - 1) % 12
-                    if current_aditya_mode == "aditya":
-                        sign_name = ADITYA_NAMES[sign_index]
-                    else:
-                        sign_name = TROPICAL_NAMES[sign_index]
-                    cusp_lords[cusp_id] = get_sign_ruler(sign_name)
-
+            # One calculation for panel, CLI and MCP (SPEC-AIC-001 INV-1):
+            # core/capabilities/karakas_aspects.karaka_rows is get_karakas.
+            from core.capabilities.karakas_aspects import karaka_rows
+            rows = karaka_rows(chart, self._state.aditya_mode)
             highlight_rows = set()
+            center = Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter
+            for i, row in enumerate(rows):
+                item0 = QTableWidgetItem(row["karaka"])
+                item0.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+                gui.karakas_table.setItem(i, 0, item0)
 
-            for i, (karaka_code, karaka_name, meaning, cusp_id) in enumerate(_KARAKA_ROLES):
-                if i < len(planet_degrees):
-                    p = planet_degrees[i]
-                    symbol = _PLANET_SYMBOLS.get(p["name"], "?")
+                symbol = _PLANET_SYMBOLS.get(row["planet"], "?")
+                item1 = QTableWidgetItem(f"{symbol} {row['planet']}")
+                item1.setData(ITEM_KEY_ROLE, row["planet"])  # INV-3: the key
+                item1.setTextAlignment(center)
+                gui.karakas_table.setItem(i, 1, item1)
 
-                    karaka_text = f"{karaka_code} - {karaka_name} {meaning}"
-                    item0 = QTableWidgetItem(karaka_text)
-                    item0.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-                    gui.karakas_table.setItem(i, 0, item0)
+                if row["lord"]:
+                    lord_symbol = _PLANET_SYMBOLS.get(row["lord"], "?")
+                    item2 = QTableWidgetItem(
+                        f"{row['lord_of']} Lord: {lord_symbol} {row['lord']}")
+                    item2.setTextAlignment(center)
+                    gui.karakas_table.setItem(i, 2, item2)
 
-                    planet_text = f"{symbol} {p['name']}"
-                    item1 = QTableWidgetItem(planet_text)
-                    item1.setTextAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
-                    gui.karakas_table.setItem(i, 1, item1)
-
-                    if cusp_id in cusp_lords:
-                        lord_planet = cusp_lords[cusp_id]
-                        lord_symbol = _PLANET_SYMBOLS.get(lord_planet, "?")
-                        if cusp_id == "1st":
-                            lord_label = "Asc"
-                        elif cusp_id == "7th":
-                            lord_label = "Dsc"
-                        elif cusp_id == "4th":
-                            lord_label = "IC"
-                        else:
-                            lord_label = cusp_id
-                        lord_text = f"{lord_label} Lord: {lord_symbol} {lord_planet}"
-                        item2 = QTableWidgetItem(lord_text)
-                        item2.setTextAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
-                        gui.karakas_table.setItem(i, 2, item2)
-
-                    if karaka_code in ("AK", "DK"):
-                        highlight_rows.add(i)
+                if row["highlight"]:
+                    highlight_rows.add(i)
+            planet_degrees = [{"name": r["planet"], "degree": r["degree_in_sign"]}
+                              for r in rows]
 
             if hasattr(gui, "karakas_delegate"):
                 gui.karakas_delegate.update_highlights(highlight_rows)
                 gui.karakas_table.viewport().update()
 
             self._refresh_enriched(chart, planet_degrees)
+            self.rendered_chart = chart
 
         except Exception as e:
             print(f"Error updating Karakas: {e}")
@@ -162,39 +127,17 @@ class KarakasController(PanelControllerBase):
 
         try:
             from apps.widgets.panel_controllers.planetary_condition_controller import _BEING_TYPE_COLORS
-            from AI_tools.AI_main_function.avastha import get_drishti_yuti_data
-            from AI_tools.AI_main_function.retinue import get_chart_retinue
-            from apps.widgets.info_panel_dialog import split_expression
+            from core.capabilities.karakas_aspects import karaka_enriched
             from ui.qt_theme import get_theme_colors, is_light_theme, scaled_area_px
 
+            # One calculation for panel, CLI and MCP (SPEC-AIC-001 INV-1):
+            # the rows are get_karakas' "enriched" data; this method only styles.
             aditya_mode = self._state.aditya_mode
-            ayanamsa_offset = 0.0
-            if aditya_mode == 'sidereal':
-                ayanamsa_offset = getattr(gui, 'chart_ayanamsa_offset', 0.0)
-
-            retinue = get_chart_retinue(
-                chart, ayanamsa_offset=ayanamsa_offset,
-                tropical_mode=(aditya_mode == 'tropical_classic'))
-            retinue_by_name = {r["planet"]: r for r in retinue["planets"]}
-
-            from AI_tools.AI_main_function.retinue import _build_house_tally
-            from apps.widgets.info_panel_dialog import InfoPanelDialog
-            tally = _build_house_tally(retinue["planets"])
-            houses_by_planet = InfoPanelDialog._invert_house_tally(tally)
-
-            from core.aditya_mode import displayed_sign_name
-            from core.chart_helpers import get_planet_sign_index
-            use_western = getattr(gui, 'use_western_names', False)
-
-            display_chart = chart
-            if aditya_mode == 'sidereal':
-                from core.chart_factory import rebuild_chart
-                display_chart = rebuild_chart(chart, mode="sidereal")
-
-            data = get_drishti_yuti_data(chart)
-            matrix = data["matrix"]
-            dignity_data = data["dignity_data"]
-            shame_pairs = data.get("shame_pairs", set())
+            ayanamsa_offset = (getattr(gui, 'chart_ayanamsa_offset', 0.0)
+                               if aditya_mode == 'sidereal' else 0.0)
+            enriched = karaka_enriched(
+                chart, aditya_mode, getattr(gui, 'use_western_names', False),
+                ayanamsa_offset=ayanamsa_offset)
 
             theme = get_theme_colors()
             light = is_light_theme()
@@ -208,8 +151,6 @@ class KarakasController(PanelControllerBase):
             purple = "#7B1FA2" if light else "#CE93D8"
             gold = "#FFD54F" if not light else "#8B5E00"
             cyan = "#80DEEA" if not light else "#0D4D6E"
-
-            _AVASTHA_7 = ["Sun", "Moon", "Mars", "Mercury", "Jupiter", "Venus", "Saturn"]
 
             td_s = f"padding:5px 4px; border-bottom:1px solid {bdr}; vertical-align:top;"
             th_s = (f"padding:4px; text-align:left; font-weight:bold; "
@@ -229,60 +170,40 @@ class KarakasController(PanelControllerBase):
                 f"</tr>"
             )
 
-            for i, (code, name, meaning, cusp_id) in enumerate(_KARAKA_ROLES):
-                if i >= len(planet_degrees):
-                    break
-                p = planet_degrees[i]
-                pname = p["name"]
+            role_names = {code: name for code, name, _m, _c in _KARAKA_ROLES}
+            dig_names = {"exaltation": "Exalted", "mulatrikona": "Moolatrikona",
+                         "own_sign": "Own House"}
+            for row in enriched:
+                code, pname = row["code"], row["planet"]
+                name = role_names[code]
                 sym = _PLANET_SYMBOLS.get(pname, "?")
 
-                r = retinue_by_name.get(pname)
-                trim_type = r.get("trimsamsa", {}).get("being_type") if r else None
+                trim_type = row["trimsamsa_type"]
                 bt_colors = _BEING_TYPE_COLORS.get(trim_type) if trim_type else None
                 row_bg = (bt_colors[2] if light else bt_colors[0]) if bt_colors else bg_color
                 row_fg = (bt_colors[3] if light else bt_colors[1]) if bt_colors else text_color
 
-                # Sign + degree
-                idx = get_planet_sign_index(display_chart, pname, default=-1)
-                sign = displayed_sign_name(idx, aditya_mode, use_western) if idx >= 0 else "?"
-                deg = f"{r['degrees']}°{r['minutes']:02d}'" if r else ""
+                sign, deg = row["sign"], row["degree"]
 
-                # House connections
-                entries = houses_by_planet.get(pname, [])
-                if entries:
-                    h_parts = []
-                    for e in entries:
-                        hc = gold if e["ring"] == "H" else cyan
-                        h_parts.append(f"<span style='color:{hc}; font-weight:bold;'>"
-                                       f"{'H' if e['ring'] == 'H' else 'T'}{e['house']}</span>")
-                    houses_str = " ".join(h_parts)
+                if row["houses"]:
+                    houses_str = " ".join(
+                        f"<span style='color:{gold if h['ring'] == 'H' else cyan}; "
+                        f"font-weight:bold;'>{h['text']}</span>" for h in row["houses"])
                 else:
                     houses_str = "<span style='opacity:0.4;'>-</span>"
 
-                up, aff = split_expression(pname, _AVASTHA_7, matrix, dignity_data, shame_pairs)
-                total = up + aff
+                total = row["avastha_total"]
                 tc = green if total > 0 else red if total < 0 else text_color
                 sign_char = "+" if total > 0 else ""
 
-                cond_parts = []
-                dig = dignity_data.get(pname)
-                if dig:
-                    dig_names = {"exaltation": "Exalted", "mulatrikona": "Moolatrikona", "own_sign": "Own House"}
-                    cond_parts.append(
-                        f"<span style='color:{purple}; font-weight:bold;'>"
-                        f"{dig_names.get(dig['type'], '?')}</span>")
-
-                if pname in data.get("shamed_planets", set()):
-                    cond_parts.append(f"<span style='color:{red}; font-weight:bold;'>Shamed</span>")
-                elif not dig and total < 0:
-                    cond_parts.append(f"<span style='color:{red};'>Starved</span>")
-                elif not dig and total > 0:
-                    cond_parts.append(f"<span style='color:{green};'>Supported</span>")
-
-                if trim_type:
-                    cond_parts.append(
-                        f"<span style='opacity:0.7;'>{_html.escape(trim_type)}</span>")
-
+                # Condition words come from the shared data; only colour here.
+                style = {"Shamed": f"color:{red}; font-weight:bold;",
+                         "Starved": f"color:{red};", "Supported": f"color:{green};",
+                         trim_type: "opacity:0.7;"}
+                if row["dignity"]:
+                    style[dig_names.get(row["dignity"], "?")] = f"color:{purple}; font-weight:bold;"
+                cond_parts = [f"<span style='{style.get(word, '')}'>{_html.escape(word)}</span>"
+                              for word in row["condition"]]
                 cond_str = " &middot; ".join(cond_parts) if cond_parts else "-"
 
                 is_ak_dk = code in ("AK", "DK")

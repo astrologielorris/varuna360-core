@@ -9,6 +9,8 @@ quietly printing a stale name.
 
 from __future__ import annotations
 
+from functools import cache
+
 #: The 36 channels in ANATOMICAL order, head to root, as ``(upper gate, lower gate,
 #: name)``. This is the reading order and the display order: the list beside the graph is
 #: an index a reader scans downward, so it follows the body, not the gate numbers. The
@@ -99,3 +101,44 @@ CHANNEL_NAMES: dict[tuple[int, int], str] = {
 def channel_name(gate_a: int, gate_b: int) -> str:
     """The channel's name, or an empty string if the pair is not a channel."""
     return CHANNEL_NAMES.get((min(gate_a, gate_b), max(gate_a, gate_b)), "")
+
+
+def gate_label(gate: int) -> str:
+    """"Gate 2 · Self-Direction": the gate's keynote from the shipped HD definitions."""
+    from core.chart_search.hd_names import gate_name
+    name = gate_name(gate)
+    return f"Gate {gate} · {name}" if name else f"Gate {gate}"
+
+
+def gate_tooltip(body: str, gate: int, line: int | None) -> str:
+    """A planet row's tooltip: the body (compact mode hides it) and its gate's name."""
+    from core.chart_search.hd_names import gate_name
+    number = f"{gate}.{line}" if line is not None else str(gate)
+    name = gate_name(gate)
+    return f"{body} · Gate {number} · {name}" if name else f"{body} · Gate {number}"
+
+
+def centre_label(centre: str) -> str:
+    """"solar" -> "Solar Plexus Centre", from the shipped HD centre definitions."""
+    name = _centre_names().get(centre, centre.title())
+    return name if name.endswith("Centre") else f"{name} Centre"
+
+
+#: The nine centre names, for a build that ships no HD definitions corpus (Lite):
+#: hovering the bodygraph there raised FileNotFoundError on every mouse move.
+_CENTRE_FALLBACK = {"head": "Head", "ajna": "Ajna", "throat": "Throat", "g": "G",
+                    "will": "Heart (Will)", "sacral": "Sacral",
+                    "solar": "Solar Plexus", "spleen": "Spleen", "root": "Root"}
+
+
+@cache
+def _centre_names() -> dict[str, str]:
+    import json
+    from pathlib import Path
+    path = (Path(__file__).resolve().parents[3] / "core" / "data" / "hd_definitions"
+            / "centers.json")
+    try:
+        rows = json.loads(path.read_text(encoding="utf-8"))
+        return {row["key"]: row["name"] for row in rows}
+    except (OSError, ValueError, KeyError, TypeError):
+        return dict(_CENTRE_FALLBACK)

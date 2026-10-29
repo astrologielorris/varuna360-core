@@ -27,9 +27,14 @@ python-dateutil>=2.8.0
 # packaging scripts and a data-present check on every platform.
 timezonefinder>=8.0,<8.3
 
-# GUI framework
-PySide6>=6.6.0
-shiboken6>=6.6.0
+# GUI framework. PINNED to the version every test runs on (development and the
+# Linux build). 6.12.0 broke the macOS app built with Nuitka 4.0.7 (2026-10-26):
+# Nuitka's PySide6 post-load hook could no longer import QCoreApplication, so
+# the Qt plugin path stayed empty and the app aborted at launch with "no Qt
+# platform plugin". Move this pin only together with a packaged-app launch
+# check on macOS.
+PySide6==6.10.1
+shiboken6==6.10.1
 qt-material>=2.14
 
 # Image handling
@@ -56,26 +61,38 @@ requests>=2.31.0
 # carry it.
 anthropic>=0.40.0
 
-# --- libaditya engine dependencies -------------------------------------
-# The vendored libaditya/ engine pulls these in; they are not imported by
-# Varuna360's own code, which is why a human reading this file cannot spot
-# them. Only the ones the engine imports at MODULE level belong here — those
-# run at startup and their absence is a hard boot failure:
-#
-#   toml            libaditya/read.py — chart file parsing (also SPEC-IMPORT-001 .toml)
-#   more-itertools  libaditya/calc/jaimini.py — collapse() inside the argala
-#                   calculation. REAL calculation code, not presentation, so it
-#                   stays required: this repo is the calculation reference for
-#                   the whole product family and correctness is not negotiable
-#                   for the sake of one wheel.
+# Deliberately NOT listed: claude-agent-sdk, mcp, anyio, jsonschema. They serve
+# the AI capture, AI coach and MCP files, which Lite does not ship (SPEC-EDN-002
+# INV-2, D-23); no Lite file imports them. They belong to the Pro build only.
+
+# Process start time for the live-instance check (core/capabilities/
+# live_state.py). Linux and Windows read it from the OS directly; macOS needs
+# psutil, and without it the check falls back to the PID alone (a reused PID
+# could then pass for a live app instance). macOS only.
+psutil>=5.9; sys_platform == "darwin"
+
+# --- libaditya: the calculation engine ---------------------------------
+# github.com/ninthhousestudios/libaditya, installed from PyPI. EXACT pin:
+# calculations change only when this line changes. libaditya declares its own
+# requirements (pyswisseph, toml, more-itertools) and ships the Swiss
+# Ephemeris files inside the package (libaditya/ephe/). Never ship a `git+` pin.
+libaditya==0.4.4
+
+# Varuna360's own direct use: core/toml_chart.py (SPEC-IMPORT-001 .toml).
 toml>=0.10.0
-more-itertools>=8.0.0
+
+# Voice input (td-mgcw8, Settings > Voice Input): numpy holds the microphone
+# samples (ui/voice_dictation.py imports it at module level, so the app needs
+# it to start), sherpa-onnx runs the speech model on the user's computer.
+# Same pin as the development requirements.txt.
+numpy>=1.26
+sherpa-onnx==1.13.8
 
 # Deliberately NOT listed: metar, rich, drawsvg, prettytable.
 #
 # Josh (libaditya's author) reported it as "silly that your app doesn't need
 # metar or drawsvg or rich, but it won't run without them" — and he was right.
-# All four sat behind MODULE-level imports in the vendored engine, so every
+# All four sat behind MODULE-level imports in the engine (when it was vendored), so every
 # user installed four packages to run features Varuna360 never calls:
 #
 #   metar        libaditya/objects/location.py — decodes airport weather

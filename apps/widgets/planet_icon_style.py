@@ -1,18 +1,22 @@
 """Shared appearance and per-body colors for both SVG packs."""
 import json
 from apps.widgets.planet_icon_palette import clean_colors, scheme_passes
+from apps.widgets.svg_recolor import recolor_source, pass_arguments  # noqa: F401 (re-exported)
+from ui.sign_display_modes import VECTOR_FILES
 from PySide6.QtGui import QPainter
 from libaditya.optional_bodies import BODY_BY_NAME
 
 PLANET_NAMES = ('Sun', 'Moon', 'Mercury', 'Venus', 'Mars', 'Jupiter', 'Saturn',
                 'Rahu', 'Ketu', 'Uranus', 'Neptune', 'Pluto')
 ICON_NAMES = PLANET_NAMES + tuple(BODY_BY_NAME)
+# The Settings SVG colour editor also colours the 12 vector sign symbols.
+SVG_COLOR_NAMES = ICON_NAMES + VECTOR_FILES
 PLANET_SETTING = 'display.planet_icon_set'
 COLOR_SETTING = 'display.planet_svg_colors'
 
 
 def colors_from(value):
-    return clean_colors(value, ICON_NAMES)
+    return clean_colors(value, SVG_COLOR_NAMES)
 
 
 def passes_for(body):
@@ -79,27 +83,8 @@ def refresh_icon_views():
             widget._load_current_image()
         elif widget.__class__.__name__ in ('_HouseBarWidget', 'CardsOfTruthView'):
             widget.update()
-
-
-def recolor_source(data, color, width_scale, outline=0):
-    """Recolor both strokes and fills; optional casing outlines filled silhouettes."""
-    import xml.etree.ElementTree as ET
-    root = ET.fromstring(data)
-    for element in root.iter():
-        for name in ('fill', 'stroke'):
-            if element.get(name, 'none') != 'none':
-                element.set(name, color)
-        if 'stroke-width' in element.attrib:
-            element.set('stroke-width', f"{float(element.get('stroke-width')) * width_scale:g}")
-        elif outline and element.get('fill', 'none') != 'none':
-            element.set('stroke', color)
-            element.set('stroke-width', str(outline))
-            element.set('stroke-linejoin', 'round')
-    return ET.tostring(root)
-
-
-def pass_arguments(entry):
-    return entry[0], entry[1] / 5.0, entry[2] if len(entry) > 2 else 0
+        elif widget.__class__.__name__ == 'GlanceChart':  # SPEC-FIND-007: cached glyphs
+            widget.refresh_theme()
 
 
 class SVGEffects:

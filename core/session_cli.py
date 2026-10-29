@@ -2,7 +2,7 @@
 # Licensed under AGPL-3.0 — see LICENSE file for details.
 """Find and run the Claude Code / Codex CLIs from the desktop app.
 
-Shared by the AI Providers login check and the chart image import, which use
+Shared by the AI Settings login check and the chart image import, which use
 the user's existing CLI subscription instead of an API key.
 
 A desktop app does not inherit the shell PATH: launched from Finder, the Dock,

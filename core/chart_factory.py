@@ -506,6 +506,18 @@ def jd_from_recipe_civil(recipe):
     )
 
 
+def jd_from_recipe(recipe):
+    """Julian Day of a recipe: a stored ``julian_day`` wins over civil time.
+
+    The one place this rule lives for recipes: build_chart_from_recipe and the
+    Find Chart session reader both call it.
+    """
+    _recipe_jd = recipe.get("julian_day")
+    if _recipe_jd is not None:
+        return float(_recipe_jd)
+    return jd_from_recipe_civil(recipe)
+
+
 def jd_from_birth_data(birth_data):
     """Julian Day from a canonical birth_data dict (SPEC-IMPORT-001 §6.2).
 
@@ -540,11 +552,7 @@ def build_chart_from_recipe(recipe, mode, ayanamsa):
     keeping it honest — see td-nbl8, where a saved time adjustment reverted on
     the next rebuild because only timedec had been updated.
     """
-    _recipe_jd = recipe.get('julian_day')
-    if _recipe_jd is not None:
-        jd = float(_recipe_jd)
-    else:
-        jd = jd_from_recipe_civil(recipe)
+    jd = jd_from_recipe(recipe)
     # SPEC-HSY-001: recipe stores a human key; convert to SE code at consumption.
     hsys = get_house_system_code(recipe.get('house_system', 'campanus'))
     return build_chart_from_params(

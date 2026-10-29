@@ -8,6 +8,7 @@ from apps.widgets.south_indian_geometry import PROJECT_ROOT, SIGN_ICON_SIZE, MIN
 from apps.widgets.south_indian_paint_style import RenderStyle
 from ui.qt_theme import desat_image, get_ui_saturation
 from ui.south_indian_finishes import WOOD, normalize_finish, normalize_sign_display
+from ui.sign_numbers import effective_sign_display
 
 class AppearanceAssets:
     WESTERN_NAMES = SouthIndianView.WESTERN_NAMES
@@ -22,7 +23,9 @@ class AppearanceAssets:
         # app-wide display.sign_display, the single sign-display setting shared with
         # the Wheel and the North Indian chart. The attribute keeps its historical
         # name (a registered facade accessor); only its source changed.
-        self.wood_sign_display = normalize_sign_display(settings.get('display.sign_display','zodiac'))
+        # Settings > Signs as numbers overrides it per view ('numbers').
+        self.wood_sign_display = effective_sign_display(
+            'south_indian', normalize_sign_display(settings.get('display.sign_display','zodiac')), settings)
         self.sign_language = 'en'
         self.foreground_only = False
         self.live = bool(live)
@@ -38,15 +41,17 @@ class AppearanceAssets:
         return WOOD.get(self.vector_finish)
 
     def apply(self, finish, sign_display):
-        values = normalize_finish(finish), normalize_sign_display(sign_display)
+        values = normalize_finish(finish), effective_sign_display(
+            'south_indian', normalize_sign_display(sign_display))
         if values == (self.vector_finish, self.wood_sign_display):
             return False
         self.vector_finish, self.wood_sign_display = values
         return True
 
     def style(self):
-        from managers.settings_manager import get_settings, HOUSE_NUMBER_FONT_MAX
-        font = min(HOUSE_NUMBER_FONT_MAX, get_settings().get_chart_display_section('house_number')['font_size'])
+        # House-number base = the factory 23 less the SI's 3pt (20); Font Sizes >
+        # House Numbers scales it (display.fonts.house_numbers, draw_house_numbers).
+        font = 23
         return RenderStyle(self.vector_finish, self.wood_sign_display, self.sign_language,
             self._si_display_settings, self.PLANET_SIZES, self.load_sign_icon, self.load_planet_image,
             self.get_selected_variation, max(MIN_BADGE_FONT_SIZE, font-3), self.foreground_only)
@@ -109,14 +114,10 @@ class AppearanceAssets:
             print(f'[SI VECTOR] Warning: icon not found for {western_name}')
             self.remember(self._icon_cache, cache_key, None)
             return None
-        qimage = QImage(str(icon_path))
-        if qimage.isNull():
+        from apps.widgets.sign_icon_loader import scaled_sign_pixmap
+        pixmap = scaled_sign_pixmap(icon_path, size)
+        if pixmap is None:
             print(f'[SI VECTOR] Warning: failed to load image: {icon_path}')
-            self.remember(self._icon_cache, cache_key, None)
-            return None
-        qimage = qimage.scaled(size, size, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
-        qimage = desat_image(qimage)
-        pixmap = QPixmap.fromImage(qimage)
         self.remember(self._icon_cache, cache_key, pixmap)
         return pixmap
 

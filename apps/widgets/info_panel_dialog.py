@@ -26,10 +26,13 @@ from ui.qt_theme import (
     scaled_area_px,
     scaled_area_size,
 )
+from ui.accent_ink import on_accent_ink  # SPEC-THM-001 §13
 from ui.popup_fonts import tier_px, popup_title_px, popup_group_px
 
 
-from ui.dignity_colors import DIGNITY_COLORS, dignity_colors
+from ui.dignity_colors import DIGNITY_COLORS, DIGNITY_CODE_ROLE, dignity_colors
+from core.dignity_names import DIGNITY_FULL_NAMES
+from ui.item_roles import ITEM_KEY_ROLE
 
 
 # Section registry: section_key -> list of (gui_attr_name, display_label)
@@ -617,7 +620,7 @@ class InfoPanelDialog(ThemedStyleMixin, QDialog):
             }}
             QPushButton:hover {{
                 background-color: {theme['primary']};
-                color: {theme['primary_text']};
+                color: {on_accent_ink(theme['primary'], theme['primary_text'])};
             }}
         """
 
@@ -694,7 +697,7 @@ class InfoPanelDialog(ThemedStyleMixin, QDialog):
                 chip.setStyleSheet(f"""
                     QPushButton {{
                         background-color: {theme['primary']};
-                        color: {theme['primary_text']};
+                        color: {on_accent_ink(theme['primary'], theme['primary_text'])};
                         border: 1px solid {theme['primary']};
                         border-radius: 6px;
                         font-size: {tier_px('buttons', 12)}px;
@@ -770,6 +773,10 @@ class InfoPanelDialog(ThemedStyleMixin, QDialog):
                 if item:
                     new_item = QTableWidgetItem(item.text())
                     new_item.setTextAlignment(item.textAlignment())
+                    # Carry the cell's key role across the clone (INV-3).
+                    key = item.data(ITEM_KEY_ROLE)
+                    if key is not None:
+                        new_item.setData(ITEM_KEY_ROLE, key)
 
                     # Check delegate for colors
                     bg_hex, fg_hex = _get_delegate_colors(self.gui, attr_name, r, c)
@@ -942,11 +949,7 @@ class InfoPanelDialog(ThemedStyleMixin, QDialog):
     # Dark pairs in the same jewel-tone family as the being-type colors.
     _DIGNITY_COLORS_THEMED = DIGNITY_COLORS
 
-    _DIGNITY_FULL_NAMES = {
-        "EX": "Exalted", "MT": "Moolatrikona", "OH": "Own House",
-        "GF": "Great Friend", "F": "Friend", "N": "Neutral",
-        "E": "Enemy", "GE": "Great Enemy", "DB": "Debilitated",
-    }
+    _DIGNITY_FULL_NAMES = DIGNITY_FULL_NAMES
 
     # Aspect matrix heat colors: (dark_bg, dark_fg, light_bg, light_fg)
     # Dark: rich purple/emerald/amber instead of murky olive/forest tones.
@@ -983,7 +986,13 @@ class InfoPanelDialog(ThemedStyleMixin, QDialog):
         """)
 
     def _build_popup_karakas_enriched(self):
-        """Fullscreen Karakas+Avastha enriched view (SPEC-KARAKAS-LAYOUT-001)."""
+        """Fullscreen Karakas+Avastha enriched view (SPEC-KARAKAS-LAYOUT-001).
+
+        Superset of the side panel: the same rows, houses, total and condition
+        (one calculation, ``karaka_enriched``), plus what the full screen has
+        room for: the retinue beings, the 7x avastha breakdown and the
+        lajjitaadi states. Nothing is abbreviated here.
+        """
         from PySide6.QtWidgets import QTextBrowser
         import html as _html
 
@@ -992,37 +1001,73 @@ class InfoPanelDialog(ThemedStyleMixin, QDialog):
             return None
 
         aditya_mode = self.gui.state.aditya_mode
+        use_western = getattr(self.gui, 'use_western_names', False)
         try:
-            from core.chart_helpers import get_planet_in_sign_longitude, has_planet
             from AI_tools.AI_main_function.avastha import get_drishti_yuti_data
-            from AI_tools.AI_main_function.retinue import get_chart_retinue
-            from core.sidereal_helpers import ADITYA_NAMES, TROPICAL_NAMES, get_sign_ruler
+            from AI_tools.AI_main_function.retinue import (
+                get_chart_retinue, _build_house_tally)
+            from core.aditya_mode import displayed_sign_name
+            from core.chart_helpers import (
+                get_planet_in_sign_longitude, get_planet_sign_index, has_planet)
 
-            planet_names = ["Sun", "Moon", "Mars", "Mercury", "Jupiter", "Venus", "Saturn"]
-            planet_degrees = []
-            for name in planet_names:
-                if has_planet(chart, name):
-                    deg = get_planet_in_sign_longitude(chart, name)
-                    planet_degrees.append({"name": name, "degree": deg})
-            planet_degrees.sort(key=lambda x: x["degree"], reverse=True)
-
-            ayanamsa_offset = 0.0
-            if aditya_mode == 'sidereal':
-                ayanamsa_offset = getattr(self.gui, 'chart_ayanamsa_offset', 0.0)
+            ayanamsa_offset = (getattr(self.gui, 'chart_ayanamsa_offset', 0.0)
+                               if aditya_mode == 'sidereal' else 0.0)
             retinue = get_chart_retinue(
                 chart, ayanamsa_offset=ayanamsa_offset,
                 tropical_mode=(aditya_mode == 'tropical_classic'))
             retinue_by_name = {r["planet"]: r for r in retinue["planets"]}
+            houses_by_planet = self._invert_house_tally(
+                _build_house_tally(retinue["planets"]))
 
-            data = get_drishti_yuti_data(chart)
+            # Same inputs as the side panel (KarakasController._refresh_enriched),
+            # so order, houses, total and condition match it row for row.
+            from core.avastha_frame import avastha_frame_chart
+            avastha_chart = avastha_frame_chart(chart, aditya_mode)
+            data = get_drishti_yuti_data(avastha_chart)
             matrix = data["matrix"]
             dignity_data = data["dignity_data"]
             shame_pairs = data.get("shame_pairs", set())
-            shamed_planets = data.get("shamed_planets", set())
+            shamed = data.get("shamed_planets", set())
+
+            display_chart = avastha_chart
+
+            order = [n for n in _AVASTHA_7 if has_planet(chart, n)]
+            order.sort(key=lambda n: get_planet_in_sign_longitude(chart, n), reverse=True)
+            _DIG = {"exaltation": "Exalted", "mulatrikona": "Moolatrikona",
+                    "own_sign": "Own House"}
+            enriched = []
+            for code, name in zip(("AK", "AmK", "BK", "MK", "PiK", "GK", "DK"), order):
+                r = retinue_by_name.get(name)
+                idx = get_planet_sign_index(display_chart, name, default=-1)
+                up, aff = split_expression(name, _AVASTHA_7, matrix, dignity_data, shame_pairs)
+                total = up + aff
+                dig = dignity_data.get(name)
+                trim_type = r.get("trimsamsa", {}).get("being_type") if r else None
+                condition = []
+                if dig:
+                    condition.append(_DIG.get(dig["type"], "?"))
+                if name in shamed:
+                    condition.append("Shamed")
+                elif not dig and total < 0:
+                    condition.append("Starved")
+                elif not dig and total > 0:
+                    condition.append("Supported")
+                if trim_type:
+                    condition.append(trim_type)
+                enriched.append({
+                    "code": code, "planet": name,
+                    "dignity": dig["type"] if dig else None,
+                    "shamed": name in shamed,
+                    "sign": displayed_sign_name(idx, aditya_mode, use_western) if idx >= 0 else "?",
+                    "degree": f"{r['degrees']}°{r['minutes']:02d}'" if r else "",
+                    "houses": houses_by_planet.get(name, []),
+                    "avastha_total": total,
+                    "avastha_text": f"{'+' if total > 0 else ''}{total:.0f}",
+                    "condition": condition, "trimsamsa_type": trim_type})
 
             lajjitaadi = {}
             try:
-                lajj_raw = chart.rashi().lajjitaadi_avasthas()
+                lajj_raw = avastha_chart.rashi().lajjitaadi_avasthas()
                 if isinstance(lajj_raw, dict):
                     lajjitaadi = lajj_raw
             except Exception:
@@ -1041,20 +1086,22 @@ class InfoPanelDialog(ThemedStyleMixin, QDialog):
         green = "#2E7D32" if light else "#A5D6A7"
         red = "#C62828" if light else "#EF9A9A"
         purple = "#7B1FA2" if light else "#CE93D8"
+        gold = "#8B5E00" if light else "#FFD54F"
+        cyan = "#0D4D6E" if light else "#80DEEA"
 
-        _KARAKA_ROLES = [
-            ("AK", "Atma Karaka", "Self"), ("AmK", "Amatya Karaka", "Minister"),
-            ("BK", "Bhratru Karaka", "Brother"), ("MK", "Matru Karaka", "Mother"),
-            ("PiK", "Pitru Karaka", "Father"), ("GK", "Gnati Karaka", "Relatives"),
-            ("DK", "Dara Karaka", "Spouse"),
-        ]
-        _COL_ABBR = [("Sun", "Su"), ("Moon", "Mo"), ("Mars", "Ma"),
-                     ("Mercury", "Me"), ("Jupiter", "Ju"), ("Venus", "Ve"),
-                     ("Saturn", "Sa")]
+        _KARAKA_ROLES = {
+            "AK": ("Atma Karaka", "Self"), "AmK": ("Amatya Karaka", "Minister"),
+            "BK": ("Bhratru Karaka", "Brother"), "MK": ("Matru Karaka", "Mother"),
+            "PiK": ("Pitru Karaka", "Father"), "GK": ("Gnati Karaka", "Relatives"),
+            "DK": ("Dara Karaka", "Spouse"),
+        }
+        _COLS = ["Sun", "Moon", "Mars", "Mercury", "Jupiter", "Venus", "Saturn"]
+        _DIG_NAMES = {"exaltation": "Exalted", "mulatrikona": "Moolatrikona",
+                      "own_sign": "Own House"}
         _SYM = self._PLANET_SYMBOLS
 
-        td_s = f"padding:5px 4px; border-bottom:1px solid {bdr}; vertical-align:middle;"
-        th_s = (f"padding:5px 4px; text-align:center; font-weight:bold; "
+        td_s = f"padding:6px 5px; border-bottom:1px solid {bdr}; vertical-align:middle;"
+        th_s = (f"padding:6px 5px; text-align:center; font-weight:bold; "
                 f"border-bottom:2px solid {bdr}; background:{theme['secondary']}; "
                 f"font-size:{sm_px}px;")
         th_l = th_s.replace("text-align:center", "text-align:left")
@@ -1064,61 +1111,79 @@ class InfoPanelDialog(ThemedStyleMixin, QDialog):
             return colors[1] if light else colors[0]
 
         html = (
-            f"<table cellpadding='0' cellspacing='0' "
+            f"<table width='100%' cellpadding='0' cellspacing='0' "
             f"style='width:100%; table-layout:fixed; border-collapse:collapse; "
             f"font-size:{base_px}px; font-family:Inter,sans-serif; "
             f"color:{text_color};'>"
             f"<tr>"
-            f"<th style='{th_l} width:16%;'>Karaka</th>"
-            f"<th style='{th_l} width:10%;'>Retinue</th>"
+            f"<th style='{th_l} width:14%;'>Karaka</th>"
+            f"<th style='{th_l} width:10%;'>Houses</th>"
+            f"<th style='{th_l} width:13%;'>Retinue</th>"
         )
-        for _, abbr in _COL_ABBR:
-            html += f"<th style='{th_s} width:5%;'>{abbr}</th>"
+        for col in _COLS:
+            html += f"<th style='{th_s} width:5%;'>{_SYM.get(col, '')} {col}</th>"
         html += (
-            f"<th style='{th_s} width:5%;'>Tot</th>"
-            f"<th style='{th_l} width:24%;'>Condition</th>"
+            f"<th style='{th_s} width:6%;'>Total</th>"
+            f"<th style='{th_l} width:22%;'>Condition</th>"
             f"</tr>"
         )
 
-        for i, (code, karaka_name, meaning) in enumerate(_KARAKA_ROLES):
-            if i >= len(planet_degrees):
-                break
-            p = planet_degrees[i]
-            pname = p["name"]
+        for row in enriched:
+            code, pname = row["code"], row["planet"]
+            karaka_name, meaning = _KARAKA_ROLES.get(code, (code, ""))
             sym = _SYM.get(pname, "?")
-
             r = retinue_by_name.get(pname)
-            trim_type = r.get("trimsamsa", {}).get("being_type") if r else None
+
+            trim_type = row["trimsamsa_type"]
             bt_colors = self._BEING_TYPE_COLORS.get(trim_type) if trim_type else None
             row_bg = (bt_colors[2] if light else bt_colors[0]) if bt_colors else bg_color
             row_fg = (bt_colors[3] if light else bt_colors[1]) if bt_colors else text_color
 
-            is_shamed = pname in shamed_planets
             is_ak_dk = code in ("AK", "DK")
-            lbdr = f"border-left:4px solid {c('SHAME')};" if is_shamed else \
+            lbdr = f"border-left:4px solid {c('SHAME')};" if row["shamed"] else \
                    (f"border-left:4px solid {theme['primary']};" if is_ak_dk else "")
 
-            # Retinue summary
-            ret_parts = []
-            if trim_type:
-                ret_parts.append(_html.escape(trim_type))
-            if r:
-                hora_side = r.get("hora", {}).get("side", "")
-                if hora_side:
-                    ret_parts.append("☉" if hora_side == "Aditya" else "☽")
-            ret_str = " ".join(ret_parts) if ret_parts else "-"
-
+            # Karaka: role, planet, sign and degree
             html += (
                 f"<tr style='background:{row_bg}; color:{row_fg};'>"
-                f"<td style='{td_s} {lbdr} white-space:nowrap;'>"
-                f"<b>{sym} {code}</b> {_html.escape(meaning)}<br>"
-                f"<span style='font-size:{sm_px}px; opacity:0.7;'>"
-                f"{_html.escape(karaka_name)}</span></td>"
-                f"<td style='{td_s} font-size:{sm_px}px;'>{ret_str}</td>"
+                f"<td style='{td_s} {lbdr}'>"
+                f"<b>{sym} {_html.escape(karaka_name)}</b><br>"
+                f"<span style='font-size:{sm_px}px;'>{_html.escape(meaning)} "
+                f"&middot; {_html.escape(pname)}</span><br>"
+                f"<span style='font-size:{sm_px}px; opacity:0.75;'>"
+                f"{_html.escape(row['sign'])} {row['degree']}</span></td>"
             )
 
-            # Avastha matrix columns
-            for col_planet, _ in _COL_ABBR:
+            # Houses, one per line, ring spelled out
+            if row["houses"]:
+                houses_str = "<br>".join(
+                    f"<span style='color:{gold if h['ring'] == 'H' else cyan}; "
+                    f"font-weight:bold;'>"
+                    f"{'Hora' if h['ring'] == 'H' else 'Trimsamsa'} {h['house']}</span>"
+                    for h in row["houses"])
+            else:
+                houses_str = "<span style='opacity:0.4;'>-</span>"
+            html += f"<td style='{td_s} font-size:{sm_px}px;'>{houses_str}</td>"
+
+            # Retinue: hora being (side) and trimsamsa being (type)
+            if r:
+                hora = r.get("hora", {})
+                trim = r.get("trimsamsa", {})
+                side = hora.get("side", "")
+                side_c = gold if side == "Aditya" else cyan
+                side_icon = "☉" if side == "Aditya" else "☽"
+                ret_str = (
+                    f"<b>{_html.escape(hora.get('being_name', '?'))}</b> "
+                    f"<span style='color:{side_c};'>{side_icon}</span> "
+                    f"<span style='opacity:0.75;'>{_html.escape(side)} side</span><br>"
+                    f"{_html.escape(trim.get('being_name', '?'))} "
+                    f"<span style='opacity:0.75;'>({_html.escape(trim_type or '?')})</span>")
+            else:
+                ret_str = "-"
+            html += f"<td style='{td_s} font-size:{sm_px}px;'>{ret_str}</td>"
+
+            # Avastha breakdown: what each planet gives this karaka
+            for col_planet in _COLS:
                 if col_planet == pname:
                     # Diagonal = self base 60 x dignity multiplier (SPEC-AVA-001
                     # rev3): EX=120, MK=105, OH=90, none/debilitated=60.
@@ -1157,16 +1222,26 @@ class InfoPanelDialog(ThemedStyleMixin, QDialog):
                             f"<td style='{td_s} text-align:center; color:{color}; "
                             f"font-weight:bold;'>{vr:.0f}{s}</td>")
 
-            # Total
-            up, aff = split_expression(pname, planet_names, matrix, dignity_data, shame_pairs)
-            total = up + aff
-            tc = c("FRIEND") if total > 0 else c("ENEMY") if total < 0 else text_color
+            # Total (same number as the side panel)
+            total = row["avastha_total"]
+            tc = green if total > 0 else red if total < 0 else text_color
             html += (
                 f"<td style='{td_s} text-align:center; color:{tc}; "
-                f"font-weight:bold;'>{total:.0f}</td>")
+                f"font-weight:bold;'>{row['avastha_text']}</td>")
 
-            # Condition: lajjitaadi states
-            cond_parts = []
+            # Condition: the side panel's words, then every lajjitaadi state
+            style = {"Shamed": f"color:{red}; font-weight:bold;",
+                     "Starved": f"color:{red}; font-weight:bold;",
+                     "Supported": f"color:{green}; font-weight:bold;",
+                     trim_type: "opacity:0.75;"}
+            if row["dignity"]:
+                style[_DIG_NAMES.get(row["dignity"], "?")] = \
+                    f"color:{purple}; font-weight:bold;"
+            summary = " &middot; ".join(
+                f"<span style='{style.get(w, '')}'>{_html.escape(w)}</span>"
+                for w in row["condition"]) or "-"
+
+            state_lines = []
             states = lajjitaadi.get(pname, {})
             descs = self._get_avastha_descriptions()
             for state_name in ("proud", "delighted", "healthy",
@@ -1176,16 +1251,17 @@ class InfoPanelDialog(ThemedStyleMixin, QDialog):
                     continue
                 desc = descs.get(state_name, {})
                 sanskrit = desc.get("sanskrit", state_name.title())
-                state_c = c("FRIEND") if state_name in ("proud", "delighted", "healthy") \
-                    else c("ENEMY")
+                english = desc.get("english", state_name.title())
+                good = state_name in ("proud", "delighted", "healthy")
                 sv = sum(f.get("strength", 0) for f in factors if isinstance(f, dict))
-                sign_c = "+" if state_name in ("proud", "delighted", "healthy") else "-"
-                cond_parts.append(
-                    f"<span style='color:{state_c}; font-size:{sm_px}px;'>"
-                    f"{_html.escape(sanskrit)} {sign_c}{sv:.0f}</span>")
+                state_lines.append(
+                    f"<span style='color:{c('FRIEND') if good else c('ENEMY')};'>"
+                    f"{_html.escape(english)} ({_html.escape(sanskrit)}) "
+                    f"{'+' if good else '-'}{sv:.0f}</span>")
             html += (
-                f"<td style='{td_s} font-size:{sm_px}px;'>"
-                f"{' &middot; '.join(cond_parts) if cond_parts else '-'}</td>")
+                f"<td style='{td_s} font-size:{sm_px}px;'>{summary}"
+                + (f"<br>{'<br>'.join(state_lines)}" if state_lines else "")
+                + "</td>")
 
             html += "</tr>"
 
@@ -1798,6 +1874,7 @@ class InfoPanelDialog(ThemedStyleMixin, QDialog):
         # page's own rows are unchanged; line 1 disambiguates the two numbers.
         summaries = None
         view = None
+        ctrl = None
         if hasattr(self.gui, '_ensure_controller'):
             ctrl = self.gui._ensure_controller('avastha')
             if ctrl:
@@ -1812,6 +1889,8 @@ class InfoPanelDialog(ThemedStyleMixin, QDialog):
                                    avastha_summaries=summaries,
                                    layer=layer, view=view,
                                    parent=self)
+            if ctrl:            # follows a DUC Bala method change (td-7zu14)
+                ctrl.follow_popup(dlg, sign_name, ring, type_key)
             dlg.exec()
             dlg.deleteLater()
         except Exception as e:
@@ -1839,9 +1918,8 @@ class InfoPanelDialog(ThemedStyleMixin, QDialog):
         matrix, dignity, shame_p, shamed_pl, lajjitaadi = {}, {}, set(), set(), {}
         try:
             from AI_tools.AI_main_function.avastha import get_drishti_yuti_data
-            if aditya_mode == 'sidereal':
-                from core.chart_factory import rebuild_chart
-                chart = rebuild_chart(chart, mode="sidereal")
+            from core.avastha_frame import avastha_frame_chart
+            chart = avastha_frame_chart(chart, aditya_mode)
             data = get_drishti_yuti_data(chart)
             matrix = data["matrix"]
             dignity = data["dignity_data"]
@@ -1869,9 +1947,10 @@ class InfoPanelDialog(ThemedStyleMixin, QDialog):
             item0 = clone.item(r, 0)
             if not item0:
                 continue
-            cell_text = item0.text()
+            # By the row's element KEY, never its label (INV-3).
+            key = item0.data(ITEM_KEY_ROLE)
             for elem, colors in self._ELEMENT_COLORS.items():
-                if elem in cell_text:
+                if elem == key:
                     dark_bg, dark_fg, light_bg, light_fg = colors
                     bg = QColor(light_bg if light else dark_bg)
                     fg = QColor(light_fg if light else dark_fg)
@@ -1897,9 +1976,10 @@ class InfoPanelDialog(ThemedStyleMixin, QDialog):
             item0 = clone.item(r, 0)
             if not item0:
                 continue
-            cell_text = item0.text()
+            # By the row's modality KEY, never its label (INV-3).
+            key = item0.data(ITEM_KEY_ROLE)
             for mod, colors in self._MODALITY_COLORS.items():
-                if mod in cell_text:
+                if mod == key:
                     dark_bg, dark_fg, light_bg, light_fg = colors
                     bg = QColor(light_bg if light else dark_bg)
                     fg = QColor(light_fg if light else dark_fg)
@@ -1923,9 +2003,10 @@ class InfoPanelDialog(ThemedStyleMixin, QDialog):
             key_item = clone.item(r, planet_col)
             if not key_item:
                 continue
-            cell_text = key_item.text()
+            # By the row's planet KEY, never its label (INV-3).
+            key = key_item.data(ITEM_KEY_ROLE)
             for planet, colors in self._PLANET_COLORS_THEMED.items():
-                if planet in cell_text:
+                if planet == key:
                     dark_bg, dark_fg, light_bg, light_fg = colors
                     bg = QBrush(QColor(light_bg if light else dark_bg))
                     fg = QBrush(QColor(light_fg if light else dark_fg))
@@ -2103,13 +2184,14 @@ class InfoPanelDialog(ThemedStyleMixin, QDialog):
                 ci = clone.item(r, c)
                 if not ci:
                     continue
-                colors = dignity_colors(ci.text())
+                code = ci.data(DIGNITY_CODE_ROLE)  # never the label (INV-3)
+                colors = dignity_colors(code)
                 if not colors:
                     continue
                 bg, fg = colors
                 ci.setBackground(QBrush(QColor(bg)))
                 ci.setForeground(QBrush(QColor(fg)))
-                if ci.text() in ("EX", "MT", "OH", "DB"):
+                if code in ("EX", "MT", "OH", "DB"):
                     ci.setFont(bold)
 
         from apps.delegates import RetinueColorDelegate
@@ -2182,7 +2264,7 @@ class InfoPanelDialog(ThemedStyleMixin, QDialog):
         """)
 
         # Title
-        title = QLabel("")
+        title = QLabel("THE FIVE BEING TYPES  \u00b7  Srimad Bhagavatam 12.11.33-44")
         # SPEC-THM-001 G05: live theme color (was frozen TEXT_PRIMARY).
         # O-6: font-size + weight + Inter family in QSS.
         title.setStyleSheet(
@@ -2191,18 +2273,14 @@ class InfoPanelDialog(ThemedStyleMixin, QDialog):
             f'font-family: "Inter";')
         legend_layout.addWidget(title)
 
-        # Being descriptions
+        # Colour key only: being name + planet / element (the interpretive
+        # descriptions were removed from the LTS branch, legal cleanup 2026-10-12).
         beings = [
-            ("Gandharva", "Mars / Fire",
-             ""),
-            ("Rakshasa", "Saturn / Air",
-             ""),
-            ("Rishi", "Jupiter / Ether",
-             ""),
-            ("Yaksha", "Mercury / Earth",
-             ""),
-            ("Apsara", "Venus / Water",
-             ""),
+            ("Gandharva", "Mars / Fire"),
+            ("Rakshasa", "Saturn / Air"),
+            ("Rishi", "Jupiter / Ether"),
+            ("Yaksha", "Mercury / Earth"),
+            ("Apsara", "Venus / Water"),
         ]
 
         row_widget = QWidget()
@@ -2210,7 +2288,7 @@ class InfoPanelDialog(ThemedStyleMixin, QDialog):
         row_layout.setContentsMargins(0, 0, 0, 0)
         row_layout.setSpacing(6)
 
-        for name, planet_element, desc in beings:
+        for name, planet_element in beings:
             bg_hex, fg_hex = self._pick_colors(self._BEING_TYPE_COLORS_THEMED, name)
 
             item = QWidget()
@@ -2233,30 +2311,11 @@ class InfoPanelDialog(ThemedStyleMixin, QDialog):
                 f'font-family: "Inter";')
             item_layout.addWidget(name_label)
 
-            desc_label = QLabel(desc)
-            desc_label.setWordWrap(True)
-            desc_label.setStyleSheet(f"color: {fg_hex}; font-size: {tier_px('info_text', 9)}px; border: none; background: transparent;")
-            item_layout.addWidget(desc_label)
-
             row_layout.addWidget(item)
 
         row_widget.setStyleSheet("border: none; background: transparent;")
         legend_layout.addWidget(row_widget)
 
-        # Hora side summary
-        sides_layout = QHBoxLayout()
-        sides_layout.setSpacing(20)
-
-        aditya_label = QLabel("")
-        aditya_label.setStyleSheet(f"color: #FFD54F; font-size: {tier_px('info_text', 9)}px; font-weight: bold; border: none; background: transparent;")
-        sides_layout.addWidget(aditya_label)
-
-        naga_label = QLabel("")
-        naga_label.setStyleSheet(f"color: #80DEEA; font-size: {tier_px('info_text', 9)}px; font-weight: bold; border: none; background: transparent;")
-        sides_layout.addWidget(naga_label)
-
-        sides_layout.addStretch()
-        legend_layout.addLayout(sides_layout)
 
         return legend
 
@@ -2324,12 +2383,22 @@ def open_panel_dialog(gui, section_key, initial_attr=None):
     visibility. Ensure each one exists, then force a direct _refresh() so
     the cloned widgets are populated.
     """
+    # SPEC-LAYOUT-001 B.6: a folded panel's controllers are held (its tables
+    # still show the previous chart), so every section refreshes its sources.
+    if section_key == "karakas":
+        for name in ("karakas", "hora", "trimsamsa"):
+            ctrl = getattr(gui, f'{name}_controller', None)
+            if ctrl is not None:
+                ctrl._refresh()
     if section_key == "strength":
         for name in ("strength", "elements", "modality", "dignities"):
             ctrl = getattr(gui, f'{name}_controller', None)
             if ctrl is not None:
                 ctrl._refresh()
     if section_key == "aspects":
+        ctrl = getattr(gui, 'aspects_controller', None)
+        if ctrl is not None:
+            ctrl._refresh()
         for name in ("avastha", "shame", "interchange",
                      "tajika_matrix", "tajika_relationships", "tajika_yogas"):
             if hasattr(gui, '_ensure_controller'):
@@ -2343,6 +2412,8 @@ def open_panel_dialog(gui, section_key, initial_attr=None):
         initial_attr = current_subtab_attr(gui, section_key)
 
     dlg = InfoPanelDialog(gui, section_key, parent=gui, initial_attr=initial_attr)
+    from apps.widgets.panel_controllers.duc_method import follow_panel_dialog
+    follow_panel_dialog(dlg, gui, section_key)   # DUC Bala method (td-7zu14)
 
     # SPEC-THM-002 §6.4 / D-7: register the dialog so a theme switch reaches it.
     # WEAKREF, not the dialog itself: a strong reference here would pin every

@@ -11,6 +11,7 @@ AVAILABLE_THEMES = [
     ("dark_purple.xml", "Dark Purple", True, ["#9C27B0", "#6A1B9A", "#EA80FC"]),
     ("dark_red.xml", "Dark Red", True, ["#F44336", "#C62828", "#FF8A80"]),
     ("dark_yellow.xml", "Dark Yellow", True, ["#FFEB3B", "#F9A825", "#FFFF8D"]),
+    ("dark_orange.xml", "Dark Orange", True, ["#FF9800", "#F57C00", "#FFCC80"]),
     # Light themes
     ("light_teal.xml", "Light Teal", False, ["#009688", "#00BFA5", "#B2DFDB"]),
     ("light_blue.xml", "Light Blue", False, ["#2196F3", "#1976D2", "#BBDEFB"]),
@@ -26,3 +27,54 @@ AVAILABLE_THEMES = [
 
 THEME_NAME_TO_FILE = {name: fname for fname, name, _, _ in AVAILABLE_THEMES}
 THEME_FILE_TO_NAME = {fname: name for fname, name, _, _ in AVAILABLE_THEMES}
+
+
+# Themes qt-material does not ship (it has light_orange but no dark_orange).
+# Kept as data here, not as a .xml in the tree, so no build allowlist has to
+# learn a new file: bundled_theme_path() writes the XML into the user data
+# dir on first use and hands qt-material that absolute path.
+BUNDLED_THEME_COLORS = {
+    # Light Orange's card accent in the standard qt-material dark ground.
+    "dark_orange.xml": {
+        "primaryColor": "#ff9800",
+        "primaryLightColor": "#ffc947",
+        "secondaryColor": "#232629",
+        "secondaryLightColor": "#4f5b62",
+        "secondaryDarkColor": "#31363b",
+        "primaryTextColor": "#ffffff",
+        "secondaryTextColor": "#ffffff",
+    },
+}
+
+
+def bundled_theme_path(theme_file):
+    """Absolute path to a generated XML for a theme qt-material lacks, or
+    None when ``theme_file`` is not one of ours. The file name keeps its
+    dark_/light_ prefix because qt-material reads light/dark off the path."""
+    import os
+    colors = BUNDLED_THEME_COLORS.get(os.path.basename(str(theme_file)))
+    if colors is None:
+        return None
+    try:
+        from state.user_data import get_user_data_dir
+        out_dir = os.path.join(str(get_user_data_dir() or "."), "bundled_themes")
+        os.makedirs(out_dir, exist_ok=True)
+        path = os.path.join(out_dir, os.path.basename(str(theme_file)))
+        xml = ('<!--?xml version="1.0" encoding="UTF-8"?-->\n<resources>\n'
+               + "".join(f'  <color name="{k}">{v}</color>\n'
+                         for k, v in colors.items())
+               + "</resources>\n")
+        try:
+            with open(path, encoding="utf-8") as handle:
+                if handle.read() == xml:
+                    return path
+        except OSError:
+            pass
+        import tempfile
+        fd, tmp = tempfile.mkstemp(dir=out_dir, suffix=".tmp")
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(xml)
+        os.replace(tmp, path)          # atomic: Lite and full share the dir
+        return path
+    except Exception:
+        return None

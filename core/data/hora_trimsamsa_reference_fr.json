@@ -1,0 +1,287 @@
+{
+  "meta": {
+    "source": "Being names (labels only) for each Hora and Trimsamsa. No descriptions on this branch.",
+    "version": 2,
+    "language": "fr"
+  },
+  "horas": {
+    "Dhata": {
+      "aditya": {},
+      "naga": {
+        "name": "Vasuki"
+      }
+    },
+    "Aryama": {
+      "aditya": {},
+      "naga": {
+        "name": "Kachanira"
+      }
+    },
+    "Mitra": {
+      "aditya": {},
+      "naga": {
+        "name": "Takshaka"
+      }
+    },
+    "Varuna": {
+      "aditya": {},
+      "naga": {
+        "name": "Shukra"
+      }
+    },
+    "Indra": {
+      "aditya": {},
+      "naga": {
+        "name": "Elapatra"
+      }
+    },
+    "Vivasvan": {
+      "aditya": {},
+      "naga": {
+        "name": "Shankhapala"
+      }
+    },
+    "Tvasta": {
+      "aditya": {},
+      "naga": {
+        "name": "Kambala"
+      }
+    },
+    "Vishnu": {
+      "aditya": {},
+      "naga": {
+        "name": "Ashvatara"
+      }
+    },
+    "Amzu": {
+      "aditya": {},
+      "naga": {
+        "name": "Mahashankha"
+      }
+    },
+    "Bhaga": {
+      "aditya": {},
+      "naga": {
+        "name": "Karkotaka"
+      }
+    },
+    "Pusha": {
+      "aditya": {},
+      "naga": {
+        "name": "Dhananjaya"
+      }
+    },
+    "Parjanya": {
+      "aditya": {},
+      "naga": {
+        "name": "Airavata"
+      }
+    }
+  },
+  "trimsamsas": {
+    "Dhata": {
+      "gandharva": {
+        "name": "Tumburu"
+      },
+      "rakshasa": {
+        "name": "Heti"
+      },
+      "rishi": {
+        "name": "Pulastya"
+      },
+      "yaksha": {
+        "name": "Rathakrit"
+      },
+      "apsara": {
+        "name": "Kritasthali"
+      }
+    },
+    "Aryama": {
+      "gandharva": {
+        "name": "Narada"
+      },
+      "rakshasa": {
+        "name": "Praheti"
+      },
+      "rishi": {
+        "name": "Pulaha"
+      },
+      "yaksha": {
+        "name": "Athauja"
+      },
+      "apsara": {
+        "name": "Punjikasthali"
+      }
+    },
+    "Mitra": {
+      "gandharva": {
+        "name": "Haha"
+      },
+      "rakshasa": {
+        "name": "Pauruseya"
+      },
+      "rishi": {
+        "name": "Atri"
+      },
+      "yaksha": {
+        "name": "Rathasvana"
+      },
+      "apsara": {
+        "name": "Menaka"
+      }
+    },
+    "Varuna": {
+      "gandharva": {
+        "name": "Huhu"
+      },
+      "rakshasa": {
+        "name": "Citrasvana"
+      },
+      "rishi": {
+        "name": "Vasishtha"
+      },
+      "yaksha": {
+        "name": "Rathacitra"
+      },
+      "apsara": {
+        "name": "Sahajanya"
+      }
+    },
+    "Indra": {
+      "gandharva": {
+        "name": "Vishvashu"
+      },
+      "rakshasa": {
+        "name": "Varya"
+      },
+      "rishi": {
+        "name": "Angiras"
+      },
+      "yaksha": {
+        "name": "Shruta"
+      },
+      "apsara": {
+        "name": "Pramlocha"
+      }
+    },
+    "Vivasvan": {
+      "gandharva": {
+        "name": "Ugrasena"
+      },
+      "rakshasa": {
+        "name": "Vyaghra"
+      },
+      "rishi": {
+        "name": "Bhrigu"
+      },
+      "yaksha": {
+        "name": "Asarana"
+      },
+      "apsara": {
+        "name": "Anumloca"
+      }
+    },
+    "Tvasta": {
+      "gandharva": {
+        "name": "Dhritarashtra"
+      },
+      "rakshasa": {
+        "name": "Brahmapeta"
+      },
+      "rishi": {
+        "name": "Jamadagni"
+      },
+      "yaksha": {
+        "name": "Shatajit"
+      },
+      "apsara": {
+        "name": "Tilottama"
+      }
+    },
+    "Vishnu": {
+      "gandharva": {
+        "name": "Suryavarcas"
+      },
+      "rakshasa": {
+        "name": "Makhapeta"
+      },
+      "rishi": {
+        "name": "Vishvamitra"
+      },
+      "yaksha": {
+        "name": "Satyajit"
+      },
+      "apsara": {
+        "name": "Rambha"
+      }
+    },
+    "Amzu": {
+      "gandharva": {
+        "name": "Ritasena"
+      },
+      "rakshasa": {
+        "name": "Vidyucchatru"
+      },
+      "rishi": {
+        "name": "Kashyapa"
+      },
+      "yaksha": {
+        "name": "Tarkshya"
+      },
+      "apsara": {
+        "name": "Urvashi"
+      }
+    },
+    "Bhaga": {
+      "gandharva": {
+        "name": "Urna"
+      },
+      "rakshasa": {
+        "name": "Sphurja"
+      },
+      "rishi": {
+        "name": "Ayu"
+      },
+      "yaksha": {
+        "name": "Arishtanemi"
+      },
+      "apsara": {
+        "name": "Purvachitti"
+      }
+    },
+    "Pusha": {
+      "gandharva": {
+        "name": "Suruci"
+      },
+      "rakshasa": {
+        "name": "Vata"
+      },
+      "rishi": {
+        "name": "Gautama"
+      },
+      "yaksha": {
+        "name": "Sushena"
+      },
+      "apsara": {
+        "name": "Ghritaci"
+      }
+    },
+    "Parjanya": {
+      "gandharva": {
+        "name": "Vishvavasu"
+      },
+      "rakshasa": {
+        "name": "Varca"
+      },
+      "rishi": {
+        "name": "Bharadvaja"
+      },
+      "yaksha": {
+        "name": "Senajit"
+      },
+      "apsara": {
+        "name": "Vishvaci"
+      }
+    }
+  }
+}

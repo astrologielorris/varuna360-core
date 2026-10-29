@@ -20,15 +20,15 @@ from PySide6.QtCore import Qt
 
 from state import PanelControllerBase
 
-_ROW_PLANETS = ["Sun", "Moon", "Mars", "Mercury", "Jupiter", "Venus", "Saturn"]
-_COL_PLANETS = ["Sun", "Moon", "Mars", "Mercury", "Jupiter", "Venus", "Saturn", "Rahu", "Ketu"]
-
 
 class AspectsController(PanelControllerBase):
     """Subscribes to active_chart + aditya_mode events."""
 
     def __init__(self, gui):
         super().__init__(gui=gui, lazy=False)
+        # The chart the table currently shows (None = not rendered): the AI
+        # capture marks the region 'stale' otherwise (SPEC-AIC-001 INV-2).
+        self.rendered_chart = None
 
     def _on_chart_changed(self):
         self._refresh()
@@ -49,58 +49,24 @@ class AspectsController(PanelControllerBase):
             return
 
         gui.aspects_table.clearContents()
+        self.rendered_chart = None
 
         try:
-            from AI_tools.analysis.AI_aspects import calculate_all_aspects
-
-            aspects_data = calculate_all_aspects(base_planets)
-
-            aspect_lookup = {}
-            for asp in aspects_data.get("aspects", []):
-                key = (asp["aspecting"], asp["aspected"])
-                aspect_lookup[key] = asp["virupas"]
-
-            # Build sign lookup from Chart for Yuti detection
-            sign_lookup = {}
-            rashi = chart.rashi()
-            rashi_planets = rashi.planets()
-            for planet_name in _COL_PLANETS:
-                try:
-                    p = rashi_planets[planet_name]
-                    sign_lookup[planet_name] = p.sign_name()
-                except (KeyError, TypeError):
-                    pass
-
-            highlight_cells = set()
-
-            for row_idx, aspecting in enumerate(_ROW_PLANETS):
-                for col_idx, aspected in enumerate(_COL_PLANETS):
-                    if aspecting == aspected:
-                        item = QTableWidgetItem("-")
-                        item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                        gui.aspects_table.setItem(row_idx, col_idx, item)
-                    else:
-                        asp_sign = sign_lookup.get(aspecting, "")
-                        ted_sign = sign_lookup.get(aspected, "")
-                        if asp_sign and ted_sign and asp_sign == ted_sign:
-                            item = QTableWidgetItem("Y")
-                            item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                            highlight_cells.add((row_idx, col_idx))
-                        else:
-                            vr = aspect_lookup.get((aspecting, aspected), 0)
-                            if vr >= 45:
-                                item = QTableWidgetItem(f"{vr:.0f}")
-                                highlight_cells.add((row_idx, col_idx))
-                            elif vr > 0:
-                                item = QTableWidgetItem(f"{vr:.0f}")
-                            else:
-                                item = QTableWidgetItem(".")
-                            item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                        gui.aspects_table.setItem(row_idx, col_idx, item)
+            # One calculation for panel, CLI and MCP (SPEC-AIC-001 INV-1):
+            # core/capabilities/karakas_aspects.aspect_matrix is get_aspects.
+            from core.capabilities.karakas_aspects import aspect_matrix
+            grid = aspect_matrix(base_planets)
+            for row_idx, row in enumerate(grid["cells"]):
+                for col_idx, text in enumerate(row):
+                    item = QTableWidgetItem(text)
+                    item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                    gui.aspects_table.setItem(row_idx, col_idx, item)
+            highlight_cells = {tuple(rc) for rc in grid["highlight"]}
 
             if hasattr(gui, "aspects_delegate"):
                 gui.aspects_delegate.update_highlights(highlight_cells)
                 gui.aspects_table.viewport().update()
+            self.rendered_chart = chart
 
         except Exception as e:
             import traceback

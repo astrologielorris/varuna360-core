@@ -1,8 +1,13 @@
 # Copyright (C) 2026 Lorris Turpin / 360 Hearts in the Sky
 # Licensed under AGPL-3.0 — see LICENSE file for details.
 """
-Status-bar chart chrome — the position-ORDER control (and, from WI-3, the
-fullscreen button). SPEC-FSV-001.
+Status-bar chart chrome: the captioned action pills (AI capture, AI readings,
+AI setting, AI search) and the fullscreen button. SPEC-FSV-001.
+
+The position-ORDER pill described below was removed from the status bar on
+2026-10-19 (Lorris: not good enough there; the AI search pill takes the
+space). The order stays in Settings, the Placements dialog and the Cards of
+Truth view, all on ``cot.planet_order``. The history is kept for context.
 
 Why this module exists
 ----------------------
@@ -32,22 +37,31 @@ failure ``ThemedStyleMixin._register_themed`` exists to prevent (SPEC-THM-001)
 ``_on_theme_changed -> _refresh_attr('status_order_button')``.
 """
 
-import weakref
 
 from PySide6.QtCore import QRectF, QSize, Qt
 from PySide6.QtGui import QBrush, QColor, QFont, QFontMetrics, QPainter, QPen
 from PySide6.QtWidgets import QWidget
 
-from apps.widgets.cot_index_item import COT_ORDER_KEY, read_persisted_order
-from core.cards_of_truth_data import ORDER_LABELS
+
+# Partner reading pill (SPEC-PRT-001 §4.3.1): semantic red, a Rule 20
+# exception like red/green, beside the GOLD hairline the other pills use.
+# White caption on both (contrast >= 4.5:1).
+PARTNER_RED_LIGHT = "#B71C1C"
+PARTNER_RED_DARK = "#C62828"
+
+
+def partner_red():
+    """The partner pill red for the current theme (by theme luminance)."""
+    from ui.qt_theme import is_light_theme
+    return PARTNER_RED_LIGHT if is_light_theme() else PARTNER_RED_DARK
 
 
 class _StatusPill(QWidget):
     """A small painted pill for ``QMainWindow.statusBar().addPermanentWidget``.
 
     Subclasses supply ``_text()`` (the pill's label or glyph) and ``_activate()``
-    (the click action). The paint, hover and sizing are shared so the ORDER pill
-    and the fullscreen pill cannot drift into two different-looking chips.
+    (the click action). The paint, hover and sizing are shared so the action pills
+    and the fullscreen pill cannot drift into different-looking chips.
     """
 
     PAD_X = 12
@@ -59,6 +73,9 @@ class _StatusPill(QWidget):
     # when clipped; a glyph subclass (fullscreen) sets this False — a symbol is
     # one cell wide, must never be elided, and owns a fixed help tooltip.
     ELIDE = True
+    # A help tooltip assigned with setToolTip (the AI setting pill's approved
+    # tip): the elision never clears or replaces it (W6c review F4).
+    _help_tip = None
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -67,6 +84,11 @@ class _StatusPill(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setMouseTracking(True)
         self._apply_min_height()
+
+    def setToolTip(self, tip):
+        """An explicit help tooltip: kept through every paint."""
+        self._help_tip = tip or None
+        QWidget.setToolTip(self, tip)
 
     # -- subclass hooks ---------------------------------------------------
 
@@ -89,7 +111,10 @@ class _StatusPill(QWidget):
         f = QFont("Inter")
         f.setPixelSize(max(6, scaled_tier_size(10.0, 'status')))
         f.setWeight(QFont.Weight.Bold)
-        f.setCapitalization(QFont.Capitalization.AllUppercase)
+        # Normal case (AI setting redesign, td-bztjj item 9, Lorris
+        # 2026-10-11): every pill shows its caption as written. Set explicitly
+        # so a theme's ``text-transform: uppercase`` never resolves into it.
+        f.setCapitalization(QFont.Capitalization.MixedCase)
         f.setLetterSpacing(QFont.SpacingType.PercentageSpacing, 112)
         return f
 
@@ -145,7 +170,8 @@ class _StatusPill(QWidget):
 
     # -- painting ---------------------------------------------------------
 
-    def paintEvent(self, _event):
+    def _pill_colors(self):
+        """(fill, border, ink) read live from the theme; a subclass may tint."""
         from ui.qt_theme import GOLD, get_theme_colors
 
         colors = get_theme_colors()
@@ -156,6 +182,10 @@ class _StatusPill(QWidget):
         ink = QColor(colors["primary_text"])
         if not self._hover:
             ink.setAlphaF(0.80)
+        return fill, border, ink
+
+    def paintEvent(self, _event):
+        fill, border, ink = self._pill_colors()
 
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -170,11 +200,13 @@ class _StatusPill(QWidget):
         if self.ELIDE:
             # Fit-or-elide (FIX-1): draw as much of the caption as the width
             # holds; when clipped, show the full caption in a tooltip instead of
-            # slicing a glyph mid-stroke. A caption pill never has its own
-            # tooltip, so setting/clearing it here is safe. _text_avail is THE
-            # shared width computation sizeHint and the oracle also use.
+            # slicing a glyph mid-stroke. A pill with its own help tooltip
+            # (setToolTip) keeps it: elision only owns the tooltip of a pill
+            # without one. _text_avail is THE shared width computation
+            # sizeHint and the oracle also use.
             shown = self._elided_text(self._text_avail(self.width()))
-            self.setToolTip(text if shown != text else "")
+            if self._help_tip is None:
+                QWidget.setToolTip(self, text if shown != text else "")
             text = shown
         p.drawText(rect, Qt.AlignmentFlag.AlignCenter, text)
         p.end()
@@ -231,63 +263,8 @@ class _StatusPill(QWidget):
         super().mouseDoubleClickEvent(event)
 
 
-class StatusOrderButton(_StatusPill):
-    """The always-visible position-order control — SAFE PLAN-1 WI-2.
-
-    One control, one home, on all five chart pages. Unlike the retired viewport
-    pill it does NOT gate on ``cot.show_in_chart``: it is always shown, because
-    the order also drives the Cards of Truth page (page 4) which is not governed
-    by that setting, and because users must never have to hunt for it.
-    """
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-
-        # WEAK, per apps/widgets/cot_index_item's module docstring:
-        # SettingsManager.on_changed keeps its callbacks for the life of the
-        # process and never unsubscribes, so a strong closure over ``self``
-        # would pin this widget. It lives as long as the main window anyway,
-        # but the weak pattern is the house convention and costs nothing.
-        _ref = weakref.ref(self)
-
-        def _order_hook(_key, _value, _ref=_ref):
-            button = _ref()
-            if button is not None:
-                button._on_order_changed()
-
-        self._order_hook = _order_hook
-        try:
-            from managers.settings_manager import get_settings
-            get_settings().on_changed(COT_ORDER_KEY, _order_hook)
-        except Exception:                                # noqa: BLE001
-            pass
-
-    def _text(self):
-        order = read_persisted_order()
-        return f"Order · {ORDER_LABELS.get(order, order)}"
-
-    def _on_order_changed(self):
-        try:
-            # "Solar System" and "Week Day" differ in width, so the status bar
-            # must re-lay-out, not just repaint.
-            self.updateGeometry()
-            self.update()
-        except RuntimeError:
-            pass
-
-    def _activate(self):
-        current = read_persisted_order()
-        try:
-            from managers.settings_manager import get_settings
-            get_settings().set(
-                COT_ORDER_KEY,
-                "vedic" if current == "solar_system" else "solar_system")
-        except Exception as e:                           # noqa: BLE001
-            print(f"[FSV] Warning: could not switch the position order: {e}")
-
-
 class StatusFullscreenButton(_StatusPill):
-    """The fullscreen toggle — SAFE PLAN-1 WI-3, right of the ORDER pill.
+    """The fullscreen toggle — SAFE PLAN-1 WI-3, at the right of the pills.
 
     A glyph pill, the mouse equivalent of the app-wide ``F`` key: both call the
     same ``ViewFloatManager`` toggle. Always visible on all five chart pages.
@@ -319,3 +296,49 @@ class StatusFullscreenButton(_StatusPill):
             self._on_toggle()
         except Exception as e:                           # noqa: BLE001
             print(f"[FSV] Warning: fullscreen toggle failed: {e}")
+
+
+class StatusCaptureButton(_StatusPill):
+    """A captioned action pill: AI capture (SPEC-AIC-001 D-10), AI readings,
+    AI setting, AI search (SPEC-FIND-006 §4.3): the mouse entry point to the
+    action ``on_capture`` runs."""
+
+    def __init__(self, caption, on_capture, parent=None, keep_case=False):
+        # ``keep_case``: draw the caption in its own case instead of the pill
+        # recipe's uppercase (the AI setting pill shows its approved words
+        # exactly as approved, D-21, Lorris 2026-10-10). Set before the base
+        # init, which measures the font.
+        self._keep_case = bool(keep_case)
+        super().__init__(parent)
+        self._caption = caption
+        self._on_capture = on_capture
+
+    def _font(self):
+        f = super()._font()
+        if self._keep_case:
+            f.setCapitalization(QFont.Capitalization.MixedCase)
+        return f
+
+    def _text(self):
+        return self._caption
+
+    def _activate(self):
+        try:
+            self._on_capture()
+        except Exception as e:                           # noqa: BLE001
+            print(f"[AIC] Warning: capture failed to start: {e}")
+
+
+class StatusPartnerButton(StatusCaptureButton):
+    """The red partner reading pill (SPEC-PRT-001 §4.3.1), right of the AI
+    pills: same recipe, filled with the theme's partner red, white caption."""
+
+    def __init__(self, caption, on_open, parent=None):
+        super().__init__(caption, on_open, parent, keep_case=True)
+
+    def _pill_colors(self):
+        fill = QColor(partner_red())
+        border = QColor(fill).darker(130 if self._hover else 115)
+        if self._hover:
+            fill = fill.lighter(112)
+        return fill, border, QColor("#FFFFFF")

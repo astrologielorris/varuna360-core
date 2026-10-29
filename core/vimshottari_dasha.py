@@ -38,16 +38,20 @@ LENGTH = 1
 # Default year length (Saura year)
 DEFAULT_YEAR_LENGTH = 365.2422
 
-# Dasha year lengths (SPEC-DSH-003). The four Kala offers under "Dasa Length",
-# three from the Surya Siddhanta plus the sidereal year; values are the
-# libaditya constants (libaditya/constants.py dasha_years). Kala's default and
-# ours is Saura. A Kala profile switched to Nakshatra (359.0167) drifts from a
-# Saura run by ~6.2 days per dasha year, i.e. about 3 months by age 15.
+# Dasha year lengths (SPEC-DSH-003): the six Kala offers under "Year Length",
+# for nakshatra dashas and for rasi dashas alike, with the values Kala computes
+# with (its screen rounds Sidereal to 365.2564 and Chandra to 364.2888). Kala's
+# default and ours is Saura. A Kala profile switched to Nakshatra (359.0167)
+# drifts from a Saura run by ~6.2 days per dasha year, about 3 months by age 15.
+# Sidereal: the Sun's return to the same star, "365.25 six four days" in
+# Freedom Cole, Rasi Lecture 2/7 (SJC class 2016-02-04, 26:18).
 YEAR_LENGTHS = {
-    "saura": 365.2422,      # Sun through the tropics
-    "savana": 360.0,        # 360 sunrises
-    "nakshatra": 359.0167,  # 360 earthly (sidereal) rotations
-    "sidereal": 365.2564,   # sidereal year
+    "saura": 365.2422,        # Sun through the tropics
+    "savana": 360.0,          # 360 sunrises
+    "nakshatra": 359.0167,    # 360 earthly (sidereal) rotations
+    "sidereal": 365.256374,   # sidereal year (Sun back to the same star)
+    "chandra": 364.2888208,   # 360 nakshatras (Moon days)
+    "lunar": 354.36708,       # 360 tithis
 }
 DEFAULT_YEAR_LENGTH_KEY = "saura"
 YEAR_LENGTH_LABELS = {
@@ -55,6 +59,8 @@ YEAR_LENGTH_LABELS = {
     "savana": "Savana (360 d, sunrises)",
     "nakshatra": "Nakshatra (359.0167 d, sidereal rotations)",
     "sidereal": "Sidereal (365.2564 d)",
+    "chandra": "Chandra (364.2888 d, 360 nakshatras)",
+    "lunar": "Lunar (354.36708 d, 360 tithis)",
 }
 
 
@@ -130,8 +136,9 @@ def get_nakshatra_for_longitude(tropical_long, jd, ayanamsa=99, **_ignored):
     elif ayanamsa == 999:
         long = tropical_long
 
-    elif 0 <= ayanamsa <= 46:
-        swe.set_sid_mode(ayanamsa)
+    elif 0 <= ayanamsa <= 46 or ayanamsa == 255:   # 255: custom (Settings)
+        from libaditya.custom_ayanamsa import apply_sid_mode
+        apply_sid_mode(ayanamsa)
         ayanamsa_val = swe.get_ayanamsa_ut(jd)
         long = (tropical_long - ayanamsa_val) % 360
 
@@ -184,19 +191,71 @@ def _build_moon(jd_ut, ayanamsa, utcoffset=0.0, nak_mode="neither"):
     return LibMoon(ctx)
 
 
-def get_moon_nakshatra_bridge(jd_ut, ayanamsa=98):
+def _ecliptic_dhruva_seed(moon_jd_ut):
+    """Ayanamsa 98 + "neither": the Moon's distance from Ashvini with the
+    ECLIPTIC Galactic Center zero point (no libaditya equivalent; Kala's
+    "Neither"). Returns (ashvini_longitude, nakshatra_index)."""
+    gc_ecl = swe.fixstar(",SgrA*", moon_jd_ut)[0][0]
+    ashvini = gc_ecl - (NAKSIZE / 2) - (18 * NAKSIZE)
+    ecl_moon = swe.calc_ut(moon_jd_ut, swe.MOON)[0][0]
+    if ecl_moon < ashvini:
+        ecl_moon += 360
+    ash_long = ecl_moon - ashvini
+    return ash_long, int(ash_long / NAKSIZE) % 27
+
+
+def dasha_moon_seed(moon_jd_ut, ayanamsa=98, nak_mode="neither"):
+    """The Moon nakshatra that seeds the Vimshottari periods
+    (``calculate_vimshottari_dasha``), for the same ayanamsa and nakshatra
+    coordinates: (ashvini_longitude, nakshatra_index)."""
+    if ayanamsa == 98 and nak_mode != "equatorial":
+        return _ecliptic_dhruva_seed(moon_jd_ut)
+    nak = _build_moon(moon_jd_ut, ayanamsa, nak_mode=nak_mode).nakshatra()
+    return nak.ashvini_longitude(), nak.index()
+
+
+def get_moon_nakshatra_bridge(jd_ut, ayanamsa=98, nak_mode="neither"):
     """Get Moon nakshatra via libaditya (replaces get_moon_nakshatra).
+
+    The SAME seed the periods use (``dasha_moon_seed``): the nakshatra
+    coordinates matter (equatorial Vedanga 100 vs ecliptic 99), and ayanamsa
+    98 outside equatorial mode is the ecliptic Galactic Center zero point.
 
     Args:
         jd_ut: Julian Day in UT
         ayanamsa: ayanamsa ID (98, 99, 100, 0-46, 999)
+        nak_mode: "neither" (default) or "equatorial" (zodiac.nakshatra_coords)
 
     Returns:
         (ashvini_longitude, nakshatra_index)
     """
-    moon = _build_moon(jd_ut, ayanamsa)
-    nak = moon.nakshatra()
-    return nak.ashvini_longitude(), nak.index()
+    return dasha_moon_seed(jd_ut, ayanamsa, nak_mode)
+
+
+def local_birth_jd(year, month, day, hour, minute, second=0):
+    """The LOCAL-time Julian Day the periods are dated from (app calendar
+    rule: Julian before 1582-10-15)."""
+    hour_decimal = hour + minute / 60.0 + second / 3600.0
+    return swe.julday(year, month, day, hour_decimal,
+                      get_calendar_flag(year, month, day))
+
+
+def moon_seed_jd_ut(birth_jd_local, tz_offset_hours=0, moon_jd_override=None):
+    """The UT Julian Day of the Moon that seeds the periods: the override
+    (the Human Design Design date) when given, else the local birth JD minus
+    the UTC offset. The one rule for the periods and any header showing their
+    seed."""
+    if moon_jd_override is not None:
+        return moon_jd_override
+    return birth_jd_local - tz_offset_hours / 24.0
+
+
+def dasha_moon_jd_ut(year, month, day, hour, minute, second=0,
+                     tz_offset_hours=0, moon_jd_override=None):
+    """``moon_seed_jd_ut`` of local birth fields, exactly as
+    ``calculate_dasha_from_birth_data`` seeds its periods."""
+    return moon_seed_jd_ut(local_birth_jd(year, month, day, hour, minute, second),
+                           tz_offset_hours, moon_jd_override)
 
 
 def calculate_vimshottari_dasha(birth_jd, dlevels=1, yrlen=DEFAULT_YEAR_LENGTH,
@@ -232,22 +291,13 @@ def calculate_vimshottari_dasha(birth_jd, dlevels=1, yrlen=DEFAULT_YEAR_LENGTH,
     if isinstance(birth_jd, float):
         birth_jd = JulianDay(birth_jd)
 
-    if moon_jd_override is not None:
-        moon_jd_ut = moon_jd_override
-    else:
-        moon_jd_ut = birth_jd.jd - tz_offset_hours / 24.0
+    moon_jd_ut = moon_seed_jd_ut(birth_jd.jd, tz_offset_hours, moon_jd_override)
 
     # Ayanamsa 98 + "neither" mode: ecliptic Dhruva (no libaditya equivalent).
     # Compute Moon nakshatra with ecliptic GC zero-point, then use libaditya's
     # calc_vdasha for the tree. This matches Kala's "Neither" setting.
     if ayanamsa == 98 and nak_mode != "equatorial":
-        gc_ecl = swe.fixstar(",SgrA*", moon_jd_ut)[0][0]
-        ashvini = gc_ecl - (NAKSIZE / 2) - (18 * NAKSIZE)
-        ecl_moon = swe.calc_ut(moon_jd_ut, swe.MOON)[0][0]
-        if ecl_moon < ashvini:
-            ecl_moon += 360
-        ash_long = ecl_moon - ashvini
-        nindex = int(ash_long / NAKSIZE) % 27
+        ash_long, nindex = _ecliptic_dhruva_seed(moon_jd_ut)
         elapsed_frac = (ash_long - nindex * NAKSIZE) / NAKSIZE
         lib_first = nindex % 9
         years_elapsed = DASHAS[lib_first][LENGTH] * elapsed_frac
@@ -285,21 +335,25 @@ def calculate_vimshottari_dasha(birth_jd, dlevels=1, yrlen=DEFAULT_YEAR_LENGTH,
 
 
 def format_dasha_for_display(dasha_data, birth_jd, max_periods=200, today_jd=None,
-                             date_format=None, convention=None):
+                             date_format=None, convention=None, birth_ymd=None):
     """
     Format dasha data for hierarchical GUI display
 
     Args:
         dasha_data: Output from calculate_vimshottari_dasha()
-        birth_jd: Birth Julian Day
+        birth_jd: Birth Julian Day (local time, as calculate_vimshottari_dasha)
         max_periods: Maximum number of periods to display
         today_jd: Current Julian Day for marking active dasha (defaults to today)
+        birth_ymd: the birth (year, month, day) the age column counts from;
+            None reads it off birth_jd. The age is the Dasha panel's own
+            ``core.dasha_age.age_text`` ("22y 2m", completed months with the
+            day borrow), never a fractional-year estimate (review round 17).
 
     Returns:
         List of dicts with hierarchical dasha information
     """
     # Extract components
-    age = dasha_data.pop()
+    dasha_data.pop()            # the starting age: the age column uses age_text
     first_dasha = dasha_data.pop()
     periods = dasha_data
 
@@ -307,6 +361,11 @@ def format_dasha_for_display(dasha_data, birth_jd, max_periods=200, today_jd=Non
 
     if isinstance(birth_jd, float):
         birth_jd = JulianDay(birth_jd)
+    if birth_ymd is None:
+        from core.time_utils import display_revjul
+        _by, _bm, _bd, _bh = display_revjul(birth_jd.jd, "astronomical")
+        birth_ymd = (int(_by), int(_bm), int(_bd))
+    from core.dasha_age import age_text
 
     # Calculate today's Julian Day for current dasha detection
     if today_jd is None:
@@ -318,7 +377,7 @@ def format_dasha_for_display(dasha_data, birth_jd, max_periods=200, today_jd=Non
         today_jd = JulianDay(today_jd)
 
     # Recursive function to flatten nested dasha structure
-    def flatten_dasha(dasha_list, dasha_indices, age, level=0):
+    def flatten_dasha(dasha_list, dasha_indices, level=0):
         """Recursively flatten nested dasha structure"""
         # Use dlist[level] like pydasha.py does - this is the KEY to correct sequence
         # At each level, use the dasha index AT that level from dasha_indices
@@ -343,16 +402,9 @@ def format_dasha_for_display(dasha_data, birth_jd, max_periods=200, today_jd=Non
             lord_names = [DASHAS[idx][LORD][:2] for idx in display_indices]
             display_lord = "/".join(lord_names)
 
-            # Format age (handle negative ages for birth dasha)
-            if age < 0:
-                abs_age = abs(age)
-                years = -int(abs_age)
-                months = -int((abs_age % 1) * 12)
-                age_str = f"{years}yrs {months}mts"
-            else:
-                years = int(age)
-                months = int((age % 1) * 12)
-                age_str = f"{years}yrs {months}mts"
+            # The age at the period start: the panel's function (negative for
+            # the periods of the birth dasha that began before birth).
+            age_str = age_text(start_jd.jd, birth_ymd)
 
             # Check if current active dasha (comparing against TODAY, not birth date)
             is_current = start_jd.jd <= today_jd.jd < (start_jd.jd + length_days)
@@ -371,19 +423,18 @@ def format_dasha_for_display(dasha_data, birth_jd, max_periods=200, today_jd=Non
 
             # Recursively process sub-dashas if they exist
             if sub_dashas and len(result) < max_periods:
-                flatten_dasha(sub_dashas, lord_chain, age, level + 1)
-
-            age += length_days / DEFAULT_YEAR_LENGTH
+                flatten_dasha(sub_dashas, lord_chain, level + 1)
 
     # Start flattening from top level
-    flatten_dasha(periods, [first_dasha], age, level=0)
+    flatten_dasha(periods, [first_dasha], level=0)
 
     return result[:max_periods]
 
 
 def calculate_sub_dashas_for_period(parent_start_jd, parent_end_jd, parent_lord,
                                     ayanamsa=98, tz_offset_hours=0,
-                                    date_format=None, convention=None):
+                                    date_format=None, convention=None,
+                                    now_jd_ut=None, birth_ymd=None):
     """
     Calculate only the sub-dashas within a specific parent period's time range.
     This is MUCH faster than calculating from birth and filtering.
@@ -395,6 +446,8 @@ def calculate_sub_dashas_for_period(parent_start_jd, parent_end_jd, parent_lord,
         ayanamsa: Ayanamsa number
         tz_offset_hours: UTC offset (same as birth data) so that is_current
             comparison uses the same local-time JD space as the dasha JDs.
+        birth_ymd: the birth (year, month, day) for the age column (the
+            panel's core.dasha_age.age_text); None leaves the age empty.
 
     Returns:
         Formatted list of 9 sub-dashas within parent period
@@ -453,10 +506,11 @@ def calculate_sub_dashas_for_period(parent_start_jd, parent_end_jd, parent_lord,
     # Dasha JDs are in the chart's local-time JD space (birth_jd uses local hour),
     # so today_jd must also be in local-time JD space for an accurate comparison,
     # especially at level 4/5 where periods are only hours long.
-    now = datetime.utcnow()
-    today_jd_utc = swe.julday(now.year, now.month, now.day,
-                              now.hour + now.minute/60 + now.second/3600)
-    today_jd = today_jd_utc + tz_offset_hours / 24.0
+    if now_jd_ut is None:
+        now = datetime.utcnow()
+        now_jd_ut = swe.julday(now.year, now.month, now.day,
+                               now.hour + now.minute/60 + now.second/3600)
+    today_jd = now_jd_ut + tz_offset_hours / 24.0
 
     # Generate 9 sub-periods in sequence
     for i in range(9):
@@ -482,11 +536,10 @@ def calculate_sub_dashas_for_period(parent_start_jd, parent_end_jd, parent_lord,
         date_str = format_display_date(current_jd, date_format, convention)
         time_str = f"{hour:02d}:{minute:02d}"
 
-        # Calculate age from parent start
-        age_days = current_jd - parent_start_jd
-        years = int(age_days / 365.25)
-        months = int((age_days % 365.25) / 30.44)
-        age_str = f"{years}yrs {months}mts"
+        # The age at the period start (the panel's function); none without
+        # the birth date.
+        from core.dasha_age import age_text
+        age_str = age_text(current_jd, birth_ymd) if birth_ymd else ""
 
         # Check if current
         is_current = current_jd <= today_jd < sub_end_jd
@@ -516,7 +569,7 @@ def calculate_dasha_from_birth_data(year, month, day, hour, minute, second=0,
                                     tz_offset_hours=0, moon_jd_override=None,
                                     nak_mode="neither", date_format=None,
                                     convention=None, year_length=None,
-                                    **_ignored):
+                                    now_jd_ut=None, **_ignored):
     """
     Convenience function to calculate dasha from birth data.
 
@@ -528,13 +581,13 @@ def calculate_dasha_from_birth_data(year, month, day, hour, minute, second=0,
         moon_jd_override: If set (float, UT), override Moon lookup JD (for Human Design).
         year_length: Dasha year key ("saura" default, "savana", "nakshatra",
             "sidereal") or days per year (SPEC-DSH-003).
+        now_jd_ut: UT Julian Day used as "now" for is_current (AIC plan 2:
+            tools pass an explicit reference instant). None = the clock.
 
     Returns:
         Formatted dasha data ready for display
     """
-    hour_decimal = hour + minute / 60.0 + second / 3600.0
-    birth_jd = swe.julday(year, month, day, hour_decimal,
-                          get_calendar_flag(year, month, day))
+    birth_jd = local_birth_jd(year, month, day, hour, minute, second)
 
     dasha_data = calculate_vimshottari_dasha(
         birth_jd, dlevels=dlevels, yrlen=resolve_year_length(year_length),
@@ -558,17 +611,19 @@ def calculate_dasha_from_birth_data(year, month, day, hour, minute, second=0,
 
     # Compute today_jd in the chart's local-time JD space (matching birth_jd)
     # so that is_current highlights the correct period at deep levels.
-    from datetime import datetime
-    _now = datetime.utcnow()
-    _now_jd_utc = swe.julday(_now.year, _now.month, _now.day,
-                             _now.hour + _now.minute/60 + _now.second/3600)
-    today_jd_local = _now_jd_utc + tz_offset_hours / 24.0
+    if now_jd_ut is None:
+        from datetime import datetime
+        _now = datetime.utcnow()
+        now_jd_ut = swe.julday(_now.year, _now.month, _now.day,
+                               _now.hour + _now.minute/60 + _now.second/3600)
+    today_jd_local = now_jd_ut + tz_offset_hours / 24.0
 
     formatted = format_dasha_for_display(dasha_data, birth_jd,
                                          max_periods=max_periods,
                                          today_jd=today_jd_local,
                                          date_format=date_format,
-                                         convention=convention)
+                                         convention=convention,
+                                         birth_ymd=(year, month, day))
 
     return formatted
 

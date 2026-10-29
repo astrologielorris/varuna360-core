@@ -23,6 +23,7 @@ from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from utils.debug import debug_print
+from core.chart_kind import entry_kind, is_transit_kind
 
 # Try to import Qt (PySide6)
 try:
@@ -111,6 +112,38 @@ def _selected_chart_id(memory_panel):
     except Exception:                                   # noqa: BLE001
         pass
     return None
+
+
+def _session_charts(memory_panel):
+    """``(charts, skipped)``: the panel's charts in session.json shape, and the
+    ids of entries without a usable recipe (left out)."""
+    charts, skipped = [], []
+    for entry in memory_panel.charts:
+        recipe = entry.get("recipe")
+        if not isinstance(recipe, dict):
+            skipped.append(entry.get("id", "<no id>"))
+            continue
+        chtk_path = entry.get("chtk_path")
+        chart_data = {
+            "id": entry.get("id", ""),
+            "recipe": recipe,
+            "mode": entry.get("mode", "aditya"),
+            "ayanamsa": entry.get("ayanamsa", 1),
+            # str() because a Path here is not JSON-serializable
+            # and would fail the entire save. Callers pass str
+            # today; nothing enforced it.
+            "chtk_path": str(chtk_path) if chtk_path is not None else None,
+            "kind": entry_kind(entry),
+            "is_transit": is_transit_kind(entry_kind(entry)),
+        }
+        # SPEC-SES-002 §4.5. CARRIED, never minted here: the merge
+        # reads it to decide which of two copies of a chart is the
+        # newer, and a value invented at save time would say "this
+        # changed now" on every tick for entries nobody touched.
+        if entry.get("updated_at"):
+            chart_data["updated_at"] = entry["updated_at"]
+        charts.append(chart_data)
+    return charts, skipped
 
 
 def _stamp_floor(last_saved) -> str:
@@ -716,6 +749,17 @@ class SessionManager:
                 pass
             return False
 
+    def current_session(self):
+        """The running profile's charts from memory (``CurrentSession``), or
+        None while a profile switch has the panel and ``current_profile``
+        disagreeing (the pause guard's window): read it from disk then."""
+        memory_panel = getattr(self.app, "chart_memory_panel", None)
+        if self._auto_save_pause_depth > 0 or not memory_panel:
+            return None
+        from core.chart_search.sources import CurrentSession
+
+        return CurrentSession(self.current_profile, _session_charts(memory_panel)[0])
+
     # ------------------------------------------------------------------
     # Auto-save pause (profile switching)
     # ------------------------------------------------------------------
@@ -841,6 +885,7 @@ class SessionManager:
                     'mode': _preserved_sp.get('mode', 'aditya'),
                     'ayanamsa': _preserved_sp.get('ayanamsa', 1),
                     'chtk_path': getattr(self.app, 'loaded_chtk_path', None),
+                    'kind': 'birth',
                     'is_transit': False,
                     '_chart': None,
                 }
@@ -940,7 +985,7 @@ class SessionManager:
                                              if getattr(self.app, "dasha_manager", None) else 100),
                         'vimshottari_ayanamsa': (self.app.dasha_manager.ayanamsa("right")
                                                  if getattr(self.app, "dasha_manager", None) else 98),
-                        'right_dasha_mode': (self.app.dasha_manager.right_mode
+                        'right_dasha_mode': (self.app.dasha_manager.mode("right")
                                              if getattr(self.app, "dasha_manager", None) else 'nisarga'),
                         # Chart zodiac (sidereal) settings
                         'chart_zodiac': getattr(self.app, 'chart_zodiac', 'tropical'),
@@ -959,31 +1004,7 @@ class SessionManager:
                 # this method: a single entry without that key raised
                 # KeyError, which failed the WHOLE save, on every tick,
                 # forever — 130 charts lost because of one.
-                skipped = []
-                for entry in memory_panel.charts:
-                    recipe = entry.get('recipe')
-                    if not isinstance(recipe, dict):
-                        skipped.append(entry.get('id', '<no id>'))
-                        continue
-                    chtk_path = entry.get('chtk_path')
-                    chart_data = {
-                        'id': entry.get('id', ''),
-                        'recipe': recipe,
-                        'mode': entry.get('mode', 'aditya'),
-                        'ayanamsa': entry.get('ayanamsa', 1),
-                        # str() because a Path here is not JSON-serializable
-                        # and would fail the entire save. Callers pass str
-                        # today; nothing enforced it.
-                        'chtk_path': str(chtk_path) if chtk_path is not None else None,
-                        'is_transit': entry.get('is_transit', False),
-                    }
-                    # SPEC-SES-002 §4.5. CARRIED, never minted here: the merge
-                    # reads it to decide which of two copies of a chart is the
-                    # newer, and a value invented at save time would say "this
-                    # changed now" on every tick for entries nobody touched.
-                    if entry.get('updated_at'):
-                        chart_data['updated_at'] = entry['updated_at']
-                    session_data['charts'].append(chart_data)
+                session_data["charts"], skipped = _session_charts(memory_panel)
 
                 # A dropped chart is PERMANENT LOSS at the next restore, so it
                 # must not hide behind a successful save. Skipping keeps the
@@ -1024,6 +1045,11 @@ class SessionManager:
                 if success:
                     debug_print(f"[SESSION] Saved {len(session_data['charts'])} charts to {session_path}")
                     error = None
+                    app_sync = getattr(self.app, "find_chart_sync", None)
+                    if app_sync is not None:  # Find Chart's store, off this thread
+                        app_sync.session_saved(
+                            self.current_profile, session_data["charts"]
+                        )
                 else:
                     error = getattr(self._profile_store, "last_error", None) \
                         or "save returned False (no detail available)"
@@ -1135,7 +1161,8 @@ class SessionManager:
             'mode': _translate_mode(old_entry.get('aditya_mode') or sp.get('mode') or 'aditya'),
             'ayanamsa': sp.get('ayanamsa', 1),
             'chtk_path': translated_path,
-            'is_transit': old_entry.get('is_transit', False),
+            'kind': entry_kind(old_entry),
+            'is_transit': is_transit_kind(entry_kind(old_entry)),
             '_chart': None,
         }
 
@@ -1228,11 +1255,13 @@ class SessionManager:
                 self.app.zodiac_settings.apply_settings(tuple(
                     self.app.zodiac_settings.DEFAULTS))
             else:
-                mode = _translate_mode(settings.get("zodiac.mode", "aditya"))
+                from core.settings_registry import default as _registry_default
+                mode = _translate_mode(settings.get("zodiac.mode",
+                                                    _registry_default("zodiac.mode")))
                 self.app.state.dispatch(SetZodiacMode(mode=mode))
                 self.app.chart_zodiac = "sidereal" if mode == "sidereal" else "tropical"
                 self.app.chart_sidereal_ayanamsa_id = get_settings().get(
-                    "zodiac.ayanamsa_id", 27)
+                    "zodiac.ayanamsa_id", _registry_default("zodiac.ayanamsa_id"))
             self.app.background_num = ui_state.get('background_num', 1)
             self.app.planet_size = ui_state.get('planet_size', 60)
             for side, default in (("left", 100), ("right", 98)):
@@ -1241,18 +1270,16 @@ class SessionManager:
                     persist=False, relist=False, reset="none")
             # Update title buttons if they exist
             if hasattr(self.app, 'dasha_manager'):
-                self.app.dasha_manager._update_dasha_title("vedanga")
-                # Reshape the right panel to the restored mode through the one
-                # dispatcher (SPEC-ZR-001 §3.6). Previously only the title was
-                # fixed here, so a restored mode differing from the boot mode
-                # kept the wrong nav/level shape; an unknown persisted mode
-                # now falls back to the default with a logged warning instead
-                # of rendering as Vimshottari.
-                self.app.dasha_manager.configure_right_panel(
-                    get_settings().get(
-                        "dasha.right.mode",
-                        self.app.dasha_manager.DEFAULT_RIGHT_MODE),
-                    announce=False)
+                # Reshape BOTH panels to their restored modes through the one
+                # reshaper (SPEC-DSH-004; the mode comes from settings, never
+                # from ui_state); an unknown persisted mode falls back to that
+                # side's default with a logged warning.
+                from managers.dasha.modes import DEFAULT_MODE
+                for side in ("left", "right"):
+                    self.app.dasha_manager.configure_side(
+                        side,
+                        get_settings().get(f"dasha.{side}.mode", DEFAULT_MODE[side]),
+                        announce=False)
 
             # Restore charts
             charts = data.get('charts', [])
@@ -1402,10 +1429,18 @@ class SessionManager:
                 'mode': _translate_mode(chart_data.get('mode', 'aditya')),
                 'ayanamsa': chart_data.get('ayanamsa', 1),
                 'chtk_path': translate_path(raw_path) if raw_path else None,
-                'is_transit': chart_data.get('is_transit', False),
+                # Entries saved before ``kind`` existed are classified here,
+                # once, from is_transit and the app's own event names.
+                'kind': entry_kind(chart_data),
+                'is_transit': is_transit_kind(entry_kind(chart_data)),
                 '_chart': None,
             }
 
+        # A recipe saved at 0,0 while the reader could not parse the file's
+        # coordinates (before 2026-10-02) is rebuilt from the file when the
+        # file is the same birth and now reads real coordinates. Read only.
+        from core.recipe_heal import heal_zero_coordinate_recipe
+        healed = heal_zero_coordinate_recipe(entry)
         recipe = entry['recipe']
         _bd, _bm = metadata_from_recipe(recipe)
         # BUG-1 (SPEC-IMPORT-002): recover _toml_extra / _original_gender
@@ -1422,6 +1457,8 @@ class SessionManager:
         # Preserve a stored stamp; give the pre-3.1 entries the floor.
         stored = chart_data.get('updated_at') if isinstance(chart_data, dict) else None
         entry['updated_at'] = stored or fallback_stamp or _merge_now()
+        if healed:  # a heal is a change: the newer stamp wins the merge
+            entry['updated_at'] = _merge_now()
         return entry
 
     def _save_merged(self, session_data, mark_closed=False) -> bool:

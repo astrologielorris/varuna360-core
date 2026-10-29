@@ -54,6 +54,11 @@ class _HouseBarWidget(QWidget):
         super().__init__(parent)
         self._gui_ref = gui_ref
         self._icon_cache: dict[str, QPixmap | None] = {}
+        # What the last paint drew (SPEC-AIC-001 capture regions): the chart
+        # and one row per house, {rect: [x, y, w, h] widget px, house, count,
+        # beings}. Read by apps/ai_capture/regions.py; drawing is unchanged.
+        self.painted_chart = None
+        self.painted_rows: list[dict] = []
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
     def sizeHint(self):
@@ -66,6 +71,14 @@ class _HouseBarWidget(QWidget):
         chrome_h = 4 + 20 + 4 + 18  # top_margin + subtitle + gap + compact_summary
         ideal_h = (total_rows * row_h) + chrome_h
         return QSize(self.width(), max(120, ideal_h))
+
+    def fit_height(self) -> int:
+        """Height showing every row, without a calculation (SPEC-LAYOUT-001
+        stream B: a resize never runs an engine). Every house is either a bar
+        row or an absent row, plus at most one divider: 13 rows bound it."""
+        row_h = max(16, scaled_area_px('tables') + 4)
+        chrome_h = 4 + 20 + 4 + 18  # as sizeHint
+        return max(120, 13 * row_h + chrome_h)
 
     def _load_planet_icon(self, planet_name: str, size: int = 20) -> QPixmap | None:
         """Load planet WebP icon scaled to size, with a colored shadow/glow."""
@@ -170,8 +183,11 @@ class _HouseBarWidget(QWidget):
 
     def paintEvent(self, event):
         result = self._get_tally()
+        self.painted_rows = []
+        self.painted_chart = None
         if result is None:
             return
+        self.painted_chart = getattr(getattr(self._gui_ref, 'state', None), 'active_chart', None)
 
         active, absent = result
         if not active and not absent:
@@ -273,6 +289,9 @@ class _HouseBarWidget(QWidget):
                                      label)
                     gx += tw
 
+            self.painted_rows.append({
+                "rect": [0, int(y), w, int(row_h)], "house": house_num, "count": count,
+                "beings": [p for p, _ring in planet_entries]})
             y += row_h
 
         # --- Absent section ---
@@ -312,6 +331,9 @@ class _HouseBarWidget(QWidget):
                                  Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter,
                                  "0")
                 painter.setFont(font)
+                self.painted_rows.append({
+                    "rect": [0, int(y), w, int(row_h)], "house": house_num, "count": 0,
+                    "beings": []})
                 y += row_h
 
         # --- Compact summary footer (1 line) ---

@@ -33,7 +33,7 @@ class ShameController(PanelControllerBase):
 
     def _on_varga_changed(self):
         # Phase 4 W5: same lazy-aware varga handling as avastha
-        if self._lazy and not self._is_visible:
+        if self._lazy and not self._effective_visible():
             self._pending_chart_refresh = True
             return
         self._refresh()

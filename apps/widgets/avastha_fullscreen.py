@@ -109,8 +109,29 @@ class AvasthaFullscreenPage(QWidget):
         self.gui = gui
         self._cell_info = {}       # (row, col) -> sentence for the reading row
         self._categories = {}
+        self._duc_seen = None      # the DUC Bala method of the last refresh
+        self._duc_unsubscribe = None
         self._build_ui()
         self.refresh()
+
+    # A SHOWN page follows a DUC Bala method change (SPEC-STR-001 §7.5) from
+    # Settings Apply, remote set_setting or an AI request alike. A hidden page
+    # (its dialog closed, which only hides it, or another page in front) holds
+    # no subscription and catches up when shown again.
+    def showEvent(self, event):
+        super().showEvent(event)
+        from apps.widgets.panel_controllers.duc_method import (
+            current_duc_method, on_duc_method_changed)
+        if self._duc_seen != current_duc_method():
+            self.refresh()
+        if self._duc_unsubscribe is None:
+            self._duc_unsubscribe = on_duc_method_changed(self, self.refresh)
+
+    def hideEvent(self, event):
+        super().hideEvent(event)
+        if self._duc_unsubscribe is not None:
+            self._duc_unsubscribe()
+            self._duc_unsubscribe = None
 
     # ── construction ────────────────────────────────────────────────
 
@@ -120,15 +141,15 @@ class AvasthaFullscreenPage(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(8)
 
-        # Compass strip: names the two directions. D-2 chose this over rails --
+        # Direction strip: names the two directions. D-2 chose this over rails --
         # a rail label per band costs a row and a column of the grid and repeats
-        # itself; one compass says it once, next to the view name.
+        # itself; one strip says it once, next to the view name.
         top = QHBoxLayout()
         top.setSpacing(14)
-        self._compass = QLabel()
-        self._compass.setTextFormat(Qt.TextFormat.RichText)
-        self._compass.setStyleSheet(f"color: {theme['secondary_text']};")
-        top.addWidget(self._compass)
+        self._directions = QLabel()
+        self._directions.setTextFormat(Qt.TextFormat.RichText)
+        self._directions.setStyleSheet(f"color: {theme['secondary_text']};")
+        top.addWidget(self._directions)
         top.addStretch()
         self._view_label = QLabel()
         # O-6: font-size in QSS, not setFont (qt-material overrides setFont);
@@ -177,7 +198,7 @@ class AvasthaFullscreenPage(QWidget):
         self._apply_static_text()
 
     def _apply_static_text(self, view=None):
-        """Compass + legend. The shame chip is the one VIEW-DEPENDENT part.
+        """Direction strip + legend. The shame chip is the one VIEW-DEPENDENT part.
 
         Pure and refined price a shame pair differently (SPEC-AVA-001 §3.1): the
         pure view charges a flat 60, the refined views charge the shamer's
@@ -196,7 +217,7 @@ class AvasthaFullscreenPage(QWidget):
             return (f"<span style='background:{bg};color:{fg};"
                     f"padding:1px 6px;border-radius:3px;'>{label}</span>")
 
-        self._compass.setText(
+        self._directions.setText(
             "<b>&#8594; across a row:</b> what that planet <b>CASTS</b> at the "
             "other six &nbsp;&nbsp;|&nbsp;&nbsp; "
             "<b>&#8595; down a column:</b> what that planet <b>RECEIVES</b>")
@@ -230,6 +251,8 @@ class AvasthaFullscreenPage(QWidget):
 
     def refresh(self):
         """Recompute and repaint. Safe to call with no chart loaded."""
+        from apps.widgets.panel_controllers.duc_method import current_duc_method
+        self._duc_seen = current_duc_method()
         try:
             self._refresh_inner()
         except Exception as e:
@@ -284,11 +307,13 @@ class AvasthaFullscreenPage(QWidget):
             decimals = 1
             from core.avastha_refined import refined_matrix
             from core.bala_calculator import get_all_bala_data
+            from apps.widgets.panel_controllers.duc_method import current_duc_method
             # Balas follow the Strength panel and take the ACTIVE chart, not the
             # sidereal rebuild -- get_all_bala_data handles sidereal internally
-            # (SPEC-AVA-001 §6).
+            # (SPEC-AVA-001 §6); DUC Bala by the strength.duc_method setting.
             rm = refined_matrix(order, matrix, dignity, shame,
-                                get_all_bala_data(chart), view)
+                                get_all_bala_data(chart, duc_method=current_duc_method()),
+                                view)
             self._fill_matrix_refined(order, rm)
             recv = {p: (rm["pos"][p], rm["neg"][p]) for p in order}
             cast = {p: (rm["cast_pos"][p], rm["cast_neg"][p]) for p in order}
@@ -571,11 +596,11 @@ class AvasthaFullscreenPage(QWidget):
         """Re-apply theme-derived styling after a live theme switch.
 
         The delegate reads get_category_colors() at paint time so the cells
-        follow by themselves, but the compass, legend and reading row hold
+        follow by themselves, but the direction strip, legend and reading row hold
         stylesheets set at construction and would otherwise keep the old colours.
         """
         theme = get_theme_colors()
-        self._compass.setStyleSheet(f"color: {theme['secondary_text']};")
+        self._directions.setStyleSheet(f"color: {theme['secondary_text']};")
         self._view_label.setStyleSheet(f"color: {theme['primary']};")
         self._reading.setStyleSheet(f"color: {theme['primary']}; padding: 4px 8px;")
         self._legend.setStyleSheet(f"color: {theme['secondary_text']};")

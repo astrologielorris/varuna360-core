@@ -196,6 +196,13 @@ class KeyDialog(QDialog):
         self._fit_width()
         self._fit_height()
 
+    def keyPressEvent(self, event):
+        """Enter in the key box runs it once, never also a button (ui.dialog_keys)."""
+        from ui.dialog_keys import field_enter
+        if field_enter(self, event):
+            return
+        super().keyPressEvent(event)
+
     def _fit_width(self):
         """Widen past the 420 design width only when the one-line subscribe row
         would not fit (Info text / Buttons raised to 24 cut its link, td-168ze).

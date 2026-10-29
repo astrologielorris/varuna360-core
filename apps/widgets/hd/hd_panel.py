@@ -19,11 +19,11 @@ comes from ``get_theme_colors()``.
 
 from __future__ import annotations
 
-from PySide6.QtCore import QRectF, Qt, Signal
+from PySide6.QtCore import QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFontMetrics, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (
     QButtonGroup, QFrame, QGridLayout, QHBoxLayout, QLabel, QPushButton,
-    QScrollArea, QSizePolicy, QVBoxLayout, QWidget,
+    QScrollArea, QSizePolicy, QToolTip, QVBoxLayout, QWidget,
 )
 
 from ui.font_bootstrap import HD_BODY_FAMILIES, hd_symbol_font
@@ -32,8 +32,8 @@ from ui.qt_theme import (
     scaled_px,
 )
 from . import hd_geometry as G
-from .hd_bodygraph_view import HDBodygraphView
-from .hd_channel_names import CHANNEL_ORDER, channel_name
+from .hd_bodygraph_view import HDBodygraphView, tooltip_qss as _tooltip_qss
+from .hd_channel_names import CHANNEL_ORDER, channel_name, gate_tooltip
 from .hd_fixture import GLYPHS, NAMES
 from .hd_painter import VIEWBOX, normalise_model
 
@@ -53,21 +53,6 @@ def _panel_qss(colors: dict, radius: int = 12) -> str:
     return (f"background: rgba({hex_to_rgb_str(colors['secondary_light'])}, 0.10);"
             f"border: 1px solid rgba({hex_to_rgb_str(colors['secondary_text'])}, 0.10);"
             f"border-radius: {radius}px;")
-
-
-def _tooltip_qss(colors: dict) -> str:
-    """The tooltip rule every hoverable widget on this page carries itself.
-
-    A tooltip is styled from the nearest ancestor that owns a stylesheet, and on
-    Lorris's screen that produced a dark box with dark text on the light theme (a
-    row's own rgba band and ink, painted onto a ToolTip window). Spelling the
-    tooltip out on the carrier, in the same tokens qt-material's global rule uses,
-    makes it read the same whatever the ancestors say.
-    """
-    return (f" QToolTip {{ background-color: {colors['secondary_light']};"
-            f" color: {colors['secondary_text']};"
-            f" border: 1px solid {colors['secondary_dark']};"
-            f" border-radius: 4px; padding: 4px; }}")
 
 
 #: Row metrics, shared by both columns so a row sits level with its twin. The height is
@@ -490,6 +475,15 @@ class _RowStrip(QFrame):
         if self.gate is not None:
             self.clicked.emit(self.gate)
 
+    def mouseReleaseEvent(self, event):  # noqa: N802 - Qt name
+        # a click says the gate name at once instead of waiting for the hover delay.
+        # Shown a turn later: Qt closes any open tooltip while the release is still
+        # bubbling up through the parents.
+        super().mouseReleaseEvent(event)
+        if self.gate is not None:
+            point = event.globalPosition().toPoint()
+            QTimer.singleShot(0, lambda: QToolTip.showText(point, self.toolTip(), self))
+
 
 class _PlanetColumn(_NarrowsItsPadding, QFrame):
     """One activation column: 14 rows of glyph, body, gate.line, and a state dot.
@@ -680,11 +674,14 @@ class _PlanetColumn(_NarrowsItsPadding, QFrame):
             if not available or row.get("gate") is None:
                 value.setText("--")
                 _strip.gate = None
+                _strip.setToolTip(NAMES[index])
                 dot.set_state(None, None)
                 continue
             line_no = row.get("line")
             value.setText(f"{row['gate']}.{line_no}" if line_no is not None
                           else str(row["gate"]))
+            # the row already shows the body; the tooltip names the gate it sits in
+            _strip.setToolTip(gate_tooltip(NAMES[index], row["gate"], line_no))
             state = gates.get(str(row["gate"]), "none") if activates else "none"
             if not activates:
                 # prints but activates nothing: a hollow ring, not an absence

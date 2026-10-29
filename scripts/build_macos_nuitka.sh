@@ -44,8 +44,18 @@ else
   echo "         Set APP_VERSION=x.y.z to override."
 fi
 
-if [[ ! "$APP_VERSION" =~ ^[0-9]+(\.[0-9]+){0,3}$ ]]; then
-  echo "APP_VERSION must look like 1.2.3, got: $APP_VERSION"
+# Apple's bundle version is numbers only (1.2.3); a release label may carry a
+# letter suffix (5.0.1a). The label stays APP_VERSION (filenames, About box);
+# the bundle gets its numeric part, BUNDLE_VERSION, at most three integers as
+# Apple requires (audit 2026-10-20 P1: the check used to reject the LTS version
+# outright). Two letter builds of one number (5.0.1a, 5.0.1b) share a bundle
+# version: release one of them per number.
+if [[ "$APP_VERSION" =~ ^([0-9]+(\.[0-9]+){0,2})[a-z][0-9]*$ ]]; then
+  BUNDLE_VERSION="${BASH_REMATCH[1]}"
+elif [[ "$APP_VERSION" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]]; then
+  BUNDLE_VERSION="$APP_VERSION"
+else
+  echo "APP_VERSION must look like 1.2.3 or 1.2.3a, got: $APP_VERSION"
   exit 1
 fi
 
@@ -156,9 +166,13 @@ DATA_ARGS=()
 # (Aditya markdown, hora/trimsamsa JSON, sign healthy/afflicted JSON). Without it
 # every description card renders "Description not available" in the frozen app.
 # Root ephe/ is NOT bundled: libaditya reads its own libaditya/ephe (a superset),
-# so the root copy was ~36 MB of dead weight (WI-9, td-njyh). Kept in lock-step
-# with build_lite.py / build_windows.py.
-for data_dir in img icon data docs libaditya/ephe core/data; do
+# so the root copy was ~36 MB of dead weight (WI-9, td-njyh). libaditya is a
+# pinned PyPI package: its ephemeris comes with --include-package-data=libaditya
+# below. Kept in lock-step with build_lite.py / build_windows.py.
+# i18n (the language files: the first menu label crashes without them) is
+# build_lite.FROZEN_DATA_DIRS, shared by every packager (audit 2026-10-20;
+# test/test_packager_parity.py). Lite ships no AI task page (SPEC-EDN-002 P4).
+for data_dir in img icon data docs core/data i18n; do
   if [[ -d "$ROOT_DIR/$data_dir" ]]; then
     DATA_ARGS+=("--include-data-dir=$ROOT_DIR/$data_dir=$data_dir")
   else
@@ -174,6 +188,22 @@ for optional_file in VERSION settings.json map_tiles_cache.db; do
   fi
 done
 
+# Licence texts (AGPL LICENSE, NOTICE credits, StellariumRC MIT). The app never
+# reads them, so they were never packed; an AGPL release must carry them. Kept in
+# lock-step with build_lite.py LICENSE_PATHS; checked again after the build.
+LICENSE_FILES=(LICENSE NOTICE)
+# Inside the installed libaditya package (--include-package-data): checked in the
+# bundle after the build, not copied from the source tree.
+PACKAGE_FILES=(libaditya/stars/stellarium/remote_control/LICENSE.txt
+               libaditya/ephe/seleapsec.txt libaditya/ephe/sepl_18.se1)
+for license_file in "${LICENSE_FILES[@]}"; do
+  if [[ ! -f "$ROOT_DIR/$license_file" ]]; then
+    echo "ERROR: licence file missing from the source: $license_file"
+    exit 1
+  fi
+  DATA_ARGS+=("--include-data-files=$ROOT_DIR/$license_file=$license_file")
+done
+
 # avastha_descriptions.json is a data file inside AI_tools/AI_main_function. The
 # --include-package=AI_tools below copies package CODE, not data, so this JSON
 # must be added explicitly or the frozen app falls back to English avastha state
@@ -184,6 +214,14 @@ if [[ -f "$AVASTHA_DESC" ]]; then
   DATA_ARGS+=("--include-data-files=$AVASTHA_DESC=AI_tools/AI_main_function/avastha_descriptions.json")
 else
   echo "WARNING: missing $AVASTHA_DESC; avastha state names will fall back to English"
+fi
+
+# The Library's built-in Rate and Sort rules, read next to core/library/profile.py.
+LIB_PROFILE="$ROOT_DIR/core/library/builtin_profile.json"
+if [[ -f "$LIB_PROFILE" ]]; then
+  DATA_ARGS+=("--include-data-files=$LIB_PROFILE=core/library/builtin_profile.json")
+else
+  echo "WARNING: missing $LIB_PROFILE; the Library sheet cannot read its rules"
 fi
 
 # The four Inter static faces, registered at boot by ui/font_bootstrap.py (WI-7)
@@ -197,6 +235,14 @@ for inter_file in Inter-Regular.ttf Inter-Bold.ttf Inter-Italic.ttf Inter-BoldIt
     echo "WARNING: missing fonts/Inter/$inter_file; QFont(\"Inter\") will substitute"
   fi
 done
+
+# Hexagram face for HD Hexagrams mode (SPEC-HD-001), registered at boot by
+# ui/font_bootstrap.py; lock-step with build_lite.py and build_windows.py.
+if [[ -d "$ROOT_DIR/fonts/NotoSansSymbols2" ]]; then
+  DATA_ARGS+=("--include-data-dir=$ROOT_DIR/fonts/NotoSansSymbols2=fonts/NotoSansSymbols2")
+else
+  echo "WARNING: missing fonts/NotoSansSymbols2; HD hexagrams will substitute"
+fi
 
 # Package DATA, not just package code. Nuitka copies data files only for
 # packages it has a rule for (nuitka/plugins/standard/
@@ -228,13 +274,13 @@ fi
   --enable-plugin=pyside6 \
   --macos-app-name="$APP_NAME" \
   --macos-signed-app-name="$APP_BUNDLE_ID" \
-  --macos-app-version="$APP_VERSION" \
+  --macos-app-version="$BUNDLE_VERSION" \
   --macos-app-mode=gui \
   --macos-app-icon="$ICON_SRC" \
   --company-name="Varuna360" \
   --product-name="$APP_NAME" \
-  --file-version="$APP_VERSION" \
-  --product-version="$APP_VERSION" \
+  --file-version="$BUNDLE_VERSION" \
+  --product-version="$BUNDLE_VERSION" \
   --output-dir="$OUT_DIR" \
   --output-filename="$APP_BUNDLE_NAME" \
   --remove-output \
@@ -245,6 +291,7 @@ fi
   --include-package=cache \
   --include-package=core \
   --include-package=libaditya \
+  --include-package-data=libaditya \
   --include-package=managers \
   --include-package=panels \
   --include-package=state \
@@ -274,6 +321,18 @@ if [[ -d "$BUILT_APP" && "$BUILT_APP" != "$TARGET_APP" ]]; then
   mv "$BUILT_APP" "$TARGET_APP"
 fi
 
+# Seal the whole bundle again, nested Qt frameworks included. Nuitka signs the
+# app, but with Qt WebEngine (the AI task window) the framework binaries under
+# Contents/Resources are changed after that signature, and package_macos_dmg.sh
+# then refuses the bundle as modified (macOS would call it "damaged"). An
+# ad-hoc deep signature over the finished bundle is what ships; the packager's
+# own check still catches anything that touches the bundle after this line.
+codesign --force --deep --sign - "$TARGET_APP"
+if ! codesign --verify --deep --strict "$TARGET_APP"; then
+  echo "ERROR: the bundle's signature does not verify after re-signing."
+  exit 1
+fi
+
 # Post-build check: a missing timezonefinder data directory is invisible until
 # a user tries to place a birth location, so verify it here instead.
 TZF_DATA="$TARGET_APP/Contents/MacOS/timezonefinder/data"
@@ -284,6 +343,23 @@ else
   echo "       Timezone lookup from the map would fail at runtime."
   exit 1
 fi
+
+# The language files: the app crashes at its first menu label without i18n
+# (audit 2026-10-20).
+for runtime_file in i18n/languages.json i18n/content.json; do
+  if [[ ! -f "$TARGET_APP/Contents/MacOS/$runtime_file" ]]; then
+    echo "ERROR: runtime data missing from the bundle: $runtime_file"
+    exit 1
+  fi
+done
+
+for license_file in "${LICENSE_FILES[@]}" "${PACKAGE_FILES[@]}"; do
+  if [[ ! -f "$TARGET_APP/Contents/MacOS/$license_file" ]]; then
+    echo "ERROR: licence file missing from the bundle: $license_file"
+    exit 1
+  fi
+done
+echo "Licence files bundled: ${#LICENSE_FILES[@]}"
 
 echo
 echo "Built unsigned app bundle:"

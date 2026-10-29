@@ -1,5 +1,5 @@
-"""Validated solid/two-tone SVG palettes, independent of widgets and settings."""
-import re
+"""Solid/two-tone SVG palettes; the check is the settings registry's (SPEC-SET-003)."""
+from core.settings_registry.validators import color_scheme, rgb_color
 
 PRESETS = (
     ('Black frame / white inside', '#000000', '#ffffff'),
@@ -11,15 +11,15 @@ PRESETS = (
 
 
 def rgb(value):
-    return isinstance(value, str) and re.fullmatch(r'#[0-9a-fA-F]{6}', value)
+    return rgb_color(value)
 
 
 def clean_scheme(value):
-    if rgb(value):
+    if not color_scheme(value):
+        return None
+    if isinstance(value, str):
         return value.lower()
-    if isinstance(value, dict) and rgb(value.get('outer')) and rgb(value.get('inner')):
-        return {key: value[key].lower() for key in ('outer', 'inner')}
-    return None
+    return {key: value[key].lower() for key in ('outer', 'inner')}
 
 
 def clean_colors(value, names):

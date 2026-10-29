@@ -41,6 +41,9 @@ class TrimsamsaController(PanelControllerBase):
 
     def __init__(self, gui):
         super().__init__(gui=gui, lazy=False)
+        # The chart the table currently shows (None = not rendered): the AI
+        # capture marks the region 'stale' otherwise (SPEC-AIC-001 INV-2).
+        self.rendered_chart = None
 
     def _on_chart_changed(self):
         self._refresh()
@@ -64,6 +67,7 @@ class TrimsamsaController(PanelControllerBase):
             return
 
         gui.trimsamsa_table.clearContents()
+        self.rendered_chart = None
 
         try:
             from AI_tools.AI_main_function.retinue import get_chart_retinue
@@ -149,6 +153,7 @@ class TrimsamsaController(PanelControllerBase):
             summary_item.setForeground(QColor(desat_hex(dom_fg)))
             gui.trimsamsa_table.setItem(len(planets), 0, summary_item)
             gui.trimsamsa_table.setSpan(len(planets), 0, 1, 4)
+            self.rendered_chart = chart
 
         except Exception as e:
             print(f"Error updating Trimsamsa table: {e}")

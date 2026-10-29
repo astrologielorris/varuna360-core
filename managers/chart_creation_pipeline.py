@@ -99,35 +99,36 @@ CHART_FOLDER_ENV = "VARUNA360_CHART_FOLDER"
 @dataclass
 class ChartCreationResult:
     """Result of create_chart_from_text. Recipe/memory-compatible payload."""
+
     ok: bool = False
     error: Optional[str] = None
     error_stage: Optional[str] = None
     warnings: List[Tuple[str, str]] = field(default_factory=list)
 
-    chart: Any = None                       # libaditya Chart (terminal build)
+    chart: Any = None  # libaditya Chart (terminal build)
     jd: Optional[float] = None
 
     name: str = ""
     city: str = ""
     country: str = ""
-    location_label: str = ""                # "City, Country" or "City"
+    location_label: str = ""  # "City, Country" or "City"
     gender: str = "Unknown"
     latitude: Optional[float] = None
     longitude: Optional[float] = None
-    tz_name: str = ""                       # IANA name from geocoding
+    tz_name: str = ""  # IANA name from geocoding
 
     # Offset-key duality (recorded finding): BOTH keys, always set together.
-    utc_offset_hours: Optional[float] = None   # BirthDataManager convention
-    utcoffset: Optional[float] = None          # recipe/birth_data convention
+    utc_offset_hours: Optional[float] = None  # BirthDataManager convention
+    utcoffset: Optional[float] = None  # recipe/birth_data convention
     dst_flag: int = 0
-    std_offset_str: str = ""                # standard-base "+HH:MM" string
+    std_offset_str: str = ""  # standard-base "+HH:MM" string
 
-    parsed: Optional[Dict[str, Any]] = None       # parse_birth_text output
-    birth_data: Optional[Dict[str, Any]] = None   # BDM canonical dict
-    planets_data: Optional[Dict[str, Any]] = None # legacy dialog dict shape
+    parsed: Optional[Dict[str, Any]] = None  # parse_birth_text output
+    birth_data: Optional[Dict[str, Any]] = None  # BDM canonical dict
+    planets_data: Optional[Dict[str, Any]] = None  # legacy dialog dict shape
     # INV-7: the file every creation path must record into its panel entry.
-    file_path: Optional[str] = None               # the file that was written
-    chart_format: Optional[str] = None            # 'toml' | 'chtk'
+    file_path: Optional[str] = None  # the file that was written
+    chart_format: Optional[str] = None  # 'toml' | 'chtk'
     # Legacy alias, set ONLY when the written file really is CHTK. Callers
     # that hand this to a CHTK-specific reader must not receive a .toml.
     chtk_path: Optional[str] = None
@@ -137,7 +138,9 @@ class ChartCreationResult:
     persist_error: Optional[str] = None
 
 
-def _error(result: ChartCreationResult, stage: str, message: str) -> ChartCreationResult:
+def _error(
+    result: ChartCreationResult, stage: str, message: str
+) -> ChartCreationResult:
     result.ok = False
     result.error_stage = stage
     result.error = message
@@ -171,11 +174,12 @@ def _persist_failed(result: ChartCreationResult, message: str) -> ChartCreationR
 def _sanitize_filename(name: str) -> str:
     import re
     from core.fs_safety import windows_safe_filename
-    safe = re.sub(r'[^\w\s-]', '', name or 'Unknown').strip().replace(' ', '_')
+
+    safe = re.sub(r"[^\w\s-]", "", name or "Unknown").strip().replace(" ", "_")
     # The regex removes every character Windows forbids but leaves the DOS
     # device names intact. "Con" would reach _collision_safe_path, which does
     # os.open() on it — on Windows that reaches the console device, not a file.
-    return windows_safe_filename(safe or 'Unknown', default='Unknown')
+    return windows_safe_filename(safe or "Unknown", default="Unknown")
 
 
 def _collision_safe_path(folder, base_name: str, ext: str = CHART_FORMAT_CHTK):
@@ -199,6 +203,7 @@ def _collision_safe_path(folder, base_name: str, ext: str = CHART_FORMAT_CHTK):
     final pathname with plain 'w' (no symlink/replace window; finding 1)."""
     import os
     from pathlib import Path
+
     folder = Path(folder)
     ext = (ext or CHART_FORMAT_CHTK).lstrip(".")
     n = 0
@@ -208,9 +213,7 @@ def _collision_safe_path(folder, base_name: str, ext: str = CHART_FORMAT_CHTK):
         try:
             # mode 0o644 (finding 3): O_CREAT without a mode defaults to
             # 0o777 & ~umask, leaving world/group-writable chart files.
-            fd = os.open(
-                str(candidate),
-                os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+            fd = os.open(str(candidate), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
         except FileExistsError:
             n += 1
             continue
@@ -226,6 +229,7 @@ def _unlink_if_empty_reservation(path) -> None:
     already surfacing the original write failure unchanged)."""
     import os
     import stat
+
     try:
         st = os.lstat(str(path))
     except OSError:
@@ -237,12 +241,14 @@ def _unlink_if_empty_reservation(path) -> None:
             pass
 
 
-def persist_birth_data(birth_data: Dict[str, Any], *,
-                       name: Optional[str] = None,
-                       chart_folder: Optional[str] = None,
-                       chart_format: Optional[str] = None,
-                       julian_day: Optional[float] = None
-                       ) -> Tuple[Optional[str], str, Optional[str]]:
+def persist_birth_data(
+    birth_data: Dict[str, Any],
+    *,
+    name: Optional[str] = None,
+    chart_folder: Optional[str] = None,
+    chart_format: Optional[str] = None,
+    julian_day: Optional[float] = None,
+) -> Tuple[Optional[str], str, Optional[str]]:
     """Write ONE canonical birth-data dict to a chart file. INV-1's only road.
 
     Every creation path needs this, not just the text pipeline: the New Chart
@@ -271,9 +277,12 @@ def persist_birth_data(birth_data: Dict[str, Any], *,
     folder = chart_folder or resolve_chart_target_folder()
     if not folder:
         return _record_failure(
-            fmt, None, None,
+            fmt,
+            None,
+            None,
             "No chart folder could be resolved or created; the chart was "
-            "calculated but not saved to a file.")
+            "calculated but not saved to a file.",
+        )
 
     label = name or birth_data.get("name") or "Unknown"
     payload = dict(birth_data)
@@ -302,12 +311,14 @@ def persist_birth_data(birth_data: Dict[str, Any], *,
         os.close(_fd)
         if fmt == CHART_FORMAT_TOML:
             from core.toml_chart import TOMLChartWriter
+
             TOMLChartWriter().write(payload, str(tmp_path))
         else:
             # Rule 6 sign inversion lives in the canonical CHTK writer:
             # LOCAL time components + standard-base offset string + DST flag.
             from core.chtk_writer import create_chtk
             from core.time_utils import format_offset_from_hours
+
             flag = payload.get("time_change_flag") or 0
             dst = payload.get("dst_offset_hours")
             if dst is None:
@@ -315,8 +326,10 @@ def persist_birth_data(birth_data: Dict[str, Any], *,
             std_hours = float(payload.get("utc_offset_hours") or 0.0) - float(dst)
             create_chtk(
                 name=label,
-                year=int(payload["local_year"]), month=int(payload["local_month"]),
-                day=int(payload["local_day"]), hour=int(payload["local_hour"]),
+                year=int(payload["local_year"]),
+                month=int(payload["local_month"]),
+                day=int(payload["local_day"]),
+                hour=int(payload["local_hour"]),
                 minute=int(payload["local_minute"]),
                 second=int(payload.get("local_second") or 0),
                 lat=float(payload.get("latitude") or 0.0),
@@ -332,9 +345,10 @@ def persist_birth_data(birth_data: Dict[str, Any], *,
         # A successful write RESOLVES any standing warning (INV-6/td-rx09).
         try:
             from managers.persist_health import record_write_success
+
             record_write_success()
         except Exception:
-            pass          # health bookkeeping must never break a good write
+            pass  # health bookkeeping must never break a good write
         index_new_chart_file(out_path)
         return str(out_path), fmt, None
     except Exception as e:
@@ -371,14 +385,28 @@ def index_new_chart_file(path) -> bool:
     reported failure. Returns True when the entry was added.
     """
     import os
+
     if os.environ.get(CHART_FOLDER_ENV):
         return False
     try:
-        from cache.chart_index_cache import ChartIndexCache
-        return ChartIndexCache().add_file(str(path)) is not None
+        from pathlib import Path
+
+        from core.chart_search.sources import Entry
+        from core.chart_search.store import StoreWriter
+        from core.chart_search.sync import sync_file
+
+        with StoreWriter.open() as store:
+            added = isinstance(sync_file(store, Path(path)), Entry)
     except Exception as e:
         _log(f"[PERSIST] Could not index {path}: {e}")
         return False
+    if added:
+        from managers import find_chart_sync
+
+        app_sync = find_chart_sync.current()
+        if app_sync is not None:
+            app_sync.file_indexed(path)  # its moment, off this thread
+    return added
 
 
 def _record_failure(fmt: str, folder, name, message: str):
@@ -390,15 +418,23 @@ def _record_failure(fmt: str, folder, name, message: str):
     """
     try:
         from managers.persist_health import record_write_failure
+
         record_write_failure(message, folder=folder, chart_name=name)
     except Exception:
         pass
     return None, fmt, message
 
 
-def _resolve_offset_zoneinfo(tz_name: str, year: int, month: int, day: int,
-                             hour: int, minute: int, second: int,
-                             longitude: float):
+def _resolve_offset_zoneinfo(
+    tz_name: str,
+    year: int,
+    month: int,
+    day: int,
+    hour: int,
+    minute: int,
+    second: int,
+    longitude: float,
+):
     """ZoneInfo-backed offset resolution — the Add Chart dialog's historical
     semantics (core.time_utils.lmt_corrected_offset), decomposed for the
     seconds-precision BirthDataManager seam.
@@ -425,11 +461,12 @@ def _resolve_offset_zoneinfo(tz_name: str, year: int, month: int, day: int,
     from core.time_utils import lmt_corrected_offset
 
     total_hours = lmt_corrected_offset(
-        tz_name, year, month, day, hour, minute, second, longitude)
+        tz_name, year, month, day, hour, minute, second, longitude
+    )
 
     tz = ZoneInfo(tz_name)
     dt = datetime(year, month, day, hour, minute, second, tzinfo=tz)
-    if dt.tzname() == 'LMT':
+    if dt.tzname() == "LMT":
         # LMT-era chart-city longitude/15 (already what total_hours holds).
         return total_hours, 0, False
 
@@ -447,6 +484,7 @@ def _resolve_offset_zoneinfo(tz_name: str, year: int, month: int, day: int,
 def _log(msg: str) -> None:
     try:
         from utils.debug import debug_print
+
         debug_print(msg)
     except Exception:
         print(msg)
@@ -458,8 +496,10 @@ def default_chart_folder() -> Optional[str]:
     nothing usable is configured — callers must treat that as an explicit
     persistence error, never write to an improvised location."""
     from pathlib import Path
+
     try:
         from managers.settings_manager import get_settings
+
         s = get_settings()
         candidates: List[str] = []
         default = s.get("paths.default_folder", "")
@@ -491,6 +531,7 @@ def platform_default_chart_folder():
     ~/Documents/Kala/Charts on both platforms. Not created here.
     """
     from pathlib import Path
+
     return Path.home() / "Documents" / "Kala" / "Charts"
 
 
@@ -515,6 +556,7 @@ def ensure_default_chart_folder(create: bool = True) -> Optional[str]:
     persistence failure.
     """
     from pathlib import Path
+
     existing = default_chart_folder()
     if existing:
         return existing
@@ -529,6 +571,7 @@ def ensure_default_chart_folder(create: bool = True) -> Optional[str]:
     # Dev/source runs keep the Kala convention unchanged.
     try:
         from state.user_data import get_user_data_dir, is_frozen
+
         if is_frozen():
             base = get_user_data_dir()
             if base:
@@ -546,6 +589,7 @@ def ensure_default_chart_folder(create: bool = True) -> Optional[str]:
 
     try:
         from managers.settings_manager import get_settings
+
         s = get_settings()
         s.set("paths.default_folder", str(target))
         # get_chart_folders() is a FIXED 3-slot list (padded, truncated on
@@ -585,13 +629,16 @@ def default_chart_format() -> str:
     """
     try:
         from managers.settings_manager import get_settings
+
         fmt = str(get_settings().get("paths.default_chart_format", "") or "")
         fmt = fmt.strip().lower().lstrip(".")
         if fmt in CHART_FORMATS:
             return fmt
         if fmt:
-            _log(f"[PERSIST] Unknown paths.default_chart_format {fmt!r}; "
-                 f"writing {CHART_FORMAT_TOML}")
+            _log(
+                f"[PERSIST] Unknown paths.default_chart_format {fmt!r}; "
+                f"writing {CHART_FORMAT_TOML}"
+            )
     except Exception:
         pass
     return CHART_FORMAT_TOML
@@ -606,11 +653,14 @@ def active_profile_id() -> str:
     here would scatter charts across the wrong profile folders.
     """
     from pathlib import Path
+
     try:
         from state.user_data import get_user_data_dir
+
         base = get_user_data_dir()
         if not base:
             import os as _os
+
             base = Path(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
         f = Path(base) / "profiles" / "_active_profile.txt"
         if f.exists():
@@ -631,6 +681,7 @@ def _profile_folder(base, profile_id: str, create: bool = True):
     rather than failing — the user keeps their file and still gets a folder.
     """
     from pathlib import Path
+
     base = Path(base)
     stem = _sanitize_filename(profile_id) or "default"
     n = 1
@@ -638,7 +689,7 @@ def _profile_folder(base, profile_id: str, create: bool = True):
         candidate = base / (stem if n == 1 else f"{stem}_{n}")
         if candidate.is_dir():
             return candidate
-        if candidate.exists():          # a FILE (or symlink) holds the name
+        if candidate.exists():  # a FILE (or symlink) holds the name
             _log(f"[PERSIST] {candidate} is not a directory; trying the next name")
             n += 1
             continue
@@ -648,7 +699,7 @@ def _profile_folder(base, profile_id: str, create: bool = True):
             candidate.mkdir(parents=True)
             return candidate
         except FileExistsError:
-            n += 1                      # lost a race; re-examine as above
+            n += 1  # lost a race; re-examine as above
             continue
         except Exception as e:
             _log(f"[PERSIST] Could not create the profile folder {candidate}: {e}")
@@ -656,8 +707,9 @@ def _profile_folder(base, profile_id: str, create: bool = True):
     return None
 
 
-def resolve_chart_target_folder(base_folder: Optional[str] = None,
-                                create: bool = True) -> Optional[str]:
+def resolve_chart_target_folder(
+    base_folder: Optional[str] = None, create: bool = True
+) -> Optional[str]:
     """Where a newly created chart is written: <chart folder>/<active profile>/.
 
     SPEC-PERSIST-001 INV-3. Per-profile subfolders keep one person's charts
@@ -778,10 +830,13 @@ def create_chart_from_text(
     # ---- Stage 2: geocode ----------------------------------------------
     _progress("geocoding")
     if geocode_fn is None:
-        from AI_tools.AI_main_function.text_to_chtk import resolve_location as geocode_fn
+        from AI_tools.AI_main_function.text_to_chtk import (
+            resolve_location as geocode_fn,
+        )
     try:
-        loc = geocode_fn(result.city, result.country,
-                         parsed["year"], parsed["month"], parsed["day"])
+        loc = geocode_fn(
+            result.city, result.country, parsed["year"], parsed["month"], parsed["day"]
+        )
     except Exception as e:
         return _error(result, STAGE_GEOCODE, f"Location lookup failed: {e}")
 
@@ -805,15 +860,23 @@ def create_chart_from_text(
     second = parsed.get("second", 0)
     try:
         from core.time_utils import format_offset_from_hours
+
         std_hours, dst_flag, is_gap = _resolve_offset_zoneinfo(
-            tz_name, parsed["year"], parsed["month"], parsed["day"],
-            parsed["hour"], parsed["minute"], second, lon,
+            tz_name,
+            parsed["year"],
+            parsed["month"],
+            parsed["day"],
+            parsed["hour"],
+            parsed["minute"],
+            second,
+            lon,
         )
     except Exception as e:
         # Recorded finding: the legacy dialog silently treated local time as
         # UTC here. That is forbidden — surface the failure to the caller.
         return _error(
-            result, STAGE_OFFSET,
+            result,
+            STAGE_OFFSET,
             f"Could not resolve the UTC offset for timezone '{tz_name}' "
             f"({parsed['year']}-{parsed['month']:02d}-{parsed['day']:02d}): {e}",
         )
@@ -841,13 +904,20 @@ def create_chart_from_text(
 
     # ---- Stage 4: UTC via BirthDataManager (the one UTC road, INV-3) ----
     from managers.birth_data_manager import BirthDataManager
+
     form_data = {
         "name": result.name,
-        "year": parsed["year"], "month": parsed["month"], "day": parsed["day"],
-        "hour": parsed["hour"], "minute": parsed["minute"], "second": second,
+        "year": parsed["year"],
+        "month": parsed["month"],
+        "day": parsed["day"],
+        "hour": parsed["hour"],
+        "minute": parsed["minute"],
+        "second": second,
         "gender": result.gender,
-        "city": result.city, "country": result.country,
-        "latitude": lat, "longitude": lon,
+        "city": result.city,
+        "country": result.country,
+        "latitude": lat,
+        "longitude": lon,
         "timezone": std_offset_str,
         "iana_timezone": tz_name,
         "dst": dst_flag,
@@ -871,10 +941,16 @@ def create_chart_from_text(
 
         # Same calendar/JD precedence as import and recipe restoration (td-xwb1).
         from core.chart_factory import jd_from_birth_data
+
         jd = jd_from_birth_data(birth_data)
         chart = build_chart_from_params(
-            jd=jd, lat=lat, lon=lon, mode=mode, name=result.name,
-            ayanamsa=ayanamsa, utcoffset=utc_offset_hours,
+            jd=jd,
+            lat=lat,
+            lon=lon,
+            mode=mode,
+            name=result.name,
+            ayanamsa=ayanamsa,
+            utcoffset=utc_offset_hours,
         )
     except Exception as e:
         return _error(result, STAGE_BUILD, f"Chart build failed: {e}")
@@ -914,8 +990,12 @@ def create_chart_from_text(
     # default is an invitation, an absent parameter is a contract.
     _progress("writing")
     path, fmt, persist_error = persist_birth_data(
-        birth_data, name=result.name, chart_folder=chart_folder,
-        chart_format=chart_format, julian_day=result.jd)
+        birth_data,
+        name=result.name,
+        chart_folder=chart_folder,
+        chart_format=chart_format,
+        julian_day=result.jd,
+    )
     result.chart_format = fmt
     if persist_error:
         return _persist_failed(result, persist_error)

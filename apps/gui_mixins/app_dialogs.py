@@ -60,6 +60,7 @@ class AppDialogsMixin:
             PRO_DESCRIPTION,
             PRO_FEATURES,
             PRO_PRICE_DISPLAY,
+            PRO_PRICE_NOTE,
         )
 
         feature_list_html = "".join(
@@ -78,10 +79,11 @@ class AppDialogsMixin:
             f"<h3>Pro features</h3>"
             f"<ul>{feature_list_html}</ul>"
             f"<p><b>Pricing:</b> {PRO_PRICE_DISPLAY}</p>"
+            f"<p>{PRO_PRICE_NOTE}</p>"
             f'<p><a href="{PRO_UPGRADE_URL}">{PRO_UPGRADE_URL}</a></p>'
             f"<p><i>Varuna360 Core is and remains open source under AGPL-3.0. "
             f"Pro is the larger paid edition, also AGPL-3.0, for users who "
-            f"want the additional research tooling.</i></p>"
+            f"want the AI and the additional screens.</i></p>"
         )
 
     # ──────────────────────────────────────────────────────────────────

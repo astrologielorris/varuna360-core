@@ -3,12 +3,13 @@
 Highlight Delegates for QTableWidget
 Provides custom painting to highlight specific rows with theme colors
 """
-from PySide6.QtWidgets import QStyledItemDelegate
+from PySide6.QtWidgets import QStyle, QStyledItemDelegate, QStyleOptionViewItem
 from PySide6.QtGui import QBrush, QColor, QPalette, QPen, QPainterPath, QPolygonF
 from PySide6.QtCore import Qt as QtCore_Qt, QPointF, QRectF
 
 # Import theme for dynamic color updates
 from ui.qt_theme import get_theme_colors, ACCENTS, desat_hex
+from ui.accent_ink import on_accent_ink  # SPEC-THM-001 §13
 
 
 class KarakaHighlightDelegate(QStyledItemDelegate):
@@ -71,11 +72,61 @@ class StrengthHighlightDelegate(QStyledItemDelegate):
         super().__init__(parent)
         self.highlight_cells = set()  # Set of (row, col) tuples with high strength
         self.retrograde_rows = set()  # Set of row indices where planet is retrograde
+        # SPEC-RST-001 D-20: the lit header key's column; its values sit on stones
+        # in each planet's glow colour ({planet: hex}). None = no stones.
+        self.stone_column = None
+        self.stone_colors = {}
+        # td-e6jsp: PLANET lit -> a disc behind each planet symbol (column 0)
+        self.planet_tint = False
+
+    def set_stones(self, column, colors):
+        """Set (or clear, column None) the value stones of the lit column."""
+        self.stone_column = column
+        self.stone_colors = dict(colors or {})
+
+    def set_planet_tint(self, on):
+        """PLANET key lit (with a lit strength column): tint the PLANET column."""
+        self.planet_tint = bool(on)
+
+    def _paint_tint(self, painter, option, index):
+        from apps.panels.strength_source_keys import PLANET_ROWS, paint_planet_tint, parse_value
+        row = index.row()
+        color = self.stone_colors.get(PLANET_ROWS[row]) if 0 <= row < len(PLANET_ROWS) else None
+        value = parse_value(index.sibling(row, self.stone_column).data(QtCore_Qt.ItemDataRole.DisplayRole))
+        if color and value is not None:
+            opt = QStyleOptionViewItem(option)
+            self.initStyleOption(opt, index)      # the text rect as the style lays it out
+            paint_planet_tint(painter, opt, opt.text, color, value)
+
+    def _paint_stone(self, painter, option, index, base):
+        from apps.panels.strength_source_keys import PLANET_ROWS, paint_value_stone, parse_value
+        row = index.row()
+        text = str(index.data(QtCore_Qt.ItemDataRole.DisplayRole) or "")
+        value = parse_value(text)
+        if value is None or not (0 <= row < len(PLANET_ROWS)):
+            return False
+        color = self.stone_colors.get(PLANET_ROWS[row])
+        if not color:
+            return False
+        paint_value_stone(painter, option.rect.adjusted(0, 0, -1, -1), text, color, value,
+                          base, option.font)
+        return True
 
     def paint(self, painter, option, index):
         """Override paint to add background highlighting for high-strength values"""
         # Get current theme colors dynamically (supports theme switching)
         theme = get_theme_colors()
+        if self.stone_column is not None and index.column() == self.stone_column:
+            fill_rect = option.rect.adjusted(0, 0, -1, -1)
+            strong = (index.row(), index.column()) in self.highlight_cells
+            base = theme["secondary_light"] if strong else theme["secondary_dark"]
+            if option.state & QStyle.StateFlag.State_Selected:
+                base = theme["primary"]          # a selected cell keeps its selection ground
+            painter.save()
+            painter.fillRect(fill_rect, QBrush(QColor(base)))
+            painter.restore()
+            if self._paint_stone(painter, option, index, base):
+                return
 
         painter.save()
 
@@ -93,6 +144,8 @@ class StrengthHighlightDelegate(QStyledItemDelegate):
             option.palette.setColor(QPalette.ColorRole.Text, QColor(theme["secondary_text"]))
 
         painter.restore()
+        if self.planet_tint and index.column() == 0 and self.stone_column is not None:
+            self._paint_tint(painter, option, index)
 
         # Disable text elision so "R*" suffix is not truncated
         option.textElideMode = QtCore_Qt.TextElideMode.ElideNone
@@ -123,8 +176,17 @@ class DashaHighlightDelegate(QStyledItemDelegate):
     7. (else)           → secondary_dark        — normal row
     """
 
+    PRESENTATIONS = ("row", "rail", "card")
+
     def __init__(self, parent=None):
         super().__init__(parent)
+        # SPEC-LAYOUT-001 A.1/A.2: ONE delegate for the panel's life; the
+        # presentation only changes geometry and painting, never the channels.
+        self.presentation = "row"
+        self.two_line = False            # right panel, side Full only
+        self.card_height = 0             # shelf cards fill the list viewport height
+        self._sections = None            # row -> section title, one pass per model change
+        self.on_current_changed = None   # panel hook: the current marker moved
         self.highlight_rows = set()      # Current dasha period
         self.selected_row = None         # User click-selection (single row or None)
         self.karaka_rows = set()         # Karaka-match rows
@@ -132,9 +194,90 @@ class DashaHighlightDelegate(QStyledItemDelegate):
         self.whole_sign_rows = set()     # Whole-sign lord-match rows
         self.maturation_rows = set()     # Nisarga maturation year
 
+    def set_presentation(self, presentation, *, two_line=None):
+        """"row" (side Full), "rail" (64 px tiles) or "card" (shelf)."""
+        if presentation not in self.PRESENTATIONS:
+            raise ValueError(f"presentation must be one of {self.PRESENTATIONS}")
+        self.presentation = presentation
+        if two_line is not None:
+            self.two_line = bool(two_line)
+
+    def fields(self, index):
+        """What this item paints in the Rail/Shelf (painting and AI capture, D7a)."""
+        from apps.delegates.dasha_presentation_paint import fields
+        f = fields(index)
+        if not f["separator"] and self.presentation == "card":   # only cards show it
+            f["section"] = self._section(index)
+        return f
+
+    def invalidate_sections(self, *_args):
+        """Rows changed: the section table is rebuilt on next use."""
+        self._sections = None
+
+    def _section(self, index):
+        """Title of the last separator above ``index``: one linear pass per model
+        change, then a lookup (never a back-scan per row)."""
+        if self._sections is None:
+            model, current, table = index.model(), "", []
+            for r in range(model.rowCount()):
+                e = model.index(r, 0).data(QtCore_Qt.ItemDataRole.UserRole)
+                if isinstance(e, dict) and e.get("is_separator"):
+                    current = str(model.index(r, 0).data() or "").strip("- ").strip()
+                table.append(current)
+            self._sections = table
+        row = index.row()
+        return self._sections[row] if 0 <= row < len(self._sections) else ""
+
+    def _channel(self, row, theme):
+        """(background, text) of a row: the seven channels in priority order."""
+        if row in self.highlight_rows:
+            return QColor(theme["primary"]), QColor(on_accent_ink(theme["primary"], theme["primary_text"]))
+        if self.selected_row is not None and row == self.selected_row:
+            return QColor(desat_hex(ACCENTS["green"]["base"])), QColor("#FFFFFF")
+        for rows, accent in ((self.karaka_rows, "gold"), (self.cusp_lord_rows, "cyan"),
+                             (self.whole_sign_rows, "orange")):
+            if row in rows:
+                return QColor(desat_hex(ACCENTS[accent]["base"])), QColor("#1A1A1A")
+        if row in self.maturation_rows:
+            return QColor(theme["secondary_light"]), QColor(theme["secondary_text"])
+        return QColor(theme["secondary_dark"]), QColor(theme["secondary_text"])
+
+    def _painted(self, index):
+        """Fields when this item is custom painted, else None (plain row)."""
+        if self.presentation == "row" and not self.two_line:
+            return None
+        f = self.fields(index)
+        if self.presentation == "row" and (f["separator"] or not f["dates"] or not f["span"]):
+            return None                  # two-line falls back to one line
+        return f
+
+    def sizeHint(self, option, index):
+        f = self._painted(index)
+        if f is None:
+            return super().sizeHint(option, index)
+        from apps.delegates import dasha_presentation_paint as dp
+        if self.presentation == "rail":
+            return dp.rail_size(option, f)
+        if self.presentation == "card":
+            fm_unit = option.fontMetrics.horizontalAdvance("M") * 11
+            return dp.card_size(self.card_height or 150, f, fm_unit)
+        return dp.two_line_size(option)
+
     def paint(self, painter, option, index):
         """Override paint to add background highlighting for dasha periods"""
         theme = get_theme_colors()
+        f = self._painted(index)
+        if f is not None:
+            from apps.delegates import dasha_presentation_paint as dp
+            bg, fg = self._channel(index.row(), theme)
+            if self.presentation == "row":
+                dp.paint_two_line(painter, option, f, bg, fg, dp.muted(fg))
+                return
+            if self.presentation != "row" and bg == QColor(theme["secondary_dark"]):
+                bg = QColor(theme["secondary"])      # tiles/cards lift off the list ground
+            paint = dp.paint_rail if self.presentation == "rail" else dp.paint_card
+            paint(painter, option, f, bg, fg, dp.muted(fg), QColor(theme["secondary_light"]))
+            return
 
         painter.save()
         row = index.row()
@@ -143,8 +286,8 @@ class DashaHighlightDelegate(QStyledItemDelegate):
         if is_current:
             # Current period — theme primary (blue)
             painter.fillRect(option.rect, QBrush(QColor(theme["primary"])))
-            option.palette.setColor(QPalette.ColorRole.Text, QColor(theme["primary_text"]))
-            option.palette.setColor(QPalette.ColorRole.HighlightedText, QColor(theme["primary_text"]))
+            option.palette.setColor(QPalette.ColorRole.Text, QColor(on_accent_ink(theme["primary"], theme["primary_text"])))
+            option.palette.setColor(QPalette.ColorRole.HighlightedText, QColor(on_accent_ink(theme["primary"], theme["primary_text"])))
         elif self.selected_row is not None and row == self.selected_row:
             # User click-selection — green
             painter.fillRect(option.rect, QBrush(QColor(desat_hex(ACCENTS["green"]["base"]))))
@@ -172,11 +315,17 @@ class DashaHighlightDelegate(QStyledItemDelegate):
 
         painter.restore()
         super().paint(painter, option, index)
-        if is_current:
+        # A row the user clicked (Qt selection, filled with primary by the list
+        # style) on an otherwise plain row: same paint-last as the current row,
+        # or its text keeps the ground ink (white on cyan / orange, SPEC-THM-001 §13).
+        plain = not any(row in rows for rows in (self.karaka_rows, self.cusp_lord_rows,
+                                                 self.whole_sign_rows, self.maturation_rows)) \
+            and row != self.selected_row
+        if is_current or (plain and option.state & QStyle.StateFlag.State_Selected):
             # Paint last: qt-material QSS otherwise replaces the palette roles.
             painter.save()
             painter.fillRect(option.rect, QBrush(QColor(theme["primary"])))
-            painter.setPen(QColor(theme["primary_text"]))
+            painter.setPen(QColor(on_accent_ink(theme["primary"], theme["primary_text"])))
             painter.drawText(option.rect.adjusted(8, 0, -4, 0),
                              QtCore_Qt.AlignmentFlag.AlignLeft | QtCore_Qt.AlignmentFlag.AlignVCenter,
                              str(index.data(QtCore_Qt.ItemDataRole.DisplayRole) or ""))
@@ -185,6 +334,8 @@ class DashaHighlightDelegate(QStyledItemDelegate):
     def update_highlights(self, highlight_rows):
         """Update which rows should be highlighted with primary color"""
         self.highlight_rows = set(highlight_rows)
+        if self.on_current_changed is not None:   # e.g. the shelf's "Current:" line
+            self.on_current_changed()
 
     def update_selected_row(self, row_or_none):
         """Update the user click-selected row (single int or None to clear)"""
@@ -422,66 +573,10 @@ class TajikaHighlightDelegate(QStyledItemDelegate):
             cell_size = min(rect.width(), rect.height())
             r = cell_size * 0.28  # radius
 
-            pen = QPen(shape_color, max(1.5, cell_size * 0.07))
-            pen.setCapStyle(QtCore_Qt.PenCapStyle.RoundCap)
-            pen.setJoinStyle(QtCore_Qt.PenJoinStyle.RoundJoin)
-            painter.setPen(pen)
-
-            if shape == "conjunction":
-                # Two overlapping circles (Venn diagram — "coming together")
-                painter.setBrush(QBrush())  # no fill
-                cr = r * 0.55
-                offset = cr * 0.45
-                painter.drawEllipse(QPointF(cx - offset, cy), cr, cr)
-                painter.drawEllipse(QPointF(cx + offset, cy), cr, cr)
-
-            elif shape == "sextile":
-                # 6-pointed star (two overlapping triangles)
-                painter.setBrush(QBrush(shape_color))
-                path = QPainterPath()
-                outer = r
-                inner = r * 0.5
-                for i in range(6):
-                    angle_out = math.radians(i * 60 - 90)
-                    angle_in = math.radians(i * 60 - 90 + 30)
-                    ox = cx + outer * math.cos(angle_out)
-                    oy = cy + outer * math.sin(angle_out)
-                    ix = cx + inner * math.cos(angle_in)
-                    iy = cy + inner * math.sin(angle_in)
-                    if i == 0:
-                        path.moveTo(ox, oy)
-                    else:
-                        path.lineTo(ox, oy)
-                    path.lineTo(ix, iy)
-                path.closeSubpath()
-                painter.drawPath(path)
-
-            elif shape == "square":
-                # Square outline
-                painter.setBrush(QBrush())  # no fill
-                half = r * 0.8
-                painter.drawRect(QRectF(cx - half, cy - half, half * 2, half * 2))
-
-            elif shape == "trine":
-                # Equilateral triangle pointing up
-                painter.setBrush(QBrush())  # no fill
-                tri = QPolygonF([
-                    QPointF(cx, cy - r),                          # top
-                    QPointF(cx - r * 0.866, cy + r * 0.5),       # bottom-left
-                    QPointF(cx + r * 0.866, cy + r * 0.5),       # bottom-right
-                ])
-                painter.drawPolygon(tri)
-
-            elif shape == "opposition":
-                # Two circles connected by a line (dumbbell — "facing each other")
-                painter.setBrush(QBrush(shape_color))
-                cr = r * 0.3
-                span = r * 0.75
-                painter.drawEllipse(QPointF(cx - span, cy), cr, cr)
-                painter.drawEllipse(QPointF(cx + span, cy), cr, cr)
-                painter.drawLine(QPointF(cx - span, cy), QPointF(cx + span, cy))
-
-            elif shape == "diagonal":
+            if shape != "diagonal":
+                paint_aspect_shape(painter, shape, cx, cy, r, shape_color,
+                                   max(1.5, cell_size * 0.07))
+            else:
                 # Thin dash for self-aspect
                 dash_color = QColor(theme["secondary_light"])
                 painter.setPen(QPen(dash_color, 1.5))
@@ -502,6 +597,70 @@ class TajikaHighlightDelegate(QStyledItemDelegate):
     def update_shapes(self, cell_shapes):
         """Update per-cell shape map. Dict of (row, col) -> shape key string."""
         self.cell_shapes = dict(cell_shapes)
+
+
+def paint_aspect_shape(painter, shape, cx, cy, r, shape_color, pen_width):
+    """The five Tajika aspect shapes of the matrix cells (SPEC-TJK-003 §3.4), shared
+    with the glyph beads of the South Indian center drawing. ``r`` is the shape
+    radius, ``pen_width`` the stroke; the painter's brush and pen are set here."""
+    import math
+    pen = QPen(shape_color, pen_width)
+    pen.setCapStyle(QtCore_Qt.PenCapStyle.RoundCap)
+    pen.setJoinStyle(QtCore_Qt.PenJoinStyle.RoundJoin)
+    painter.setPen(pen)
+    if shape == "conjunction":
+        # Two overlapping circles (Venn diagram — "coming together")
+        painter.setBrush(QBrush())  # no fill
+        cr = r * 0.55
+        offset = cr * 0.45
+        painter.drawEllipse(QPointF(cx - offset, cy), cr, cr)
+        painter.drawEllipse(QPointF(cx + offset, cy), cr, cr)
+
+    elif shape == "sextile":
+        # 6-pointed star (two overlapping triangles)
+        painter.setBrush(QBrush(shape_color))
+        path = QPainterPath()
+        outer = r
+        inner = r * 0.5
+        for i in range(6):
+            angle_out = math.radians(i * 60 - 90)
+            angle_in = math.radians(i * 60 - 90 + 30)
+            ox = cx + outer * math.cos(angle_out)
+            oy = cy + outer * math.sin(angle_out)
+            ix = cx + inner * math.cos(angle_in)
+            iy = cy + inner * math.sin(angle_in)
+            if i == 0:
+                path.moveTo(ox, oy)
+            else:
+                path.lineTo(ox, oy)
+            path.lineTo(ix, iy)
+        path.closeSubpath()
+        painter.drawPath(path)
+
+    elif shape == "square":
+        # Square outline
+        painter.setBrush(QBrush())  # no fill
+        half = r * 0.8
+        painter.drawRect(QRectF(cx - half, cy - half, half * 2, half * 2))
+
+    elif shape == "trine":
+        # Equilateral triangle pointing up
+        painter.setBrush(QBrush())  # no fill
+        tri = QPolygonF([
+            QPointF(cx, cy - r),                          # top
+            QPointF(cx - r * 0.866, cy + r * 0.5),       # bottom-left
+            QPointF(cx + r * 0.866, cy + r * 0.5),       # bottom-right
+        ])
+        painter.drawPolygon(tri)
+
+    elif shape == "opposition":
+        # Two circles connected by a line (dumbbell — "facing each other")
+        painter.setBrush(QBrush(shape_color))
+        cr = r * 0.3
+        span = r * 0.75
+        painter.drawEllipse(QPointF(cx - span, cy), cr, cr)
+        painter.drawEllipse(QPointF(cx + span, cy), cr, cr)
+        painter.drawLine(QPointF(cx - span, cy), QPointF(cx + span, cy))
 
 
 class RetinueColorDelegate(QStyledItemDelegate):

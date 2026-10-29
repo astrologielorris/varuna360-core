@@ -54,21 +54,14 @@ def _format_chart_title(chart, aditya_mode="aditya", chart_data=None, timezone_s
     if not chart_data:
         return f"{person_name} | {asc_str}"
 
-    year = chart_data['local_year'] if 'local_year' in chart_data else chart_data.get('year', 1900)
-    month = chart_data['local_month'] if 'local_month' in chart_data else chart_data.get('month', 1)
-    day = chart_data['local_day'] if 'local_day' in chart_data else chart_data.get('day', 1)
-    hour = chart_data['local_hour'] if 'local_hour' in chart_data else chart_data.get('hour', 0)
-    minute = chart_data['local_minute'] if 'local_minute' in chart_data else chart_data.get('minute', 0)
-    second = chart_data['local_second'] if 'local_second' in chart_data else chart_data.get('second', 0)
-    # SPEC-CAL-001: DISPLAY-ONLY calendar convention. Re-express the stored
-    # (astronomical) civil date for the title string; the tz-offset math below
-    # keeps the astronomical year/month/day (the offset lookup must not shift
-    # by a display convention). Byte-identical at the astronomical default.
-    from core.time_utils import display_civil_date
-    disp_year, disp_month, disp_day = display_civil_date(year, month, day)
-    date_str = f"{disp_month:02d}/{disp_day:02d}/{disp_year}"
-    # Seconds shown for D60 precision (birth-time adjustment works to the second).
-    time_str = f"{hour:02d}:{minute:02d}:{int(second):02d}"
+    # local_* keys first (core.chart_title, shared with the CLIs' "Born:" line).
+    # SPEC-CAL-001: DISPLAY-ONLY calendar convention. The date string is the
+    # stored (astronomical) civil date re-expressed for the title; the tz-offset
+    # math below keeps the astronomical year/month/day (the offset lookup must
+    # not shift by a display convention). Seconds shown for D60 precision.
+    from core.chart_title import title_civil_fields, title_date_time
+    year, month, day, hour, minute, second = title_civil_fields(chart_data)
+    date_str, time_str = title_date_time(chart_data)
 
     tz_part = ""
     try:
@@ -142,12 +135,18 @@ class ChartManager:
     # FILE DIALOG
     # =========================================================================
 
-    def open_file_dialog(self):
-        """Show file dialog to open CHTK file."""
+    def pick_chart_file(self):
+        """Ask for a chart file with File > Open's filter and start folder.
+
+        Returns the chosen ``Path`` or ``None`` on cancel. Loads nothing
+        (SPEC-DUAL-001 T7: chart B's "OPEN .CHTK FILE..." uses it too)."""
         from utils.path_translator import translate_path
         from managers.settings_manager import get_settings
         # Read default folder from SettingsManager
-        start_dir = str(PROJECT_ROOT)  # Fallback
+        from state.user_data import is_frozen
+        # Fallback. A packaged app's own folder is no place to start (on macOS it
+        # is inside the .app bundle), so customers start in their home folder.
+        start_dir = str(Path.home() if is_frozen() else PROJECT_ROOT)
 
         try:
             _sm = get_settings()
@@ -174,8 +173,13 @@ class ChartManager:
             "Chart Files (*.chtk *.toml);;CHTK Files (*.chtk);;TOML Charts (*.toml);;All Files (*)"
         )
 
-        if file_path:
-            self.load_chart(Path(file_path))
+        return Path(file_path) if file_path else None
+
+    def open_file_dialog(self):
+        """Show file dialog to open CHTK file."""
+        path = self.pick_chart_file()
+        if path:
+            self.load_chart(path)
 
     # =========================================================================
     # CHART LOADING
@@ -191,9 +195,11 @@ class ChartManager:
             self.gui.statusBar().showMessage("No chart loaded to reload")
 
     def load_chart(self, chtk_path):
-        """Load CHTK file and display chart."""
+        """Load CHTK file and display chart. Returns True once the whole load completed (active chart, memory
+        row, finalize), False on a failure (the error is shown, never raised),
+        None when another load is running (SPEC-DUAL-001 checked activation)."""
         if getattr(self, '_loading_chart', False):
-            return
+            return None
         from core.chart_factory import make_source_params
         from managers.birth_data_manager import BirthDataManager
 
@@ -208,7 +214,12 @@ class ChartManager:
             # This is the Single Source of Truth for all UI components.
             # SPEC-IMPORT-001 §6.2: dispatch by extension (.chtk / .toml).
             # chtk_path may be any supported chart file (name kept for history).
-            birth_data = BirthDataManager.create_birth_data_from_file(str(chtk_path))
+            # canonicalize=True is intentional for the GUI load (td-tw7hq): do not flip.
+            # load_birth_data_and_jd is THE loading path every CLI shares, so a
+            # CLI builds the chart the app shows (same birth_data, same JD).
+            from core.chart_loading import load_birth_data_and_jd
+            birth_data, birth_jd = load_birth_data_and_jd(
+                str(chtk_path), canonicalize=True)
 
             # Validate and surface warnings (SPEC-TZ-001 8a, non-blocking).
             # Console [TZ-CHECK] lines now; status bar message merged into the
@@ -222,12 +233,10 @@ class ChartManager:
             latitude = birth_data.get('latitude', 0)
             longitude = birth_data.get('longitude', 0)
 
-            # Calculate Julian Day for mode switching (SPEC-IMPORT-001 §6.2:
-            # honor an authoritative TOML [moment].jd, else compute from civil
-            # UTC). Shared with build_chart_from_file via jd_from_birth_data so
-            # the two paths cannot drift.
-            from core.chart_factory import jd_from_birth_data
-            birth_jd = jd_from_birth_data(birth_data)
+            # birth_jd (from load_birth_data_and_jd above): SPEC-IMPORT-001
+            # §6.2, an authoritative TOML [moment].jd is honoured, else it is
+            # computed from civil UTC (jd_from_birth_data), the rule
+            # build_chart_from_file and the CLIs share.
 
             # Store birth parameters for mode switching
             self.gui.birth_jd = birth_jd
@@ -338,6 +347,7 @@ class ChartManager:
                 self.gui.statusBar().showMessage(f"Loaded: {chart_name}")
 
             self.gui.loading_manager.finish()
+            return True
 
         except Exception as e:
             self.gui.loading_manager.force_finish()
@@ -345,6 +355,7 @@ class ChartManager:
             print(f"Error loading chart: {e}")
             import traceback
             traceback.print_exc()
+            return False
         finally:
             self._loading_chart = False
 
@@ -365,14 +376,13 @@ class ChartManager:
         active chart's current frame so the overlay renders in the same zodiac.
         """
         from pathlib import Path
-        from core.chart_factory import build_chart_from_params, jd_from_birth_data
-        from managers.birth_data_manager import BirthDataManager
+        from core.chart_factory import build_chart_from_params
+        from core.chart_loading import load_birth_data_and_jd
 
         chtk_path = Path(chtk_path) if isinstance(chtk_path, str) else chtk_path
 
-        birth_data = BirthDataManager.create_birth_data_from_file(
+        birth_data, birth_jd = load_birth_data_and_jd(
             str(chtk_path), canonicalize=False)
-        birth_jd = jd_from_birth_data(birth_data)
 
         if mode is None:
             mode = self.state.aditya_mode
@@ -422,9 +432,11 @@ class ChartManager:
         else:
             # No charts remain - clear display and show empty state
 
-            # Clear chart view by drawing empty grid
+            # Clear the South Indian views: clear_chart drops their chart, so no
+            # overlay redraw (THREAD chains, dignity) can paint the closed chart
+            # back on the empty grid (SPEC-EXCH-002 3.4.2, review 2026-10-15).
             if hasattr(self.gui, 'chart_view'):
-                self.gui.chart_view.draw_empty_grid()
+                self.gui.chart_view.clear_chart()
 
             # SPEC-COT-001 §4.8: _update_all_chart_views returns before any
             # fan-out when active_chart is None, so nothing downstream would
@@ -550,10 +562,16 @@ class ChartManager:
         try:
             if full_window:
                 # House mechanism: widget.grab(), never screen.grabWindow().
+                from managers.font_refresh_deferral import run_pending_for  # td-8m3kd
+                run_pending_for(self.gui)
                 pixmap = self.gui.grab()
                 saved = pixmap.save(str(filepath), "PNG")
             else:
                 # Render the chart scene to a pixmap
+                # td-8m3kd: the chart view may be hidden (another style on
+                # screen); a font change waiting for its Show is applied first.
+                from managers.font_refresh_deferral import run_pending_for
+                run_pending_for(self.gui.chart_view)
                 scene = self.gui.chart_view.scene
                 scene_rect = scene.sceneRect()
 

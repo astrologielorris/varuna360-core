@@ -64,48 +64,62 @@ PRO_LEARN_MORE_URL: Final[str] = "https://360heartsinthesky.com"
 # urgency. The Help dialog renders these verbatim.
 
 PRO_TAGLINE: Final[str] = (
-    "Varuna360 Pro: the expanded edition with new screens, research tools, "
-    "and features added over time."
+    "Varuna360 Pro: the AI edition of Varuna360, built for AI and fully "
+    "connected to it."
 )
 
 PRO_DESCRIPTION: Final[str] = (
-    "Varuna360 Core is the open-source foundation of Varuna360. The Pro edition "
-    "is a growing suite of new and more powerful features: full transit screen, "
-    "eclipse screen, solar return screen, advanced research panels, AI-assisted "
-    "interpretation, and more being added over time. Core remains fully functional "
-    "on its own."
+    "Varuna360 Lite is complete on its own. Pro adds full AI interpretation "
+    "with local access to an AI: almost every task the software can do is also "
+    "an AI tool, so you can simply ask. The AI computes the charts, finds the "
+    "dates and searches for what you are looking for, and it works interactively "
+    "with the program window. Pro comes with a manual, a few extra screens, and "
+    "keeps growing: new screens and AI tools are added over time."
 )
 
 # ─── Feature catalog ────────────────────────────────────────────────────────
-# Aligned with the public website feature list. Each entry is a short
-# phrase suitable for a bullet in the in-app About-Pro dialog. Keep this
-# list in sync with the README template and the website pricing page.
-# When editing, update all three surfaces together (this file, the README
-# template at release_gates/templates/public_repo/README.md, and the
-# website) to avoid split-brain copy.
+# What Pro adds on top of Lite (Lorris, 2026-10-29). Features Lite already
+# has (Lajitadi avastha, Nakshatra wheel, one-click chart creation, web chart
+# download, Find Chart) are not listed. Keep in sync with the README template
+# at release_gates/templates/public_repo/README.md and the website.
 
 PRO_FEATURES: Final[tuple[str, ...]] = (
-    "Full transit screen with real-time tracking",
-    "Eclipse and Saros panel: per-country Ascendant map plus historical Saros cycle research",
+    "Full AI interpretation of your charts, with local access to an AI",
+    "Built for AI: the software's tasks are AI tools the AI runs for you",
+    "Just ask: dates, ingresses, conjunctions and patterns found by the AI",
+    "Interactive: the AI opens charts and shows its findings in the window",
+    "Connect your own AI apps to Varuna360",
+    "Eclipse pages: per-country Ascendant map, Saros Explorer, Eclipse Reading",
+    "Transit page",
     "Solar return screen",
-    "AI-assisted chart interpretation",
-    "Psychological pattern and trauma detection (Lajitadi)",
-    "Element and Modality statistical analysis",
-    "Chinese Lunar New Year tab",
-    "Nakshatra wheel with innovative display options",
-    "Birth Finder: reverse-engineer charts from planetary positions",
-    "Pattern searching across time and databases",
-    "One-click chart creation plus Wikipedia biography search",
-    "Automatic chart download from the web",
-    "Planet Ingress and Conjunction finder",
-    "New features added regularly",
+    "Chinese Lunar New Year page",
+    "A manual for the AI features",
+    "New screens and AI tools added over time",
 )
+
+# ─── AI in Pro (SPEC-EDN-002 D-21) ──────────────────────────────────────────
+# Lite keeps the AI button in the status bar; clicking it shows this message
+# instead of the AI hub. Lorris's wording (2026-10-28), lightly edited.
+
+PRO_AI_TITLE: Final[str] = "AI"
+PRO_AI_REQUIRED: Final[str] = (
+    "Please use the Pro version to have access to the AI abilities."
+)
+PRO_AI_MORE: Final[str] = "About Varuna360 Pro..."
 
 # ─── Pricing ────────────────────────────────────────────────────────────────
 # Optional — the dialog can choose to display this or omit it. Editing
 # the price here automatically updates everywhere it is shown.
 
-PRO_PRICE_DISPLAY: Final[str] = "€29.99 / month"
+PRO_PRICE_DISPLAY: Final[str] = "€14.99 / month (starting price)"
+
+# Shown under the price in the About-Pro dialog (Lorris, 2026-10-29).
+PRO_PRICE_NOTE: Final[str] = (
+    "Pro is released a few days after Lite, at a starting price of €14.99 / month. "
+    "It is stable and its AI tools have been tested for a long time, but a few "
+    "areas are still being improved. The price will probably rise to €20 / month "
+    "over time, as Pro is fully tested and grows."
+)
 
 # ─── Subscription plans (website parity) ────────────────────────────────────
 # This desktop app is unlocked by a license key from the Explorateur plan
@@ -133,7 +147,7 @@ PRO_PRICE_DISPLAY: Final[str] = "€29.99 / month"
 #   TIER_FREE        Free (EUR0)
 #   TIER_MOBILE      Varuna360 Mobile (EUR3) — mobile + web only, NOT this desktop
 #   TIER_EXPLORATEUR Explorateur (EUR9.99) — the plan whose key unlocks THIS desktop
-#   TIER_PRO         Pro (EUR29.99) — COMING SOON, not purchasable yet
+#   TIER_PRO         Pro (EUR14.99, Lorris 2026-10-28) — COMING SOON, not purchasable yet
 #
 # Only an Explorateur license key (or an admin comp) activates the desktop.
 # Free and Mobile keys do NOT unlock it. Pro is a coming-soon teaser: it is
@@ -146,7 +160,7 @@ TIER_PRO_NAME: Final[str] = "Pro"
 TIER_FREE_PRICE: Final[str] = "€0"
 TIER_MOBILE_PRICE: Final[str] = "€3 / month"
 TIER_EXPLORATEUR_PRICE: Final[str] = "€9.99 / month"
-TIER_PRO_PRICE: Final[str] = "€29.99 / month"
+TIER_PRO_PRICE: Final[str] = "€14.99 / month"
 
 # Pro is not yet available. The dialog reads this flag to grey the column and
 # show a "coming soon" tag instead of any purchase affordance.
@@ -179,7 +193,7 @@ TIER_EXPLORATEUR_FEATURES: Final[tuple[str, ...]] = (
 
 TIER_PRO_FEATURES: Final[tuple[str, ...]] = (
     "Everything in Explorateur",
-    "Pro only desktop plus mobile features (AI transit analysis, and more)",
+    "Full AI interpretation, connected to every desktop tool, plus eclipse and transit pages",
     "Coming soon, not yet available",
 )
 

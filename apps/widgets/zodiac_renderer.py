@@ -51,7 +51,8 @@ def load_zodiac_icon(zodiac_index, size, variation_settings, icon_cache):
     Returns:
         QPixmap or None
     """
-    from ui.qt_theme import desat_image, sat_key  # local: keep module import-light
+    from ui.qt_theme import sat_key  # local: keep module import-light
+    from apps.widgets.sign_icon_loader import scaled_sign_pixmap
 
     western_name = WESTERN_NAMES[zodiac_index]
     variation = variation_settings.get(western_name, 1)
@@ -73,18 +74,7 @@ def load_zodiac_icon(zodiac_index, size, variation_settings, icon_cache):
         icon_cache[cache_key] = None
         return None
 
-    qimage = QImage(str(icon_path))
-    if qimage.isNull():
-        icon_cache[cache_key] = None
-        return None
-
-    qimage = qimage.scaled(
-        size, size,
-        Qt.AspectRatioMode.KeepAspectRatio,
-        Qt.TransformationMode.SmoothTransformation
-    )
-    qimage = desat_image(qimage)
-    pixmap = QPixmap.fromImage(qimage)
+    pixmap = scaled_sign_pixmap(icon_path, size)
     icon_cache[cache_key] = pixmap
     return pixmap
 
@@ -181,7 +171,7 @@ def draw_sign_names(scene, cx, cy, radius, rotation_offset,
                     aditya_mode, use_western_names, sign_language,
                     display_settings, z_base=5,
                     cot_faces=None, cot_dpr=1.0, cot_tag=None,
-                    scale_sign_labels=False, show_names=True):
+                    scale_sign_labels=False, show_names=True, as_numbers=False):
     """Draw Aditya or Western sign names at sector centers.
 
     Args:
@@ -202,6 +192,7 @@ def draw_sign_names(scene, cx, cy, radius, rotation_offset,
         cot_dpr: device pixel ratio for the suit pip raster.
         cot_tag: UserRole tag written on the card items.
         show_names: False draws standalone CoT plaques without sign-name items.
+        as_numbers: label each sector with the sign's number (1-12) instead.
     """
     sign_settings = display_settings.get("sign_name", {})
     font_size = sign_settings.get("font_size", 26)
@@ -217,7 +208,7 @@ def draw_sign_names(scene, cx, cy, radius, rotation_offset,
     # Display-Scale-insensitive; and including get_scale_factor would grow the
     # name past the fixed sector arc and drop COT cards (the G2b regression).
     # Gated by scale_sign_labels: ONLY the wheel opts in — the shared function
-    # also serves the Antikythera name band and the preset-proof Nakshatra
+    # also serves a Pro map name band and the preset-proof Nakshatra
     # mini-ring, which keep raw sizing. Preset ratio <= 1, so the paired COT
     # plaque never overflows the arc.
     from ui.qt_theme import get_area_font_size, AREA_DEFAULTS
@@ -253,6 +244,13 @@ def draw_sign_names(scene, cx, cy, radius, rotation_offset,
                 offset_x=offset_x,
                 offset_y=offset_y,
                 sign_language=sign_language)
+            if as_numbers:
+                # Signs as numbers (ui.sign_numbers): the number replaces the
+                # name, re-centred on the sector exactly as SignNameItem centres.
+                from ui.sign_numbers import sign_number
+                item.setPlainText(sign_number(i))
+                item.setPos(x - item.boundingRect().width() / 2 + offset_x,
+                            y - item.boundingRect().height() / 2 + offset_y)
             item.setZValue(z_base)
             scene.addItem(item)
 

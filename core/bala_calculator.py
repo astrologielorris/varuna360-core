@@ -9,13 +9,11 @@ Computes the 3 main Shadbala components:
     2. Uccha (Exaltation Strength) - Distance from exaltation degree (0-60)
     3. Chesta (Motion Strength) - Retrograde/speed based (0-60)
 
-Combined Score:
-    DUC Bala = (Digbala + Uccha + Chesta) / 3 (arithmetic mean).
-    (D)ig (U)ccha (C)hesta; each component contributes an equal 1/3 share.
-
-All formulas verified against reference charts (Dec 2025). The geometric->
-arithmetic change and the equal-ratio range verification are documented in
-the DecBala range report (SPEC-WZA-001).
+Combined Score (setting ``strength.duc_method``, SPEC-STR-001 §7.5):
+    "equal" (default): DUC Bala = (Digbala + Uccha + Chesta) / 3, one third each.
+    "wilhelm" (Ernst Wilhelm): Ishta = (Uccha + Chesta) / 2, then
+        DUC Bala = (Ishta + Digbala) / 2, so Dig 1/2, Uccha 1/4, Chesta 1/4.
+    Callers pass the method explicitly (``duc_method``); never read here.
 
 Uccha supports DUAL ZODIAC SYSTEMS via aditya_mode parameter:
 - "aditya" (default): Aditya Circle exaltation degrees (shifted -30° from traditional)
@@ -40,6 +38,9 @@ try:
     HAS_SWISSEPH = True
 except ImportError:
     HAS_SWISSEPH = False
+
+from core.bala_positions import (  # noqa: E402
+    PLANET_IDS, tropical_positions as _tropical_positions, tropical_rebuild as _tropical_rebuild)
 
 # ============================================================
 # CONSTANTS
@@ -87,41 +88,32 @@ BEST_HOUSE = {
     'Saturn': 7,    # 7th house cusp (Descendant)
 }
 
-# Swiss Ephemeris planet IDs
-PLANET_IDS = {
-    'Sun': 0,       # swe.SUN
-    'Moon': 1,      # swe.MOON
-    'Mars': 4,      # swe.MARS
-    'Mercury': 2,   # swe.MERCURY
-    'Jupiter': 5,   # swe.JUPITER
-    'Venus': 3,     # swe.VENUS
-    'Saturn': 6,    # swe.SATURN
-}
-
 # ============================================================
 # HELPER FUNCTIONS
 # ============================================================
 
-def get_planet_speed(planet_name, julian_day):
+def get_planet_speed(planet_name, julian_day, default=1.0):
     """
     Get planet's daily motion (speed) from Swiss Ephemeris.
 
     Args:
         planet_name: One of Sun, Moon, Mars, Mercury, Jupiter, Venus, Saturn
         julian_day: Julian Day number
+        default: returned when unreadable; the bala pipeline passes the chart's
+            own speed so a failed read never flips retrograde to direct (td-ojcsd)
 
     Returns:
         Speed in degrees/day (negative = retrograde)
     """
     if not HAS_SWISSEPH or planet_name not in PLANET_IDS:
-        return 1.0  # Default speed
+        return default
 
     planet_id = PLANET_IDS[planet_name]
     try:
         result = swe.calc_ut(julian_day, planet_id)
         return result[0][3]  # Speed is index 3
     except Exception:
-        return 1.0
+        return default
 
 def _get_venus_synodic_angle(julian_day, sun_longitude):
     """
@@ -147,7 +139,7 @@ def _get_venus_synodic_angle(julian_day, sun_longitude):
         return None
 
     try:
-        flag_helctr = getattr(swe, 'FLG_HELCTR', 8)
+        flag_helctr = swe.FLG_HELCTR  # 8; pyswisseph always defines it
         venus_helio = swe.calc_ut(julian_day, PLANET_IDS['Venus'], flag_helctr)
         earth_helio_long = (sun_longitude + 180.0) % 360.0
         synodic = (venus_helio[0][0] - earth_helio_long) % 360.0
@@ -626,7 +618,7 @@ def calculate_chesta(planet_name, planet_long_or_pdata, sun_long=None, speed=Non
         planet_long = pdata.get(planet_name, {}).get('decimal_degrees', 0)
         speed = pdata.get(planet_name, {}).get('speed', 1.0)
         if julian_day is not None and HAS_SWISSEPH:
-            speed = get_planet_speed(planet_name, julian_day)
+            speed = get_planet_speed(planet_name, julian_day, default=speed)
     else:
         planet_long = planet_long_or_pdata
         if sun_long is None:
@@ -656,42 +648,36 @@ def calculate_chesta(planet_name, planet_long_or_pdata, sun_long=None, speed=Non
 # DUC BALA (Combined Score)
 # ============================================================
 
-def calculate_duc_bala(digbala, uccha, chesta):
+DUC_METHOD_KEY = "strength.duc_method"
+DUC_METHODS = ("equal", "wilhelm")
+
+
+def duc_method_from(get) -> str:
+    """The DUC method a ``get(key, default)`` settings reader holds; unknown: equal."""
+    method = get(DUC_METHOD_KEY, DUC_METHODS[0])
+    return method if method in DUC_METHODS else DUC_METHODS[0]
+
+
+def calculate_duc_bala(digbala, uccha, chesta, method="equal"):
+    """DUC Bala (0-60) from Digbala, Uccha and Chesta (each 0-60).
+
+    ``method`` "equal": the arithmetic mean, each bala an equal 1/3 share (the
+    geometric mean it replaced collapsed toward zero on one weak bala, SPEC-WZA-001
+    §4.1). "wilhelm": Ishta = (Uccha + Chesta) / 2, then (Ishta + Digbala) / 2:
+    Dig counts double (1/2, 1/4, 1/4). An unknown method is "equal".
     """
-    Calculate DUC Bala (Dig, Uccha, Chesta combined score).
-
-    Uses the Arithmetic Mean: (Digbala + Uccha + Chesta) / 3
-
-    Rationale:
-        - Each of the three balas contributes an equal 1/3 share; the partial
-          derivative of DUC Bala with respect to each component is exactly 1/3,
-          so no single bala dominates or is over-penalized.
-        - Replaces the former geometric mean (cube root of the product), which
-          collapsed toward zero whenever a single component was weak. The
-          equal-ratio intent is justified by the real attainable range of each
-          component (each fills 0-60 comparably), verified in
-          the DecBala range report (SPEC-WZA-001 §4.1).
-        - Range: 0-60 (same as individual balas).
-
-    Args:
-        digbala: Directional strength (0-60)
-        uccha: Exaltation strength (0-60)
-        chesta: Motion strength (0-60)
-
-    Returns:
-        DUC Bala value (0-60)
-    """
-    duc = (digbala + uccha + chesta) / 3.0
-
-    # Defensive clamp: keep the documented 0-60 contract even if a component
-    # arrives slightly out of range.
+    if method == "wilhelm":
+        duc = ((uccha + chesta) / 2.0 + digbala) / 2.0
+    else:
+        duc = (digbala + uccha + chesta) / 3.0
+    # Defensive clamp: the 0-60 contract holds even for an out-of-range component.
     return max(0.0, min(60.0, duc))
 
 # ============================================================
 # MAIN INTERFACE
 # ============================================================
 
-def get_all_bala_data(chart_or_data, aditya_mode=None, hsys="C"):
+def get_all_bala_data(chart_or_data, aditya_mode=None, hsys="C", duc_method=None):
     """
     Calculate all 3 Balas + DUC Bala for all 7 classical planets.
 
@@ -704,6 +690,7 @@ def get_all_bala_data(chart_or_data, aditya_mode=None, hsys="C"):
         aditya_mode: "aditya" for Aditya system, "tropical_classic" for Tropical.
                      If None and a Chart is passed, derived from chart.context.circle.
                      If None and a dict is passed, defaults to "aditya".
+        duc_method: the DUC Bala method (``DUC_METHODS``); None is "equal".
 
     Returns:
         Dict with structure:
@@ -722,20 +709,20 @@ def get_all_bala_data(chart_or_data, aditya_mode=None, hsys="C"):
         from libaditya.objects.context import Circle
         from libaditya import constants as _const
         chart = chart_or_data
-        is_sidereal = chart.context.sysflg == _const.SID
-        if is_sidereal:
-            # SPEC-STR-001 §6.3: sidereal must use classic exaltation
-            from core.chart_factory import rebuild_chart
-            chart = rebuild_chart(chart, mode="tropical_classic")
-            if chart.context.sysflg == _const.SID:
-                raise ValueError("rebuild_chart failed to produce tropical chart")
+        tropical = None
+        if chart.context.sysflg == _const.SID:
+            # SPEC-STR-001 §6.3: classic exaltation on tropical calc_ut longitude
+            # + speed (v1.3); a whole tropical rebuild only when that fails.
+            tropical = _tropical_positions(chart.context.timeJD.jd)
+            if tropical is None:
+                chart = _tropical_rebuild(chart)
             aditya_mode = "tropical_classic"
         elif aditya_mode is None:
             if chart.context.circle == Circle.ADITYA:
                 aditya_mode = "aditya"
             else:
                 aditya_mode = "tropical_classic"
-        return _bala_from_chart(chart, aditya_mode)
+        return _bala_from_chart(chart, aditya_mode, tropical, duc_method)
 
     # ---- Legacy dict path ----
     if isinstance(chart_or_data, dict):
@@ -746,12 +733,13 @@ def get_all_bala_data(chart_or_data, aditya_mode=None, hsys="C"):
         )
         if 'error' in chart_or_data:
             return {}
-        return _bala_from_pdata(chart_or_data, aditya_mode or "aditya", hsys=hsys)
+        return _bala_from_pdata(chart_or_data, aditya_mode or "aditya", hsys=hsys,
+                                duc_method=duc_method)
 
     return {}
 
 
-def _bala_from_pdata(pdata, aditya_mode, hsys="C"):
+def _bala_from_pdata(pdata, aditya_mode, hsys="C", duc_method=None):
     """Internal worker — runs the 7-planet bala loop on a renderer dict.
 
     Kept private so the public surface advertises the Chart API. This worker
@@ -796,8 +784,7 @@ def _bala_from_pdata(pdata, aditya_mode, hsys="C"):
         uccha = calculate_uccha(planet_long, planet_name, aditya_mode)
         chesta = calculate_chesta(planet_name, pdata, julian_day=julian_day)
 
-        # Calculate combined DUC Bala
-        duc_bala = calculate_duc_bala(digbala, uccha, chesta)
+        duc_bala = calculate_duc_bala(digbala, uccha, chesta, duc_method or "equal")
 
         result[planet_name] = {
             'digbala': round(digbala, 1),
@@ -809,8 +796,27 @@ def _bala_from_pdata(pdata, aditya_mode, hsys="C"):
     return result
 
 
-def _bala_from_chart(chart, aditya_mode):
-    """Internal worker — runs the 7-planet bala loop on a Chart object."""
+def _chart_positions(chart, jd):
+    """{planet: (longitude, speed)} of the chart's own planets (missing: skipped)."""
+    all_planets = chart.rashi().planets()
+    out = {}
+    for planet_name in PLANET_IDS:
+        try:
+            planet_long = all_planets[planet_name].ecliptic_longitude()
+        except (KeyError, TypeError):
+            continue
+        try:  # unrounded: a rounded near-station speed reads -0.0 (td-z0qqp)
+            own = all_planets[planet_name].long_speed
+        except (KeyError, TypeError, AttributeError):
+            own = 1.0
+        speed = get_planet_speed(planet_name, jd, default=own)
+        out[planet_name] = (planet_long, speed)
+    return out
+
+
+def _bala_from_chart(chart, aditya_mode, tropical=None, duc_method=None):
+    """Internal worker — runs the 7-planet bala loop on a Chart object.
+    ``tropical``: {planet: (longitude, speed)} replacing the chart's own planets."""
     jd = chart.context.timeJD.jd
     lat = chart.context.location.lat
     lon = chart.context.location.long
@@ -819,8 +825,7 @@ def _bala_from_chart(chart, aditya_mode):
     # authoritative SE code; thread it into swe.houses() and calculate_digbala().
     hsys = getattr(chart.context, 'hsys', None) or 'C'
 
-    rashi = chart.rashi()
-    all_planets = rashi.planets()
+    positions = _chart_positions(chart, jd) if tropical is None else tropical
 
     armc = None
     eps = None
@@ -833,33 +838,17 @@ def _bala_from_chart(chart, aditya_mode):
             armc = None
             eps = None
 
-    try:
-        sun_long = all_planets['Sun'].ecliptic_longitude()
-    except (KeyError, TypeError):
-        sun_long = 0.0
+    sun_long = positions.get('Sun', (0.0, None))[0]
 
     result = {}
 
-    for planet_name in ['Sun', 'Moon', 'Mars', 'Mercury', 'Jupiter', 'Venus', 'Saturn']:
-        try:
-            planet_long = all_planets[planet_name].ecliptic_longitude()
-        except (KeyError, TypeError):
-            continue
-
-        if HAS_SWISSEPH:
-            speed = get_planet_speed(planet_name, jd)
-        else:
-            try:
-                speed = all_planets[planet_name].longitude_speed()
-            except (KeyError, TypeError, AttributeError):
-                speed = 1.0
-
+    for planet_name, (planet_long, speed) in positions.items():
         digbala = calculate_digbala(planet_long, {}, planet_name,
                                     jd_ut=jd, lat=lat, lon=lon,
                                     armc=armc, eps=eps, hsys=hsys)
         uccha = calculate_uccha(planet_long, planet_name, aditya_mode)
         chesta = calculate_chesta(planet_name, planet_long, sun_long, speed, julian_day=jd)
-        duc_bala = calculate_duc_bala(digbala, uccha, chesta)
+        duc_bala = calculate_duc_bala(digbala, uccha, chesta, duc_method or "equal")
 
         result[planet_name] = {
             'digbala': round(digbala, 1),

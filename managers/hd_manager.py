@@ -27,9 +27,11 @@ Lifecycle:
 """
 from __future__ import annotations
 
-from core.hd_model import build_hd_model, VALID_FRAMES
-
-_DEFAULT_FRAME = "standard"
+from core.hd_model import (
+    build_hd_model, VALID_FRAMES, DEFAULT_FRAME as _DEFAULT_FRAME,
+    FRAME_TO_MODE as _FRAME_TO_MODE, MODE_TO_FRAME as _MODE_TO_FRAME,
+    HD_EXPERIENCE_KEY as _HD_EXPERIENCE_KEY,
+    hd_frame_for)
 
 # The HD gate-1 frame is GATED behind a Human Design experience level
 # (Settings, mirroring the Zodiac one; Lorris post-C7):
@@ -41,14 +43,20 @@ _DEFAULT_FRAME = "standard"
 #     the HD frame too, like every other view. aditya -> 193.25,
 #     tropical_classic -> the Standard HD anchor, sidereal -> app ayanamsa.
 # So clicking Aditya/Sidereal always retargets the MAIN chart, but only
-# retargets the HD page when the user has opted into Advanced.
-_HD_EXPERIENCE_KEY = "ui.hd_experience_level"
-_MODE_TO_FRAME = {
-    "aditya": "aditya",
-    "tropical_classic": "standard",
-    "sidereal": "sidereal",
-}
-_FRAME_TO_MODE = {v: k for k, v in _MODE_TO_FRAME.items()}   # inverse (C9)
+# retargets the HD page when the user has opted into Advanced. The rule itself
+# is ``core.hd_model.hd_frame_for`` (Qt-free), which the show_human_design CLI
+# calls too, so the page and the tool cannot disagree.
+
+
+def _hd_experience_level() -> str:
+    """The Human Design experience level; "beginner" whenever the setting is
+    absent or the settings store cannot be read."""
+    try:
+        from managers.settings_manager import get_settings
+        from core.settings_registry import default as _registry_default
+        return get_settings().get(_HD_EXPERIENCE_KEY, _registry_default(_HD_EXPERIENCE_KEY))
+    except Exception:
+        return "beginner"
 
 
 def _hd_is_advanced() -> bool:
@@ -57,11 +65,7 @@ def _hd_is_advanced() -> bool:
     Defaults to Beginner (False) whenever the setting is absent or the settings
     store cannot be read, so the page stays pinned to Standard by default.
     """
-    try:
-        from managers.settings_manager import get_settings
-        return get_settings().get(_HD_EXPERIENCE_KEY, "beginner") == "advanced"
-    except Exception:
-        return False
+    return _hd_experience_level() == "advanced"
 
 
 class HDManager:
@@ -79,18 +83,18 @@ class HDManager:
         aditya -> "aditya", tropical_classic -> "standard", sidereal -> "sidereal";
         In Beginner mode (default) it is pinned to Standard; in Advanced mode it
         follows the top-bar zodiac buttons, recomputing on ``aditya_mode_changed``.
-        An absent/unknown mode falls back to Standard (the locked default). The remote/CLI stay in parity: the
-        remote reads this (frame=None -> mode), the CLI keeps an explicit --frame.
+        An absent/unknown mode falls back to Standard (the locked default). The
+        rule is ``core.hd_model.hd_frame_for``; the remote reads this (frame=None),
+        the show_human_design CLI calls the same rule on the resolved settings
+        (the tools' settings > live app > saved > factory; no --frame flag since
+        SPEC-SET-003 W8).
         """
-        if not _hd_is_advanced():
-            # Beginner (default, locked): pinned to Standard regardless of the
-            # top-bar zodiac buttons.
-            return _DEFAULT_FRAME
+        level = "advanced" if _hd_is_advanced() else "beginner"
         try:
-            mode = self._gui.state.aditya_mode
+            mode = self._gui.state.aditya_mode if level == "advanced" else None
         except Exception:
-            return _DEFAULT_FRAME
-        return _MODE_TO_FRAME.get(mode, _DEFAULT_FRAME)
+            mode = None
+        return hd_frame_for(mode, level)
 
     def design_chart_mode(self) -> str:
         """The zodiac MODE the -88 Design astrology chart renders in — the SAME
@@ -98,7 +102,7 @@ class HDManager:
         mode. Beginner -> "tropical_classic" (Standard); Advanced -> the app
         zodiac mode. Never mutates state.aditya_mode (the pills keep controlling
         the MAIN chart), exactly like frame() for the bodygraph."""
-        return _FRAME_TO_MODE.get(self.frame(), "tropical_classic")
+        return _FRAME_TO_MODE.get(self.frame(), "tropical_classic")   # = design_chart_mode_for
 
     # ---- model -----------------------------------------------------------------
     def model_for_active_chart(self, frame: str = None):
@@ -162,6 +166,25 @@ class HDManager:
         except Exception:
             return
         self.push_to_view()
+
+    def on_experience_level_changed(self):
+        """Settings flipped Beginner/Advanced: re-resolve BOTH HD surfaces.
+
+        The bodygraph is a cached model (refresh_active_view re-pushes it), but
+        the -88 Design chart is a chart BUILT in design_chart_mode() at recompute
+        time. Re-pushing the bodygraph alone left the Design chart in the old
+        frame (and its display override already on the new one) until some
+        unrelated recompute, so Apply looked like it "did not take".
+        """
+        self.refresh_active_view()
+        gui = self._gui
+        if getattr(gui, "is_human_design", False):
+            recalc = getattr(gui, "_recalculate_chart", None)
+            if recalc is not None:
+                recalc()
+        else:   # F11 gate captions follow the HD page's frame (SPEC-PLM-001 §12)
+            from managers import planet_label_manager
+            planet_label_manager.redraw_gates(gui)
 
     def clear(self):
         """Drop the cached model (called when the active chart changes)."""

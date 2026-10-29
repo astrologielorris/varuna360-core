@@ -2,10 +2,9 @@
 Retinue constants and pure lookups shared by Core and Pro.
 
 This module is dependency-free (no libaditya, no swe, no chart loaders) so it can
-be imported from Lite, from the Pro Antikythera FT layer and from the pure FT
-module without pulling the ephemeris. The named-being tables and the Hora /
-Trimsamsa lookups moved here from ``AI_tools/AI_main_function/retinue.py`` in the
-Aditya FT wave 0 refactor (SPEC-ANT-FT-001 §2.3, §3.2); that module now
+be imported from Lite and from Pro map layers without pulling the ephemeris.
+The named-being tables and the Hora / Trimsamsa lookups moved here from
+``AI_tools/AI_main_function/retinue.py`` in a Pro refactor; that module now
 re-imports them and keeps its chart-facing helpers.
 """
 
@@ -116,11 +115,11 @@ BEING_TYPE_LABELS = {
 }
 
 # =============================================================================
-# RETINUE RING PALETTE — shared by the wheel view and the Antikythera FT layer
+# RETINUE RING PALETTE — shared by the wheel view and a Pro map layer
 # =============================================================================
-# The raw hex literals for the Hora and Trimsamsa rings (SPEC-ANT-FT-001 §3.5).
-# These were locals in apps/widgets/wheel_view.py; extracted here in the FT wave 2
-# refactor (c2-0) so the FT map layer draws the SAME colours the wheel does,
+# The raw hex literals for the Hora and Trimsamsa rings.
+# These were locals in apps/widgets/wheel_view.py; extracted here (c2-0) so the
+# Pro map layer draws the SAME colours the wheel does,
 # from one source. Callers apply their own saturation transform (the wheel wraps
 # every background in desat_hex, SPEC-SAT-001) -- these are the pre-desaturation
 # values, byte-identical to the former literals (frozen by test_retinue_palette).
@@ -146,7 +145,7 @@ TRIMSAMSA_COLORS = {
 # HOUSE CONNECTION DATA — classical sign lordships
 # =============================================================================
 # Inlined from ``libaditya.constants.lords`` so this module stays dependency-free
-# (SPEC-ANT-FT-001 §2.3: no libaditya import here). Index = sign number 1..12
+# (no libaditya import here). Index = sign number 1..12
 # (1=Aries ... 12=Pisces); value = ruling planet. These are the fixed classical
 # rulerships; the wave-0 test asserts this dict still equals ``libaditya.constants
 # .lords`` so the two can never silently drift.
@@ -158,6 +157,15 @@ _SIGN_LORDS = {
 _PLANET_SIGN_POSITIONS = {}
 for _sign_num, _planet in _SIGN_LORDS.items():
     _PLANET_SIGN_POSITIONS.setdefault(_planet, []).append(_sign_num)
+
+
+def sign_lord(sign_index: int) -> str:
+    """Classical ruler of the sign at 0-based division index (0 = Dhata = Aries energy).
+
+    Public accessor over ``_SIGN_LORDS`` (1-based) for the retinue strength sign
+    ribbon (SPEC-RST-001 §4.3).
+    """
+    return _SIGN_LORDS[int(sign_index) % 12 + 1]
 
 
 def _house_from(current_pos: int, target_pos: int) -> int:

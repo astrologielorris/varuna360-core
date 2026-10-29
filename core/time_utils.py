@@ -14,6 +14,7 @@ from typing import List, Optional, Tuple
 from libaditya import swe
 
 GREGORIAN_REFORM_JD = 2299160.5
+from core.julian_era import JULIAN_ERA_END, shift_civil  # noqa: E402
 
 
 def _calendar_flag(year, month, day):
@@ -79,12 +80,26 @@ def _read_calendar_convention():
     (spec section 7): an empty/None stored value must fall back, but a valid
     'proleptic_gregorian' must not be coerced away.
     """
-    try:
-        from managers.settings_manager import get_settings
-        value = get_settings().get("display.calendar_convention", "astronomical")
-    except Exception:
-        return "astronomical"
+    value = _read_display_setting("display.calendar_convention")
     return value if value in _CALENDAR_CONVENTIONS else "astronomical"
+
+
+def _read_display_setting(key):
+    """A display setting, read WITHOUT creating or migrating the settings
+    file (SPEC-SET-003 INV-3, T-10; W12): the process's settings manager when
+    one exists (the app, or a CLI's read-only copy from
+    ``use_read_only_settings``), else the read-only view of the saved file.
+    Never ``get_settings()``, which would create the file in a CLI process.
+    None on any failure (headless, unreadable): the callers fall back."""
+    try:
+        from core.settings_registry import default
+        import managers.settings_manager as sm
+        if sm._instance is not None:
+            return sm._instance.get(key, default(key))
+        from core.capabilities.settings_view import SettingsView
+        return SettingsView.load().get(key, default(key))
+    except Exception:
+        return None
 
 
 def read_calendar_convention():
@@ -138,11 +153,7 @@ def _read_date_format():
     Lazy import so this module keeps no hard settings dependency (a CLI passing
     an explicit date_format never reaches this).
     """
-    try:
-        from managers.settings_manager import get_settings
-        value = get_settings().get("display.date_format", "MM/DD/YYYY")
-    except Exception:
-        return "MM/DD/YYYY"
+    value = _read_display_setting("display.date_format")
     return value if value in _DATE_FORMATS else "MM/DD/YYYY"
 
 
@@ -395,8 +406,8 @@ def resolve_total_offset(iana_name: str, year: int, month: int, day: int,
     and other lookup errors to the caller (callers keep their own
     resilience).
 
-    For year < 1 (pytz cannot localize BCE dates), returns the
-    _parse_offset ref_year=1 STANDARD offset as float hours with flag 0.
+    Before 1583 (BCE, or a Julian date datetime cannot hold) it is probed on
+    1583-01-15: the founding era, so the city's LMT when longitude is given.
 
     Labeling notes (correct TOTALs, do not "fix"):
     - Dublin-class negative-DST zones: winter -> (0.0, 0), summer -> (1.0, 0)
@@ -417,9 +428,8 @@ def resolve_total_offset(iana_name: str, year: int, month: int, day: int,
     Returns:
         Tuple of (std_hours: float, dst_flag: int in {0, 1})
     """
-    if year < 1:
-        h, m = _parse_offset(iana_name, ref_year=1)
-        return h + m / 60.0, 0
+    if (year, month, day) < JULIAN_ERA_END:   # founding era: LMT check below
+        year, month, day, hour, minute = 1583, 1, 15, 12, 0
     import pytz
     tz = pytz.timezone(iana_name)
     dt = datetime(year, month, day, hour, minute)
@@ -547,7 +557,7 @@ def local_to_utc(
     if dst_flag in (1, 2):
         offset_seconds_total += dst_flag * 3600
 
-    if year >= 1:
+    if (year, month, day) >= JULIAN_ERA_END:
         local_dt = datetime(year, month, day, hour, minute, second)
         utc_dt = local_dt - timedelta(seconds=offset_seconds_total)
         return (utc_dt.year, utc_dt.month, utc_dt.day,
@@ -565,7 +575,7 @@ def local_to_utc_total(year, month, day, hour, minute, second,
     dst_flag). Never bakes DST into a string (SPEC-TZ-001 Section 1).
     BCE-safe via _manual_offset.
     """
-    if year >= 1:
+    if (year, month, day) >= JULIAN_ERA_END:
         local_dt = datetime(year, month, day, hour, minute, second)
         utc_dt = local_dt - timedelta(hours=total_offset_hours)
         return (utc_dt.year, utc_dt.month, utc_dt.day,
@@ -584,7 +594,7 @@ def utc_to_local_total(year, month, day, hour, minute, second,
     offsets (never bakes DST into a string; SPEC-TZ-001 Section 1).
     BCE-safe via _manual_offset.
     """
-    if year >= 1:
+    if (year, month, day) >= JULIAN_ERA_END:
         utc_dt = datetime(year, month, day, hour, minute, second)
         local_dt = utc_dt + timedelta(hours=total_offset_hours)
         return (local_dt.year, local_dt.month, local_dt.day,
@@ -595,38 +605,10 @@ def utc_to_local_total(year, month, day, hour, minute, second,
 
 def _manual_offset(year, month, day, hour, minute, second,
                    delta_hours, delta_minutes):
-    """Apply hour/minute delta without datetime (handles BCE years)."""
-    def _days_in_month(y, m):
-        base = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
-        if m == 2 and y % 4 == 0:
-            return 29
-        return base[m - 1]
-
-    total_seconds = hour * 3600 + minute * 60 + second
-    total_seconds += round(delta_hours * 3600) + round(delta_minutes * 60)
-
-    if total_seconds < 0:
-        total_seconds += 86400
-        day -= 1
-        if day < 1:
-            month -= 1
-            if month < 1:
-                month = 12
-                year -= 1
-            day = _days_in_month(year, month)
-    elif total_seconds >= 86400:
-        total_seconds -= 86400
-        day += 1
-        if day > _days_in_month(year, month):
-            day = 1
-            month += 1
-            if month > 12:
-                month = 1
-                year += 1
-
-    return (year, month, day,
-            total_seconds // 3600, (total_seconds % 3600) // 60,
-            total_seconds % 60)
+    """Apply an hour/minute delta without datetime (BCE and Julian dates,
+    calendar-exact through the Julian Day, ``core.julian_era``)."""
+    return shift_civil(year, month, day, hour, minute, second,
+                       round(delta_hours * 3600) + round(delta_minutes * 60))
 
 
 def utc_to_local(
@@ -659,7 +641,7 @@ def utc_to_local(
     if dst_flag in (1, 2):
         offset_seconds_total += dst_flag * 3600
 
-    if year >= 1:
+    if (year, month, day) >= JULIAN_ERA_END:
         utc_dt = datetime(year, month, day, hour, minute, second)
         local_dt = utc_dt + timedelta(seconds=offset_seconds_total)
         return (local_dt.year, local_dt.month, local_dt.day,

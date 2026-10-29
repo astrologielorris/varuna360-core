@@ -1,0 +1,92 @@
+{
+ "format.date.day_month_year": {
+  "params": [
+   "d",
+   "dd",
+   "m",
+   "mm",
+   "y",
+   "month",
+   "weekday",
+   "hour",
+   "minute",
+   "second"
+  ],
+  "text": "{d} {month} {y}"
+ },
+ "format.date.long": {
+  "params": [
+   "d",
+   "dd",
+   "m",
+   "mm",
+   "y",
+   "month",
+   "weekday",
+   "hour",
+   "minute",
+   "second"
+  ],
+  "text": "{dd} {month} {y}"
+ },
+ "format.date.month_day_abbr": {
+  "params": [
+   "d",
+   "dd",
+   "m",
+   "mm",
+   "y",
+   "month",
+   "weekday",
+   "hour",
+   "minute",
+   "second"
+  ],
+  "text": "{month|abbr} {dd}"
+ },
+ "format.date.month_day_time_abbr": {
+  "params": [
+   "d",
+   "dd",
+   "m",
+   "mm",
+   "y",
+   "month",
+   "weekday",
+   "hour",
+   "minute",
+   "second"
+  ],
+  "text": "{month|abbr} {dd} {hour}:{minute}"
+ },
+ "format.date.month_year_abbr": {
+  "params": [
+   "d",
+   "dd",
+   "m",
+   "mm",
+   "y",
+   "month",
+   "weekday",
+   "hour",
+   "minute",
+   "second"
+  ],
+  "text": "{month|abbr} {y}"
+ },
+ "format.date.weekday": {
+  "params": [
+   "d",
+   "dd",
+   "m",
+   "mm",
+   "y",
+   "month",
+   "weekday",
+   "hour",
+   "minute",
+   "second"
+  ],
+  "text": "{weekday}"
+ }
+}

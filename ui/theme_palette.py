@@ -30,12 +30,16 @@ _COLOR_RE = re.compile(
 
 # Themes whose shipped accent is too bright for white ink; they ship dark
 # accent text unless the user saves an explicit foreground.
-DARK_ACCENT_INK = frozenset({"dark_amber.xml", "dark_yellow.xml"})
+DARK_ACCENT_INK = frozenset({"dark_amber.xml", "dark_yellow.xml", "dark_orange.xml"})
 
 
 def _source_path(theme_file: str) -> str:
     if os.path.exists(theme_file):
         return theme_file
+    from ui.themes import bundled_theme_path
+    bundled = bundled_theme_path(theme_file)
+    if bundled:
+        return bundled
     try:
         import qt_material
         return os.path.join(os.path.dirname(qt_material.__file__), "themes", theme_file)

@@ -11,17 +11,17 @@ from libaditya import swe
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-# Ephemeris path is owned by libaditya. On import, libaditya calls
-# swe.set_ephe_path(<libaditya>/ephe/) (see libaditya/__init__.py). Since
-# libaditya is now vendored into this repo, its bundled ephe/ is the single
-# source of truth — we no longer override the path to a separate ./ephe.
-# (libaditya's ephe is a superset of the old ./ephe, incl. seleapsec.txt.)
+# Ephemeris path is owned by libaditya: its swisseph wrapper sets
+# <libaditya>/ephe/ on every thread that calls it (libaditya/_swe.py). The
+# ephe/ shipped inside the installed package is the single source of truth;
+# we never override the path to a separate ./ephe.
 
 # Julian Day threshold for the Gregorian calendar reform: Oct 15, 1582, 00:00 UT
 GREGORIAN_REFORM_JD = 2299160.5
 
 _JUL_CAL = 0
 _GREG_CAL = 1
+
 
 def get_calendar_flag(year, month, day):
     """Return swe.JUL_CAL for dates before the Gregorian reform (Oct 15, 1582).
@@ -30,10 +30,14 @@ def get_calendar_flag(year, month, day):
     Post-1582 dates from late-adopting countries (Russia 1918, England 1752, etc.)
     are assumed to be already converted to Gregorian by the data source.
     """
-    if (year < 1582) or (year == 1582 and month < 10) or \
-       (year == 1582 and month == 10 and day < 15):
+    if (
+        (year < 1582)
+        or (year == 1582 and month < 10)
+        or (year == 1582 and month == 10 and day < 15)
+    ):
         return swe.JUL_CAL
     return swe.GREG_CAL
+
 
 def get_calendar_flag_from_jd(jd):
     """Return swe.JUL_CAL for Julian Day numbers before the Gregorian reform.
@@ -41,6 +45,7 @@ def get_calendar_flag_from_jd(jd):
     Use this for swe.revjul() calls where you have a JD but not a calendar date.
     """
     return swe.JUL_CAL if jd < GREGORIAN_REFORM_JD else swe.GREG_CAL
+
 
 def format_to_zodiac(decimal_degrees, include_seconds=True):
     """
@@ -54,9 +59,18 @@ def format_to_zodiac(decimal_degrees, include_seconds=True):
         str: Formatted zodiac string (e.g., "Taurus 15° 30' 45"" or "Taurus 15° 30'")
     """
     zodiac_signs = [
-        "Aries", "Taurus", "Gemini", "Cancer",
-        "Leo", "Virgo", "Libra", "Scorpio",
-        "Sagittarius", "Capricorn", "Aquarius", "Pisces"
+        "Aries",
+        "Taurus",
+        "Gemini",
+        "Cancer",
+        "Leo",
+        "Virgo",
+        "Libra",
+        "Scorpio",
+        "Sagittarius",
+        "Capricorn",
+        "Aquarius",
+        "Pisces",
     ]
 
     # Ensure degrees are 0-360
@@ -88,21 +102,33 @@ def format_to_zodiac(decimal_degrees, include_seconds=True):
     else:
         return f"{sign_name} {d}° {m}'"
 
+
 def get_sign_name(decimal_degrees):
     """Get just the zodiac sign name."""
     zodiac_signs = [
-        "Aries", "Taurus", "Gemini", "Cancer",
-        "Leo", "Virgo", "Libra", "Scorpio",
-        "Sagittarius", "Capricorn", "Aquarius", "Pisces"
+        "Aries",
+        "Taurus",
+        "Gemini",
+        "Cancer",
+        "Leo",
+        "Virgo",
+        "Libra",
+        "Scorpio",
+        "Sagittarius",
+        "Capricorn",
+        "Aquarius",
+        "Pisces",
     ]
     decimal_degrees = decimal_degrees % 360
     sign_index = int(decimal_degrees // 30)
     return zodiac_signs[sign_index]
 
+
 def get_sign_index(decimal_degrees):
     """Get zodiac sign index (0-11)."""
     decimal_degrees = decimal_degrees % 360
     return int(decimal_degrees // 30)
+
 
 def get_house_sign(ascendant_sign_index, house_number):
     """
@@ -119,9 +145,18 @@ def get_house_sign(ascendant_sign_index, house_number):
         Tuple: (sign_name, sign_index, start_degree, end_degree)
     """
     zodiac_signs = [
-        "Aries", "Taurus", "Gemini", "Cancer",
-        "Leo", "Virgo", "Libra", "Scorpio",
-        "Sagittarius", "Capricorn", "Aquarius", "Pisces"
+        "Aries",
+        "Taurus",
+        "Gemini",
+        "Cancer",
+        "Leo",
+        "Virgo",
+        "Libra",
+        "Scorpio",
+        "Sagittarius",
+        "Capricorn",
+        "Aquarius",
+        "Pisces",
     ]
 
     # Calculate which sign this house is in
@@ -134,6 +169,7 @@ def get_house_sign(ascendant_sign_index, house_number):
     end_degree = start_degree + 30
 
     return (house_sign_name, house_sign_index, start_degree, end_degree)
+
 
 def get_aditya_circle_degrees(tropical_degrees):
     """
@@ -152,6 +188,7 @@ def get_aditya_circle_degrees(tropical_degrees):
     aditya_circle_deg = (tropical_degrees + 30) % 360
     return aditya_circle_deg
 
+
 def get_aditya_circle_name(sign_index):
     """
     Get the Aditya Circle name for a sign (direct mapping, no shift).
@@ -165,20 +202,21 @@ def get_aditya_circle_name(sign_index):
         str: Aditya Circle name
     """
     aditya_circle = [
-        "Dhata",        # 0: Aries
-        "Aryama",       # 1: Taurus
-        "Mitra",        # 2: Gemini
-        "Varuna",       # 3: Cancer
-        "Indra",        # 4: Leo
-        "Vivasvan",     # 5: Virgo
-        "Tvasta",       # 6: Libra
-        "Vishnu",       # 7: Scorpio
-        "Amzu",         # 8: Sagittarius
-        "Bhaga",        # 9: Capricorn
-        "Pusha",        # 10: Aquarius
-        "Parjanya"      # 11: Pisces
+        "Dhata",  # 0: Aries
+        "Aryama",  # 1: Taurus
+        "Mitra",  # 2: Gemini
+        "Varuna",  # 3: Cancer
+        "Indra",  # 4: Leo
+        "Vivasvan",  # 5: Virgo
+        "Tvasta",  # 6: Libra
+        "Vishnu",  # 7: Scorpio
+        "Amzu",  # 8: Sagittarius
+        "Bhaga",  # 9: Capricorn
+        "Pusha",  # 10: Aquarius
+        "Parjanya",  # 11: Pisces
     ]
     return aditya_circle[sign_index % 12]
+
 
 def get_aditya_classic_name(sign_index):
     """
@@ -194,22 +232,25 @@ def get_aditya_classic_name(sign_index):
         str: Aditya Classic name
     """
     aditya_classic = [
-        "Dhata",        # 0: Aries
-        "Aryama",       # 1: Taurus
-        "Mitra",        # 2: Gemini
-        "Varuna",       # 3: Cancer
-        "Indra",        # 4: Leo
-        "Vivasvan",     # 5: Virgo
-        "Tvasta",       # 6: Libra
-        "Vishnu",       # 7: Scorpio
-        "Amzu",         # 8: Sagittarius
-        "Bhaga",        # 9: Capricorn
-        "Pusha",        # 10: Aquarius
-        "Parjanya"      # 11: Pisces
+        "Dhata",  # 0: Aries
+        "Aryama",  # 1: Taurus
+        "Mitra",  # 2: Gemini
+        "Varuna",  # 3: Cancer
+        "Indra",  # 4: Leo
+        "Vivasvan",  # 5: Virgo
+        "Tvasta",  # 6: Libra
+        "Vishnu",  # 7: Scorpio
+        "Amzu",  # 8: Sagittarius
+        "Bhaga",  # 9: Capricorn
+        "Pusha",  # 10: Aquarius
+        "Parjanya",  # 11: Pisces
     ]
     return aditya_classic[sign_index % 12]
 
-def get_all_planets_data(year, month, day, hour, minute, lat, lon, timezone_str, second=0):
+
+def get_all_planets_data(
+    year, month, day, hour, minute, lat, lon, timezone_str, second=0
+):
     """
     Calculate positions of all planets and lunar nodes.
 
@@ -217,10 +258,12 @@ def get_all_planets_data(year, month, day, hour, minute, lat, lon, timezone_str,
         Use ``Chart(EphContext(...))`` directly. Will be deleted in Issue 11.
     """
     import warnings
+
     warnings.warn(
         "get_all_planets_data() is deprecated — use Chart(EphContext(...)) directly. "
         "Will be deleted in Chart-Everywhere Issue 11.",
-        DeprecationWarning, stacklevel=2,
+        DeprecationWarning,
+        stacklevel=2,
     )
     from datetime import datetime
     from zoneinfo import ZoneInfo
@@ -235,8 +278,9 @@ def get_all_planets_data(year, month, day, hour, minute, lat, lon, timezone_str,
         utc_year, utc_month, utc_day = year, month, day
         utc_hour, utc_minute, utc_second = hour, minute, second
     else:
-        local_dt = datetime(year, month, day, hour, minute, second,
-                            tzinfo=ZoneInfo(timezone_str))
+        local_dt = datetime(
+            year, month, day, hour, minute, second, tzinfo=ZoneInfo(timezone_str)
+        )
         utc_dt = local_dt.astimezone(ZoneInfo("UTC"))
         utc_year, utc_month, utc_day = utc_dt.year, utc_dt.month, utc_dt.day
         utc_hour, utc_minute, utc_second = utc_dt.hour, utc_dt.minute, utc_dt.second
@@ -254,8 +298,10 @@ def get_all_planets_data(year, month, day, hour, minute, lat, lon, timezone_str,
         toround=(False, 10),
     )
     chart = Chart(ctx)
-    return chart_to_planets_data(chart, year, month, day, hour, minute,
-                                 lat, lon, timezone_str, second)
+    return chart_to_planets_data(
+        chart, year, month, day, hour, minute, lat, lon, timezone_str, second
+    )
+
 
 def print_birth_chart(data, name="", location=""):
     """
@@ -270,9 +316,9 @@ def print_birth_chart(data, name="", location=""):
         print(f"ERROR: {data['error']}")
         return
 
-    print("\n" + "="*70)
+    print("\n" + "=" * 70)
     print("COMPLETE BIRTH CHART CALCULATION".center(70))
-    print("="*70)
+    print("=" * 70)
 
     if name:
         print(f"Name: {name}".center(70))
@@ -285,39 +331,55 @@ def print_birth_chart(data, name="", location=""):
     print(f"Coordinates:     {data['latitude']}°N, {abs(data['longitude'])}°W")
     print(f"Julian Day:      {data['julian_day']:.6f}")
 
-    print("\n" + "-"*70)
+    print("\n" + "-" * 70)
     print("ANGLES (Campanus House System)".center(70))
-    print("-"*70)
+    print("-" * 70)
 
     if "angles" in data:
         for angle_name, info in data["angles"].items():
-            print(f"{angle_name:20} | {info['formatted']:20} | {info['decimal_degrees']:8.4f}°")
+            print(
+                f"{angle_name:20} | {info['formatted']:20} | {info['decimal_degrees']:8.4f}°"
+            )
 
-    print("\n" + "-"*70)
+    print("\n" + "-" * 70)
     print("PLANETARY POSITIONS (in order)".center(70))
-    print("-"*70)
+    print("-" * 70)
 
     # Define the order of display
     display_order = [
-        "Sun", "Moon", "Mars", "Mercury",
-        "Jupiter", "Venus", "Saturn", "Rahu", "Ketu",
-        "Uranus", "Neptune", "Pluto"
+        "Sun",
+        "Moon",
+        "Mars",
+        "Mercury",
+        "Jupiter",
+        "Venus",
+        "Saturn",
+        "Rahu",
+        "Ketu",
+        "Uranus",
+        "Neptune",
+        "Pluto",
     ]
 
     for body in display_order:
         if body in data and isinstance(data[body], dict):
             info = data[body]
-            print(f"{body:12} | {info['formatted']:20} | {info['decimal_degrees']:8.4f}°")
+            print(
+                f"{body:12} | {info['formatted']:20} | {info['decimal_degrees']:8.4f}°"
+            )
 
-    print("\n" + "-"*70)
+    print("\n" + "-" * 70)
     print("HOUSES (Campanus System)".center(70))
-    print("-"*70)
+    print("-" * 70)
 
     if "houses" in data:
         for house_name, info in data["houses"].items():
-            print(f"{house_name:12} | {info['formatted']:20} | {info['decimal_degrees']:8.4f}°")
+            print(
+                f"{house_name:12} | {info['formatted']:20} | {info['decimal_degrees']:8.4f}°"
+            )
 
-    print("="*70 + "\n")
+    print("=" * 70 + "\n")
+
 
 def print_birth_chart_detailed(data, name="", location=""):
     """
@@ -332,9 +394,9 @@ def print_birth_chart_detailed(data, name="", location=""):
         print(f"ERROR: {data['error']}")
         return
 
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print("COMPLETE BIRTH CHART - DETAILED VIEW".center(80))
-    print("="*80)
+    print("=" * 80)
 
     if name:
         print(f"Name: {name}".center(80))
@@ -346,45 +408,67 @@ def print_birth_chart_detailed(data, name="", location=""):
     print(f"Timezone:        {data['timezone']}")
     print(f"Coordinates:     {data['latitude']}°N, {abs(data['longitude'])}°W")
 
-    print("\n" + "-"*80)
+    print("\n" + "-" * 80)
     print("ANGLES (Campanus House System)".center(80))
-    print("-"*80)
-    print(f"{'Angle':<20} | {'Zodiac Position':<20} | {'Sign':<12} | {'Raw Degrees':>12}")
-    print("-"*80)
+    print("-" * 80)
+    print(
+        f"{'Angle':<20} | {'Zodiac Position':<20} | {'Sign':<12} | {'Raw Degrees':>12}"
+    )
+    print("-" * 80)
 
     if "angles" in data:
         for angle_name, info in data["angles"].items():
-            print(f"{angle_name:<20} | {info['formatted']:<20} | {info['sign']:<12} | {info['decimal_degrees']:>12.4f}°")
+            print(
+                f"{angle_name:<20} | {info['formatted']:<20} | {info['sign']:<12} | {info['decimal_degrees']:>12.4f}°"
+            )
 
-    print("\n" + "-"*80)
+    print("\n" + "-" * 80)
     print("PLANETARY POSITIONS".center(80))
-    print("-"*80)
-    print(f"{'Body':<12} | {'Zodiac Position':<20} | {'Sign':<12} | {'Raw Degrees':>12}")
-    print("-"*80)
+    print("-" * 80)
+    print(
+        f"{'Body':<12} | {'Zodiac Position':<20} | {'Sign':<12} | {'Raw Degrees':>12}"
+    )
+    print("-" * 80)
 
     # Define the order of display
     display_order = [
-        "Sun", "Moon", "Mars", "Mercury",
-        "Jupiter", "Venus", "Saturn", "Rahu", "Ketu",
-        "Uranus", "Neptune", "Pluto"
+        "Sun",
+        "Moon",
+        "Mars",
+        "Mercury",
+        "Jupiter",
+        "Venus",
+        "Saturn",
+        "Rahu",
+        "Ketu",
+        "Uranus",
+        "Neptune",
+        "Pluto",
     ]
 
     for body in display_order:
         if body in data and isinstance(data[body], dict):
             info = data[body]
-            print(f"{body:<12} | {info['formatted']:<20} | {info['sign']:<12} | {info['decimal_degrees']:>12.4f}°")
+            print(
+                f"{body:<12} | {info['formatted']:<20} | {info['sign']:<12} | {info['decimal_degrees']:>12.4f}°"
+            )
 
-    print("\n" + "-"*80)
+    print("\n" + "-" * 80)
     print("HOUSES (Campanus System)".center(80))
-    print("-"*80)
-    print(f"{'House':<12} | {'Zodiac Position':<20} | {'Sign':<12} | {'Raw Degrees':>12}")
-    print("-"*80)
+    print("-" * 80)
+    print(
+        f"{'House':<12} | {'Zodiac Position':<20} | {'Sign':<12} | {'Raw Degrees':>12}"
+    )
+    print("-" * 80)
 
     if "houses" in data:
         for house_name, info in data["houses"].items():
-            print(f"{house_name:<12} | {info['formatted']:<20} | {info['sign']:<12} | {info['decimal_degrees']:>12.4f}°")
+            print(
+                f"{house_name:<12} | {info['formatted']:<20} | {info['sign']:<12} | {info['decimal_degrees']:>12.4f}°"
+            )
 
-    print("="*80 + "\n")
+    print("=" * 80 + "\n")
+
 
 def get_planetary_summary(data):
     """
@@ -398,9 +482,19 @@ def get_planetary_summary(data):
     """
     summary = {}
     display_order = [
-        "Ascendant", "Sun", "Moon", "Mars", "Mercury",
-        "Jupiter", "Venus", "Saturn", "Rahu", "Ketu",
-        "Uranus", "Neptune", "Pluto"
+        "Ascendant",
+        "Sun",
+        "Moon",
+        "Mars",
+        "Mercury",
+        "Jupiter",
+        "Venus",
+        "Saturn",
+        "Rahu",
+        "Ketu",
+        "Uranus",
+        "Neptune",
+        "Pluto",
     ]
 
     for body in display_order:
@@ -409,7 +503,15 @@ def get_planetary_summary(data):
 
     return summary
 
-def get_first_new_moon_after_ingress(year, ingress_degree=300, latitude=None, longitude=None, timezone='UTC', mode='aditya'):
+
+def get_first_new_moon_after_ingress(
+    year,
+    ingress_degree=300,
+    latitude=None,
+    longitude=None,
+    timezone="UTC",
+    mode="aditya",
+):
     """
     Calculate the first new moon (Sun-Moon conjunction) after Sun enters a specific degree.
 
@@ -447,7 +549,9 @@ def get_first_new_moon_after_ingress(year, ingress_degree=300, latitude=None, lo
     # 1. Find the Sun's ingress into the specified degree
     # Start search from Jan 1 of the target year
     start_jd = swe.julday(year, 1, 1, 0.0, get_calendar_flag(year, 1, 1))
-    ingress_jd = swe.solcross(ingress_degree, start_jd)  # JD when Sun reaches specified degree
+    ingress_jd = swe.solcross(
+        ingress_degree, start_jd
+    )  # JD when Sun reaches specified degree
 
     # 2. Search forward for the next new moon after the ingress
     # Start exactly at the ingress point to ensure we only find new moons in Aquarius
@@ -482,7 +586,9 @@ def get_first_new_moon_after_ingress(year, ingress_degree=300, latitude=None, lo
 
         prev_diff = diff
     else:
-        raise RuntimeError("Could not locate new moon within 60 days of Aquarius ingress")
+        raise RuntimeError(
+            "Could not locate new moon within 60 days of Aquarius ingress"
+        )
 
     # 3. Refine the exact conjunction via binary search with convergence criterion
     left = search_jd - step
@@ -496,7 +602,7 @@ def get_first_new_moon_after_ingress(year, ingress_degree=300, latitude=None, lo
         sun_lon = sun_data[0][0]
         moon_lon = moon_data[0][0]
         diff = (moon_lon - sun_lon) % 360.0
-        if diff > 180:          # treat crossing 360° → 0°
+        if diff > 180:  # treat crossing 360° → 0°
             diff -= 360
 
         # Early termination when precision achieved
@@ -526,32 +632,40 @@ def get_first_new_moon_after_ingress(year, ingress_degree=300, latitude=None, lo
     second = int(second_frac)
 
     from core.chart_factory import build_chart_from_params
-    _nm_chart = build_chart_from_params(jd=newmoon_jd, lat=0.0, lon=0.0, mode=mode, ayanamsa=98)
-    _nm_planets = _nm_chart.rashi().planets()
-    sun_position_display = _nm_planets['Sun'].ecliptic_longitude()
-    moon_position_display = _nm_planets['Moon'].ecliptic_longitude()
 
-    utc = datetime(y, m, d, hour, minute, second, 0, tzinfo=ZoneInfo('UTC'))
+    _nm_chart = build_chart_from_params(
+        jd=newmoon_jd, lat=0.0, lon=0.0, mode=mode, ayanamsa=98
+    )
+    _nm_planets = _nm_chart.rashi().planets()
+    sun_position_display = _nm_planets["Sun"].ecliptic_longitude()
+    moon_position_display = _nm_planets["Moon"].ecliptic_longitude()
+
+    utc = datetime(y, m, d, hour, minute, second, 0, tzinfo=ZoneInfo("UTC"))
     local = utc.astimezone(ZoneInfo(timezone))
 
     # Get ingress date
-    ing_y, ing_m, ing_d, ing_hour_dec = swe.revjul(ingress_jd, get_calendar_flag_from_jd(ingress_jd))
+    ing_y, ing_m, ing_d, ing_hour_dec = swe.revjul(
+        ingress_jd, get_calendar_flag_from_jd(ingress_jd)
+    )
 
     return {
-        'utc': utc,
-        'local': local,
-        'julian_day': newmoon_jd,  # Exact conjunction JD (not floored)
-        'sun_position': sun_position_display,
-        'moon_position': moon_position_display,
-        'sun_sign': format_to_zodiac(sun_position_display),
-        'moon_sign': format_to_zodiac(moon_position_display),
-        'year': y,
-        'ingress_jd': ingress_jd,
-        'ingress_date': f"{ing_y}-{ing_m:02d}-{ing_d:02d}",
-        'ingress_degree': ingress_degree
+        "utc": utc,
+        "local": local,
+        "julian_day": newmoon_jd,  # Exact conjunction JD (not floored)
+        "sun_position": sun_position_display,
+        "moon_position": moon_position_display,
+        "sun_sign": format_to_zodiac(sun_position_display),
+        "moon_sign": format_to_zodiac(moon_position_display),
+        "year": y,
+        "ingress_jd": ingress_jd,
+        "ingress_date": f"{ing_y}-{ing_m:02d}-{ing_d:02d}",
+        "ingress_degree": ingress_degree,
     }
 
-def get_chinese_new_year(year, latitude=None, longitude=None, timezone='UTC', mode='aditya'):
+
+def get_chinese_new_year(
+    year, latitude=None, longitude=None, timezone="UTC", mode="aditya"
+):
     """
     Calculate the exact moment of the Chinese New Year for a given Gregorian year.
 
@@ -567,9 +681,14 @@ def get_chinese_new_year(year, latitude=None, longitude=None, timezone='UTC', mo
     Returns:
         Same as get_first_new_moon_after_ingress()
     """
-    return get_first_new_moon_after_ingress(year, 300, latitude, longitude, timezone, mode=mode)
+    return get_first_new_moon_after_ingress(
+        year, 300, latitude, longitude, timezone, mode=mode
+    )
 
-def get_chinese_new_year_equatorial(year, latitude=None, longitude=None, timezone='UTC'):
+
+def get_chinese_new_year_equatorial(
+    year, latitude=None, longitude=None, timezone="UTC"
+):
     """
     Calculate the exact moment of Chinese New Year using RIGHT ASCENSION conjunction.
 
@@ -682,27 +801,28 @@ def get_chinese_new_year_equatorial(year, latitude=None, longitude=None, timezon
     second = int(((hour_dec - hour) * 60 - minute) * 60)
     microsecond = int((((hour_dec - hour) * 60 - minute) * 60 - second) * 1_000_000)
 
-    utc = datetime(y, m, d, hour, minute, second, microsecond, tzinfo=ZoneInfo('UTC'))
+    utc = datetime(y, m, d, hour, minute, second, microsecond, tzinfo=ZoneInfo("UTC"))
     local = utc.astimezone(ZoneInfo(timezone))
 
     # Get ingress date
-    ing_y, ing_m, ing_d, ing_hour_dec = swe.revjul(ingress_jd, get_calendar_flag_from_jd(ingress_jd))
+    ing_y, ing_m, ing_d, ing_hour_dec = swe.revjul(
+        ingress_jd, get_calendar_flag_from_jd(ingress_jd)
+    )
 
     return {
-        'utc': utc,
-        'local': local,
-        'julian_day': newmoon_jd,
-        'sun_ra': sun_eq[0],
-        'moon_ra': moon_eq[0],
-        'sun_dec': sun_eq[1],
-        'moon_dec': moon_eq[1],
-        'sun_ecliptic': sun_ecl[0],
-        'moon_ecliptic': moon_ecl[0],
-        'sun_sign': format_to_zodiac(sun_ecl[0]),
-        'moon_sign': format_to_zodiac(moon_ecl[0]),
-        'year': y,
-        'ingress_jd': ingress_jd,
-        'ingress_date': f"{ing_y}-{ing_m:02d}-{ing_d:02d}",
-        'ra_difference': swe.difdeg2n(sun_eq[0], moon_eq[0])
+        "utc": utc,
+        "local": local,
+        "julian_day": newmoon_jd,
+        "sun_ra": sun_eq[0],
+        "moon_ra": moon_eq[0],
+        "sun_dec": sun_eq[1],
+        "moon_dec": moon_eq[1],
+        "sun_ecliptic": sun_ecl[0],
+        "moon_ecliptic": moon_ecl[0],
+        "sun_sign": format_to_zodiac(sun_ecl[0]),
+        "moon_sign": format_to_zodiac(moon_ecl[0]),
+        "year": y,
+        "ingress_jd": ingress_jd,
+        "ingress_date": f"{ing_y}-{ing_m:02d}-{ing_d:02d}",
+        "ra_difference": swe.difdeg2n(sun_eq[0], moon_eq[0]),
     }
-

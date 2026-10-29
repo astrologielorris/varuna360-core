@@ -20,8 +20,9 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QPushButton
 
 from ui.qt_theme import get_theme_colors, scaled_area_px
+from ui.accent_ink import on_accent_ink  # SPEC-THM-001 §13
 from apps.widgets.chart_memory_button import CHART_ENTRY_MIME
-from apps.widgets.chart_drop_common import classify_chart_drop
+from apps.widgets.chart_drop_common import chart_payload_kind
 
 _HOVER_TEXT = "⟐ Overlay chart"
 _HOVER_TOOLTIP = "Drop to overlay this chart on the active chart"
@@ -45,14 +46,8 @@ class TransitDropButton(QPushButton):
         to the ChartDropTab ancestor, which loads it as a chart library (the
         ancestor-fallthrough B-3 requires the button to prevent).
         """
-        if mime.hasFormat(CHART_ENTRY_MIME):
-            return "memory"
-        files, folders = classify_chart_drop(mime)
-        if files:
-            return "files"
-        if folders:
-            return "folder"
-        return None
+        # SPEC-DUAL-001 INV-7: the one shared classifier.
+        return chart_payload_kind(mime)
 
     # --- drag events ---------------------------------------------------------
     def dragEnterEvent(self, event):
@@ -114,7 +109,7 @@ class TransitDropButton(QPushButton):
         self.setStyleSheet(f"""
             QPushButton {{
                 background-color: {theme["primary_dark"]};
-                color: {theme["primary_text"]};
+                color: {on_accent_ink(theme["primary_dark"], theme["primary_text"])};
                 font-size: {scaled_area_px('buttons')}px;
                 border: 2px dashed {theme["primary_light"]};
                 border-radius: 8px;

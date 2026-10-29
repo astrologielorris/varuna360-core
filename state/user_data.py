@@ -88,6 +88,7 @@ import json
 import os
 import platform
 import sys
+import threading
 from pathlib import Path
 
 
@@ -331,10 +332,14 @@ def get_user_data_dir():
                 candidate.mkdir(parents=True, exist_ok=True)
                 # mkdir only proves creatability. An existing chmod-555 dir
                 # passes it and then every save fails, scattered and confusing.
-                # PID-unique like set_user_data_dir's probe: a fixed name races
-                # between concurrent processes, and a crash between write and
-                # unlink leaves residue that the next run then trips over.
-                probe = candidate / f".varuna360_write_probe_{os.getpid()}"
+                # PID- and thread-unique: a fixed name races between
+                # concurrent processes, and a crash between write and unlink
+                # leaves residue that the next run then trips over. Threads
+                # too: the Find Chart sync jobs resolve this off the UI thread,
+                # and with a PID-only name one thread's unlink made the other's
+                # read fail, the override was declared unusable and the job
+                # wrote to the real data directory (varuna/50).
+                probe = candidate / f".varuna360_write_probe_{os.getpid()}_{threading.get_ident()}"
                 probe.write_text("ok", encoding="utf-8")
                 if probe.read_text(encoding="utf-8") != "ok":
                     raise OSError("write probe did not read back")

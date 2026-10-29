@@ -74,10 +74,8 @@ def _has_existing_file(entry: Dict[str, Any]) -> bool:
 
 
 def _is_transit(entry: Dict[str, Any]) -> bool:
-    if entry.get("is_transit"):
-        return True
-    name = str((entry.get("recipe") or {}).get("name") or entry.get("person_name") or "")
-    return name.strip().lower().startswith("now ")
+    from core.chart_kind import entry_kind, is_transit_kind
+    return is_transit_kind(entry_kind(entry))
 
 
 def index_positions(index_entries) -> List[Dict[str, Any]]:
@@ -100,6 +98,47 @@ def index_positions(index_entries) -> List[Dict[str, Any]]:
                         "name": entry.get("name", "")})
         except (TypeError, ValueError):
             continue
+    return out
+
+
+def store_index_entries(path=None) -> List[Dict[str, Any]]:
+    """Every indexed file of the Find Chart store, in ``index_positions``'s
+    input shape (tropical ``sun_lon`` / ``ascendant_lon``, ``filepath``,
+    ``name``).
+
+    The store keeps signs, not longitudes, so both come from the file's
+    moment straight from the Swiss Ephemeris: under a millisecond per file,
+    where a chart build would cost minutes over the library. Raises
+    ``NoIndexError`` when no index was ever built.
+    """
+    from core.chart_search.sources import EntryKind, FileOrigin
+    from core.chart_search.store import StoreReader
+    from libaditya import swe
+
+    out = []
+    with StoreReader.open(path) as store:
+        rows = store.candidates(
+            "",
+            paths_under=None,
+            include_fileless=False,
+            loaded_only=False,
+            kinds=frozenset(EntryKind),
+        )
+        for row in rows:
+            entry = row.entry
+            if not isinstance(entry.origin, FileOrigin):
+                continue
+            moment = entry.moment
+            sun = swe.calc_ut(moment.jd_ut, swe.SUN)[0][0]
+            _cusps, angles = swe.houses(moment.jd_ut, moment.lat, moment.lon)
+            out.append(
+                {
+                    "sun_lon": sun,
+                    "ascendant_lon": angles[0],
+                    "filepath": entry.origin.path,
+                    "name": entry.name,
+                }
+            )
     return out
 
 

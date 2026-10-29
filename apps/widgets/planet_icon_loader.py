@@ -6,6 +6,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QImage, QPixmap
 from ui.qt_theme import desat_image, get_ui_saturation
 from apps.widgets.additional_body_glyphs import optional_pixmap
+from apps.widgets.icon_prefetch import scaled_image
 
 _ROOT = Path(__file__).resolve().parents[2]
 _FILES = {'Mars': 'Mars', 'Mercury': 'Mercury', 'Jupiter': 'Jupiter',
@@ -26,9 +27,7 @@ def _load(name, size, variation, saturation):
     path = _ROOT / 'img' / 'planets' / f'{filename}{suffix}.webp'
     if not path.exists():
         path = _ROOT / 'img' / 'planets' / f'{filename}.webp'
-    image = QImage(str(path))
-    if image.isNull():
+    image = scaled_image(path, size)   # decoded off the GUI thread when prefetched
+    if image is None:
         return None
-    image = image.scaled(size, size, Qt.AspectRatioMode.KeepAspectRatio,
-                         Qt.TransformationMode.SmoothTransformation)
     return QPixmap.fromImage(desat_image(image))

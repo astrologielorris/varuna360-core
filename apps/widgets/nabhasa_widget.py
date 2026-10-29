@@ -331,11 +331,11 @@ class NabhasaWidget(ThemedStyleMixin, QWidget):
 
         # 3. Shape section (20 canonical Akriti, most-formed first).
         self._cards_lay.addWidget(self._section_label("Shape (Akriti)"))
-        # 
-        # 
+        # Nearest-formation scoring (applies to every Akriti): ranked by how
+        # many of the seven planets already fit the complete shape.
         self._cards_lay.addWidget(self._quiet_line(
-            " "
-            "stronger the effect."))
+            "Ranked by nearest formation: the fuller the bar, the more planets "
+            "already fit the complete shape."))
         for i, ak in enumerate(res.get("akriti", {}).get("ranked", [])):
             self._cards_lay.addWidget(self._akriti_card(ak, hero=False, idx=i))
 
@@ -421,17 +421,18 @@ class NabhasaWidget(ThemedStyleMixin, QWidget):
         return lbl
 
     def _reading_detail(self, name):
-        """"""
+        """Accordion body: the yoga's reading + classical citation, or None
+        when there is no reading text (the LTS branch ships none): the card
+        then has no body at all, never an empty or placeholder one."""
+        entry = describe_nabhasa_yoga(name)
+        if not entry or not entry.get("reading"):
+            return None
         box = QWidget()
         lay = QVBoxLayout(box)
         lay.setContentsMargins(0, scaled_px(4), 0, 0)
         lay.setSpacing(scaled_px(4))
-        entry = describe_nabhasa_yoga(name)
-        if entry:
-            lay.addWidget(self._body_text(entry["reading"]))
-            lay.addWidget(self._quiet_line("Source: " + entry["cite"]))
-        else:
-            lay.addWidget(self._quiet_line("pending"))
+        lay.addWidget(self._body_text(entry["reading"]))
+        lay.addWidget(self._quiet_line("Source: " + entry["cite"]))
         return box
 
     def _new_card(self):
@@ -441,6 +442,9 @@ class NabhasaWidget(ThemedStyleMixin, QWidget):
         return card
 
     def _attach_detail(self, card, v, key, detail):
+        if detail is None:   # nothing to open (no reading text)
+            self._cards[key] = card
+            return
         detail.setVisible(self._wide)
         v.addWidget(detail)
         self._details[key] = detail
@@ -603,9 +607,12 @@ class NabhasaWidget(ThemedStyleMixin, QWidget):
         dl = QVBoxLayout(detail)
         dl.setContentsMargins(0, scaled_px(4), 0, 0)
         if read_name:
-            entry = describe_nabhasa_yoga(read_name)
-            dl.addWidget(self._body_text(entry["reading"]))
-            dl.addWidget(self._quiet_line("Source: " + entry["cite"]))
+            # The Dala yoga's reading (none on the LTS branch: no body).
+            reading = self._reading_detail(read_name)
+            if reading is None:
+                detail = None
+            else:
+                dl.addWidget(reading)
         elif dominant == "pending":
             # The engine could not resolve a planet's nature; never guess a
             # reading (a wrong-but-confident value is the forbidden outcome).
@@ -615,13 +622,10 @@ class NabhasaWidget(ThemedStyleMixin, QWidget):
                 "rather than guessed."))
         elif dominant == "none":
             dl.addWidget(self._body_text(
-                " "
-                ""))
+                "No planet occupies the four angles, so no Dala yoga forms here."))
         else:  # balanced
             dl.addWidget(self._body_text(
-                " "
-                " "
-                ""))
+                "The angles hold as many gentle planets as cruel ones."))
         self._attach_detail(card, v, key, detail)
         return card
 

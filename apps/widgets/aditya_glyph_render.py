@@ -1,11 +1,8 @@
 """Aditya division ("Josh") glyphs as a view-agnostic sign representation.
 
-South Indian wood finishes draw them with carved two-tone SVG passes.
-This module is the WOOD-FREE renderer used by the other astrology views (the
-Wheel first, then North Indian, Antikythera, ...) when the app-wide
-``display.sign_display`` setting is ``josh`` or ``josh_only``: one flat ink, themable, placed at a
-sector centre exactly like ``zodiac_renderer.draw_zodiac_icons`` places the
-zodiac symbol pixmaps.
+WOOD-FREE renderer (wood finishes carve Josh glyphs elsewhere) for every view whose
+``display.sign_display`` is a josh mode (flat themable ink) or a vector mode (the simple
+symbols of ui.sign_display_modes, own colours), placed like draw_zodiac_icons' pixmaps.
 
 Glyph selection is by DIVISION INDEX 0-11 (Dhata..Parjanya via ``JOSH_FILES``),
 system-agnostic per SPEC-ZOD-001 (division #1 = Dhata in every zodiac system).
@@ -20,30 +17,21 @@ from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import QGraphicsItem
 
 from ui.south_indian_finishes import JOSH_FILES
+from ui.sign_glyph_ink import recolor_tree, sign_svg
 from apps.widgets.sign_shadow import apply_sign_shadow
 from visualizations.wheel_geometry import get_sector_center_angle, polar_to_cartesian
 ROOT = Path(__file__).resolve().parents[2]
 _GLYPH_DIR = ROOT / 'img' / 'aditya_glyph'
 
 
-def _recolor_tree(root, ink_str):
-    """Apply flat ink and report whether the SVG declares a colour stroke."""
-    has_explicit_stroke = False
-    for node in root.iter():
-        for attribute in ('fill', 'stroke'):
-            value = node.get(attribute)
-            if not value or value == 'none':
-                continue
-            is_colour = value == 'currentColor' or QColor(value).isValid()
-            if is_colour:
-                node.set(attribute, ink_str)
-            if attribute == 'stroke' and is_colour:
-                has_explicit_stroke = True
-    return has_explicit_stroke
+def glyph_svg(index, ink_hex, family='josh'):
+    """Sign glyph SVG bytes: a vector symbol (user scheme or ink, read live, so
+    never cached here) or the cached flat-ink Josh glyph below."""
+    return sign_svg(index, ink_hex) if family == 'vector' else josh_svg(index, ink_hex)
 
 
 @lru_cache(maxsize=64)
-def glyph_svg(index, ink_hex):
+def josh_svg(index, ink_hex):
     """Aditya glyph #index recoloured to a single flat ink, as SVG bytes.
 
     Cached on (index, ink) — SVG SOURCE only, never a raster/pixmap, so it stays
@@ -70,7 +58,7 @@ def glyph_svg(index, ink_hex):
     # Recolour every explicit fill/stroke (and CSS currentColor) to the one ink.
     # Only a real colour stroke suppresses the document-stroke fallback; an
     # unparseable stroke (e.g. url(#grad)) must not suppress it.
-    has_explicit_stroke = _recolor_tree(root, ink_str)
+    has_explicit_stroke = recolor_tree(root, ink_str)
     # Only supply a document stroke when the glyph declares no stroke of its own,
     # so pure line-art still renders in the ink but a future multi-region glyph's
     # filled shapes are not outlined (finding: root stroke pollutes fills).
@@ -108,7 +96,7 @@ class AdityaGlyphItem(QGraphicsItem):
 
 
 def draw_aditya_glyphs(scene, cx, cy, radius, size, rotation_offset, ink_hex,
-                       z_base=4):
+                       z_base=4, family='josh'):
     """Place 12 Aditya (Josh) glyphs at the sector centres of a chart ring.
 
     Mirrors ``zodiac_renderer.draw_zodiac_icons`` (same sector geometry and
@@ -118,7 +106,7 @@ def draw_aditya_glyphs(scene, cx, cy, radius, size, rotation_offset, ink_hex,
     for i in range(12):
         center_angle = get_sector_center_angle(i, rotation_offset)
         x, y = polar_to_cartesian(cx, cy, radius, center_angle)
-        svg_bytes = glyph_svg(i, ink_hex)
+        svg_bytes = glyph_svg(i, ink_hex, family)
         if not svg_bytes:
             continue
         item = AdityaGlyphItem(svg_bytes, size)

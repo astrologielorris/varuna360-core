@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="512" height="512">
+  <title>Gemini</title>
+  <g fill="none" stroke="#F0C75E" stroke-width="7" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M16 16 C36 26 64 26 84 16"/>
+    <path d="M16 84 C36 74 64 74 84 84"/>
+    <path d="M37 23 V77"/>
+    <path d="M63 23 V77"/>
+  </g>
+</svg>

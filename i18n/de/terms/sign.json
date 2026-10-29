@@ -1,0 +1,62 @@
+{
+ "0": {
+  "name": "Widder",
+  "ok": "f407a138",
+  "src": "f407a138"
+ },
+ "1": {
+  "name": "Stier",
+  "ok": "125ff41a",
+  "src": "125ff41a"
+ },
+ "10": {
+  "name": "Wassermann",
+  "ok": "28c33187",
+  "src": "28c33187"
+ },
+ "11": {
+  "name": "Fische",
+  "ok": "cbf37907",
+  "src": "cbf37907"
+ },
+ "2": {
+  "name": "Zwillinge",
+  "ok": "b31723ee",
+  "src": "b31723ee"
+ },
+ "3": {
+  "name": "Krebs",
+  "ok": "abb5fd27",
+  "src": "abb5fd27"
+ },
+ "4": {
+  "name": "Löwe",
+  "ok": "43464e9d",
+  "src": "43464e9d"
+ },
+ "5": {
+  "name": "Jungfrau",
+  "ok": "979b4868",
+  "src": "979b4868"
+ },
+ "6": {
+  "name": "Waage",
+  "ok": "71e0af28",
+  "src": "71e0af28"
+ },
+ "7": {
+  "name": "Skorpion",
+  "ok": "e6a61d5c",
+  "src": "e6a61d5c"
+ },
+ "8": {
+  "name": "Schütze",
+  "ok": "72eae2e5",
+  "src": "72eae2e5"
+ },
+ "9": {
+  "name": "Steinbock",
+  "ok": "feec614f",
+  "src": "feec614f"
+ }
+}

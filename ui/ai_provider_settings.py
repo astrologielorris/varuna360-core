@@ -1,20 +1,32 @@
 # Copyright (C) 2026 Lorris Turpin / 360 Hearts in the Sky
 # Licensed under AGPL-3.0 — see LICENSE file for details.
-"""Shared Pro/Lite AI Providers settings component."""
+"""Shared Pro/Lite AI Settings settings component."""
 import logging
 import re
 import threading
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QScrollArea, QFrame, QGroupBox, QSizePolicy, QPushButton, QLineEdit, QMessageBox, QComboBox, QFormLayout, QApplication)
 from PySide6.QtCore import Signal, Qt, QThread, QTimer
 from ui.qt_theme import (get_theme_colors, get_primary_button_style, get_secondary_button_style, scaled_area_px)
+from ui.accent_ink import on_accent_ink  # SPEC-THM-001 §13
 from ui.qss_fit import fit_width
+from ui.combo_values import add_valued_items, select_by_data
 from managers.settings_manager import get_settings, EnvUnreadableError
 from ui.ai_provider_backend import default_provider_backend
+from core import settings_registry as _registry
 try:
     from utils.debug import debug_print
 except ImportError:
     debug_print = print
 _LOG = logging.getLogger(__name__)
+# SPEC-SET-003 D-14: the key of the "Let the AI change the app's settings" row.
+APP_SETTINGS_TOGGLE = "ai.allow_app_settings_changes"
+
+
+def _own_write(fn):
+    """A row that saves as it changes: the page's own write (AI setting
+    redesign item 4, ``ui/settings_page_sync.page_write``)."""
+    from ui.settings_page_sync import page_write
+    return page_write(fn)
 
 def _cap_w(owner, w, legacy, text=None):
     """FIX-H width cap on ``w`` at the content-rect fit, floored at ``legacy``;
@@ -52,6 +64,10 @@ def _rederive_width_caps(owner):
 # "<x> (unavailable)" can never be mistaken for it.
 _SENTINEL_ROLE = Qt.ItemDataRole.UserRole + 1
 _SENTINEL_MARKER = "unavailable-default-sentinel"
+# Dynamic property set on a provider row's status label while its probe is in
+# flight, so "still checking" is read from state, never from the label text
+# (SPEC-LOC-002 INV-3).
+_CHECKING_PROP = "v360_status_checking"
 
 # Finding 1: workers that are STILL running when their section is destroyed are
 # moved here so neither Qt parentage nor Python GC can destroy a live QThread
@@ -275,7 +291,7 @@ def _settings_combo_style() -> str:
             background-color: {theme['secondary']};
             color: {theme['secondary_text']};
             selection-background-color: {theme['primary']};
-            selection-color: {theme['primary_text']};
+            selection-color: {on_accent_ink(theme['primary'], theme['primary_text'])};
             border: 1px solid {theme['secondary_light']};
             outline: none;
         }}
@@ -429,6 +445,9 @@ def render_provider_row(name: str, snapshot, is_session: bool,
     }
     if value == "ready":
         out["detail"] = _ready_detail(snapshot)
+        if is_local:
+            out.update(status_label="No API key required", color=_PROV_AMBER,
+                       detail="Server connection not checked.")
     elif value == "logged_out":
         out["hint"] = detail_msg or (
             f"Run `{name.lower()} login`" if is_session else "Not logged in.")
@@ -508,6 +527,57 @@ class _SnapshotWorker(QThread):
         self.finished_all.emit()
 
 
+class _AnthropicKeyProbe:
+    """Status of the Anthropic row: the key is present or not. It is used
+    only when there is no Claude login, and the row says so either way."""
+
+    def __init__(self, settings, backend):
+        self._settings = settings
+        self._backend = backend
+
+    def snapshot(self):
+        from core.ai_engines.catalog import ANTHROPIC_KEY
+        status = self._backend.ProviderStatus
+        # True for both uses: AI Tools Claude falls back to the key without
+        # a login; the "Anthropic API" image reader, chosen by name, always
+        # uses it (td-hblfz review).
+        use = ("Claude uses this key only when there is no Claude login. "
+               "The Anthropic API image reader always uses it.")
+        if self._settings.get_api_key(ANTHROPIC_KEY):
+            return self._backend.ProviderSnapshot(status=status.READY,
+                                                  detail_msg=use)
+        return self._backend.ProviderSnapshot(status=status.MISSING_KEY,
+                                              detail_msg="No key. " + use)
+
+
+class _GlmPayPerUseProbe:
+    """Status of the GLM pay-per-use row (td-hblfz): is a Z.ai / BigModel
+    key saved, and does the GLM route use it (a Coding Plan goes first)."""
+
+    def __init__(self, settings, backend):
+        self._settings = settings
+        self._backend = backend
+
+    def snapshot(self):
+        from core.ai_engines import catalog as _catalog
+        status = self._backend.ProviderStatus
+        env = {n: self._settings.get_api_key(n)
+               for kind, n, _u, _s in _catalog.GLM_ROUTES if kind == "env"}
+        _choice, held_in, source = _catalog.glm_payg_state(env)
+        if not held_in:
+            return self._backend.ProviderSnapshot(
+                status=status.MISSING_KEY,
+                detail_msg="No key. Enter a Z.ai or BigModel API key to pay per token.")
+        held_source = next(s for kind, n, _u, s in _catalog.GLM_ROUTES
+                           if kind == "env" and n == held_in)
+        if source == held_source:
+            detail = f"In use ({held_source})."
+        else:
+            detail = f"Saved. Your {source} is used first."
+        return self._backend.ProviderSnapshot(status=status.READY,
+                                              detail_msg=detail)
+
+
 def _build_default_registry(backend=None):
     """register_builtin_drivers() then return the process-wide registry.
 
@@ -521,8 +591,8 @@ class _AIProvidersSection(QWidget):
 
     - One row per registered provider (registry). Session drivers show
       install/login/plan state + a fix hint; key drivers add a masked key field.
-    - An extra ANTHROPIC_API_KEY row seeds the future production key (no session
-      driver exists for it yet — status is pure key presence).
+    - Two key rows that are credentials, not models: GLM pay-per-use and
+      Anthropic (used only when there is no Claude login), SPEC-PMT-001 §4.7.
     - Snapshots are probed on a background QThread; "Refresh" clears the
       detection cache and re-probes.
     - Default-provider combo persists to ``ai.default_provider``.
@@ -550,6 +620,13 @@ class _AIProvidersSection(QWidget):
         self._unavailable_default = None  # stale-default sentinel (finding 7)
         self._suppress_default_save = False
         self._build_ui()
+        # AI setting redesign (td-bztjj) item 4/7: the rows follow a change
+        # made outside the page (the AI setting panel, its Model dropdown).
+        from ui import settings_page_sync as _page_sync
+        _page_sync.attach(self, self._read_from_settings,
+                          _registry.owner_set("ai_providers", "core")
+                          | {APP_SETTINGS_TOGGLE, "ai.setting_panel.model"},
+                          settings=self._settings)
         # Stop the worker cleanly if the whole app quits mid-probe (the widget
         # may never receive a closeEvent when the process tears down).
         try:
@@ -604,6 +681,7 @@ class _AIProvidersSection(QWidget):
         ACCOUNT_LOCAL = self._backend.ACCOUNT_LOCAL
         ACCOUNT_SUBSCRIPTION = self._backend.ACCOUNT_SUBSCRIPTION
         _SESSION_LABELS = {"Claude": "Claude Code", "Codex": "Codex CLI"}
+        from core.ai_engines.catalog import SUBSCRIPTION_ENV_KEYS as _SUBSCRIPTION_KEYS
         # Model inventory per credential, from the builtin table. Absent for an
         # injected test registry — the row simply shows no inventory line.
         _KEY_ACCOUNT_LABELS_LOCAL = self._backend.KEY_ACCOUNT_LABELS.get(None, "")
@@ -625,6 +703,10 @@ class _AIProvidersSection(QWidget):
             canonical = None if is_session else self._canonical_key_for(driver)
             if is_session:
                 kind, acc_id = ACCOUNT_SUBSCRIPTION, name
+            elif canonical in _SUBSCRIPTION_KEYS:
+                # A plan login read from its own app (the GLM Coding Plan,
+                # ZCode): a subscription row, no key field (td-2nxmo).
+                kind, acc_id, is_session = ACCOUNT_SUBSCRIPTION, canonical, True
             elif canonical:
                 kind, acc_id = ACCOUNT_KEY, canonical
             else:
@@ -641,7 +723,7 @@ class _AIProvidersSection(QWidget):
             # fixture, and any provider we have not given a vendor label).
             # Several -> the vendor that issues the shared key.
             vendor = _vendor_label(entry["env_key"], self._backend)
-            if entry["is_session"]:
+            if entry["is_session"] and not entry["env_key"]:
                 raw = getattr(drivers[0], "name", entry["id"])
                 label = _SESSION_LABELS.get(raw, raw)
             elif vendor:
@@ -652,7 +734,7 @@ class _AIProvidersSection(QWidget):
                 label = getattr(drivers[0], "name", entry["id"])
             else:
                 label = entry["id"]
-            if entry["is_session"]:
+            if entry["is_session"] and not entry["env_key"]:
                 models = session_inventory.get(
                     getattr(drivers[0], "name", ""), ())
             elif entry["kind"] == ACCOUNT_LOCAL:
@@ -663,9 +745,35 @@ class _AIProvidersSection(QWidget):
             entry["label"] = label
             entry["models"] = tuple(display for display, _id in models)
 
+        # A GLM pay-per-use key is a second credential for the GLM models:
+        # metered, so it is a row under API keys, never a field on the
+        # subscription row (td-hblfz, SPEC-PMT-001 §4.7).
+        from core.ai_engines import catalog as _catalog
+        glm = buckets.get(_catalog.ZAI_CODING_PLAN_KEY)
+        payg = None
+        if glm is not None:
+            payg = {"id": _catalog.GLM_PAYG_ACCOUNT, "kind": ACCOUNT_KEY,
+                    "drivers": [], "env_key": None, "is_session": False,
+                    "label": "GLM pay-per-use", "models": glm["models"],
+                    "key_choices": _catalog.GLM_PAYG_CHOICES,
+                    "probe": _GlmPayPerUseProbe(self._settings, self._backend)}
+
+        # The Anthropic API key: Claude without a Claude login (D-10
+        # amendment, Lorris 2026-10-20: "yes API key for everyone").
+        # Always present: the "Anthropic API" image reader needs it whether
+        # or not a Claude login driver is registered (td-hblfz review).
+        anthropic = {"id": _catalog.ANTHROPIC_KEY, "kind": ACCOUNT_KEY,
+                     "drivers": [], "env_key": _catalog.ANTHROPIC_KEY,
+                     "is_session": False, "label": "Anthropic",
+                     "models": tuple(display for display, _id
+                                     in session_inventory.get("Claude", ())),
+                     "probe": _AnthropicKeyProbe(self._settings, self._backend)}
+
         out = []
         for kind, header, help_text in self._backend.ACCOUNT_GROUPS:
             members = [e for e in buckets.values() if e["kind"] == kind]
+            if kind == ACCOUNT_KEY:
+                members[0:0] = [e for e in (payg, anthropic) if e is not None]
             if members:
                 out.append((kind, header, help_text, members))
         return out
@@ -687,15 +795,14 @@ class _AIProvidersSection(QWidget):
         layout.setSpacing(18)
 
         # --- Default provider group ---
-        default_group = QGroupBox("Default AI Provider")
+        default_group = QGroupBox(_registry.get("ai.default_provider").label)
         default_group.setStyleSheet(_title_font_qss(default_group))
         self._title_widgets.append(default_group)
         dg_layout = QVBoxLayout(default_group)
         dg_layout.setContentsMargins(14, 20, 14, 14)
         dg_layout.setSpacing(8)
 
-        dg_desc = QLabel(
-            "The provider used by default for AI chat and reading-date parsing.")
+        dg_desc = QLabel(_registry.get("ai.default_provider").help)
         dg_desc.setWordWrap(True)
         self._default_desc = dg_desc
         dg_desc.setStyleSheet(f"color: {theme['secondary_text']};")
@@ -703,12 +810,33 @@ class _AIProvidersSection(QWidget):
         dg_layout.addSpacing(2)
 
         self.default_combo = QComboBox()
-        names = list(self._registry.names())
-        self.default_combo.addItems(names)
-        stored = self._settings.get("ai.default_provider", "")
+        # Pickers name MODELS (SPEC-PMT-001): a subscription login lists the
+        # models it runs ("Claude Opus 5.5", as the AI Tools panel stores
+        # it), never the bare driver; the bare name stays only for a profile
+        # that still holds it (td-2nxmo).
+        stored = self._backend.canonical_provider_name(
+            self._settings.get("ai.default_provider", "") or "")
+        session_models = {a.driver_name: a.models for a in self._backend.builtin_accounts()
+                          if getattr(a, "driver_name", None)}
+        names = []
+        for driver in self._registry.all():
+            models = session_models.get(driver.name) if self._is_session(driver) else None
+            if models:
+                names += [display for display, _id in models]
+                if stored == driver.name:
+                    names.append(driver.name)
+            else:
+                names.append(driver.name)
+        # itemData = the provider name that is persisted (SPEC-LOC-002 INV-3);
+        # the unavailable sentinel below carries no data.
+        add_valued_items(self.default_combo, names)
+        for driver in self._registry.all():
+            if not self._is_session(driver) and not self._canonical_key_for(driver):
+                index = self.default_combo.findData(driver.name)
+                self.default_combo.setItemText(index, "Local LLM")
         self._suppress_default_save = True
         if stored in names:
-            self.default_combo.setCurrentText(stored)
+            select_by_data(self.default_combo, stored)
         elif stored:
             # Finding 7: the persisted default is no longer registered. Surface
             # it EXPLICITLY as unavailable and select it, instead of silently
@@ -759,7 +887,7 @@ class _AIProvidersSection(QWidget):
         ce_row = QHBoxLayout()
         ce_row.setContentsMargins(0, 0, 0, 0)
         ce_row.setSpacing(8)
-        ce_label = QLabel("Reasoning effort:")
+        ce_label = QLabel(_registry.get("ai.effort").label)
         ce_label.setStyleSheet(f"color: {theme['secondary_text']};")
         self._chat_effort_label = ce_label
         ce_row.addWidget(ce_label)
@@ -787,9 +915,7 @@ class _AIProvidersSection(QWidget):
         self.chat_effort_combo.setMinimumHeight(32)
         self.chat_effort_combo.setMaximumWidth(220)
         self.chat_effort_combo.setStyleSheet(_settings_combo_style())
-        self.chat_effort_combo.setToolTip(
-            "How hard the chat/reading model thinks before answering. Applies "
-            "to the GPT-5 family; ignored by Claude/Codex sessions.")
+        self.chat_effort_combo.setToolTip(_registry.get("ai.effort").help)
         ce_row.addWidget(self.chat_effort_combo)
         ce_row.addStretch()
         dg_layout.addLayout(ce_row)
@@ -799,16 +925,14 @@ class _AIProvidersSection(QWidget):
         # --- Vision model group (image extraction; vision/chat split) ---
         # Functional-minimal by design: a dedicated restyle pass owns the
         # aesthetics of this section.
-        vision_group = QGroupBox("Vision Model (image extraction)")
+        vision_group = QGroupBox(_registry.get("vision.provider").label)
         vision_group.setStyleSheet(_title_font_qss(vision_group))
         self._title_widgets.append(vision_group)
         vg_layout = QVBoxLayout(vision_group)
         vg_layout.setContentsMargins(14, 20, 14, 14)
         vg_layout.setSpacing(8)
 
-        vg_desc = QLabel(
-            "The model that reads pasted images and screenshots (chart "
-            "import). Separate from the chat provider above.")
+        vg_desc = QLabel(_registry.get("vision.provider").help)
         vg_desc.setWordWrap(True)
         self._vision_desc = vg_desc
         vg_desc.setStyleSheet(f"color: {theme['secondary_text']};")
@@ -830,14 +954,20 @@ class _AIProvidersSection(QWidget):
                             "entries use your installed subscription, no "
                             "API key.")
         self._suppress_vision_save = True
-        self.vision_combo.addItems(vnames)
+        add_valued_items(self.vision_combo, vnames)  # itemData = name (INV-3)
+        from core.local_ai_config import LOCAL_PROVIDER
+        local_index = self.vision_combo.findData(LOCAL_PROVIDER)
+        if local_index >= 0:
+            self.vision_combo.setItemText(local_index, "Local LLM")
+            self.vision_combo.setToolTip("Local LLM uses the server address and model ID below. Load an image-capable model on that server.")
         if stored_vision and stored_vision not in vnames:
             # Surface the stale stored name explicitly (same philosophy as
-            # the default-provider sentinel, minimal form).
+            # the default-provider sentinel, minimal form). No item data: it
+            # is never a value that can be persisted.
             self.vision_combo.addItem(f"{stored_vision} (unavailable)")
             self.vision_combo.setCurrentIndex(self.vision_combo.count() - 1)
         elif stored_vision in vnames:
-            self.vision_combo.setCurrentText(stored_vision)
+            select_by_data(self.vision_combo, stored_vision)
         self._suppress_vision_save = False
         self.vision_combo.currentIndexChanged.connect(
             self._on_vision_provider_changed)
@@ -860,18 +990,16 @@ class _AIProvidersSection(QWidget):
         eff_row = QHBoxLayout()
         eff_row.setContentsMargins(0, 0, 0, 0)
         eff_row.setSpacing(8)
-        eff_label = QLabel("Reasoning effort:")
+        eff_label = QLabel(_registry.get("vision.effort").label)
         eff_label.setStyleSheet(f"color: {theme['secondary_text']};")
         self._vision_effort_label = eff_label
         eff_row.addWidget(eff_label)
 
         self.vision_effort_combo = QComboBox()
         # Same live-verified value set as the chat combo above — "minimal" is
-        # rejected with a 400 by every current model.
-        for _disp, _val in (("None", "none"), ("Low", "low"),
-                            ("Medium", "medium"), ("High", "high"),
-                            ("Extra high", "xhigh")):
-            self.vision_effort_combo.addItem(_disp, _val)
+        # rejected with a 400 by every current model (the registry's choices).
+        for _choice in _registry.get("vision.effort").choices:
+            self.vision_effort_combo.addItem(_choice.label, _choice.value)
         # Same migration as the chat combo above (see its comment).
         stored_effort = self._backend.canonical_effort(
             self._settings.get("vision.effort", ""))
@@ -885,15 +1013,21 @@ class _AIProvidersSection(QWidget):
         self.vision_effort_combo.setMinimumHeight(32)
         self.vision_effort_combo.setMaximumWidth(220)
         self.vision_effort_combo.setStyleSheet(_settings_combo_style())
-        self.vision_effort_combo.setToolTip(
-            "How hard the vision model thinks before answering. Applies to the "
-            "GPT-5 family; ignored by Claude/Kimi vision. Medium is plenty for "
-            "reading a date from a screenshot.")
+        self.vision_effort_combo.setToolTip(_registry.get("vision.effort").help)
         eff_row.addWidget(self.vision_effort_combo)
         eff_row.addStretch()
         vg_layout.addLayout(eff_row)
 
         layout.addWidget(vision_group)
+
+        # --- Let the AI change the app's settings (SPEC-SET-003 D-14, W6b) ---
+        # The toggle the app settings request service obeys (settings.py
+        # set --app and the AI task tool). Written ONLY by this control
+        # (INV-17): the service refuses its key as protected. Pro and up:
+        # Lite has no AI that writes settings (SPEC-EDN-002 P4).
+        from core.edition_features import ai_features
+        if ai_features() is not None:
+            layout.addWidget(self._build_app_settings_toggle(theme))
 
         # --- Providers group (status rows) ---
         prov_group = QGroupBox("Providers")
@@ -921,6 +1055,16 @@ class _AIProvidersSection(QWidget):
                  (help_lbl, _prov_group_help_style)])
 
             for account in accounts:
+                if account.get("probe") is not None:
+                    # A key row with its own probe, not a model driver (GLM
+                    # pay-per-use, with its issuer choice; Anthropic).
+                    self._instances.append(
+                        (account["id"], account["probe"], False, None))
+                    self._add_provider_row(
+                        account["id"], False, account.get("env_key"),
+                        title=account["label"], models=account["models"],
+                        key_choices=account.get("key_choices"))
+                    continue
                 # Probe the FIRST driver of the account: they share the
                 # credential, so its auth state is the account's auth state.
                 # Probing all six OpenAI rows would have made six identical
@@ -944,19 +1088,13 @@ class _AIProvidersSection(QWidget):
                 self._instances.append(
                     (account["id"], instance, is_session, create_error))
                 self._add_provider_row(
-                    account["id"], is_session, canonical,
+                    account["id"], is_session, None if is_session else canonical,
                     title=account["label"], models=account["models"],
                     is_local=(account["kind"] == ACCOUNT_LOCAL))
 
-        # The standing ANTHROPIC_API_KEY "future production key" row was
-        # REMOVED here (2026-08-06). Two reasons, both visible in the shipped
-        # panel: it was appended AFTER the group loop, so it rendered under the
-        # "Local AI — no key, no billing" heading, which is the one thing a
-        # metered vendor key is not; and Claude already works through the
-        # subscription login above, so an empty key field next to it invited
-        # paying twice for what the CLI login already provides. Re-add it as a
-        # normal registry KeyDriver if a metered Anthropic row is ever wanted —
-        # then it groups itself correctly.
+        # The ANTHROPIC_API_KEY row is built in the group loop, under API
+        # keys (D-10 amendment, 2026-10-20). The 2026-08-06 row was appended
+        # AFTER the loop and so rendered under "Local AI"; never again.
 
         layout.addWidget(prov_group)
         layout.addStretch()
@@ -980,7 +1118,7 @@ class _AIProvidersSection(QWidget):
 
     def _add_provider_row(self, name, is_session, canonical_key,
                           subtitle=None, title=None, models=(),
-                          is_local=False):
+                          is_local=False, key_choices=None):
         """Build one ACCOUNT row; register its widget refs in ``self._rows``.
 
         ``name`` is the row's stable id (driver name or canonical env key);
@@ -990,7 +1128,18 @@ class _AIProvidersSection(QWidget):
 
         ``models`` is the inventory this credential unlocks, shown so the
         blast radius of a key is visible without opening a picker.
+
+        ``key_choices`` (``catalog.GLM_PAYG_CHOICES`` shape) gives the key
+        field a choice of where the key was issued; the choice picks the env
+        name the key is written to, so it reaches that issuer's endpoint.
         """
+        choice_owned = ()
+        if key_choices:
+            from core.ai_engines import catalog as _catalog
+            env = {n: self._settings.get_api_key(n)
+                   for _k, n, _u, _s in _catalog.GLM_ROUTES if _k == "env"}
+            canonical_key, _held, _src = _catalog.glm_payg_state(env)
+            choice_owned = tuple(n for _w, _l, names in key_choices for n in names)
         row = QFrame()
         row.setObjectName("providerCard")
         row.setStyleSheet(_provider_card_style())
@@ -1007,7 +1156,7 @@ class _AIProvidersSection(QWidget):
         dot.setStyleSheet(_status_tier_style(_PROV_AMBER))
         head.addWidget(dot)
 
-        name_lbl = QLabel(title or name)
+        name_lbl = QLabel("Local LLM" if is_local else title or name)
         # QSS-styled -> setFont inert (O-5); font in the shared fragment.
         name_lbl.setStyleSheet(_provider_name_lbl_style())
         head.addWidget(name_lbl)
@@ -1015,6 +1164,7 @@ class _AIProvidersSection(QWidget):
         head.addStretch()
 
         status_lbl = QLabel("Checking…")
+        status_lbl.setProperty(_CHECKING_PROP, True)  # state, not text (INV-3)
         status_lbl.setStyleSheet(_status_tier_style(_PROV_AMBER))
         head.addWidget(status_lbl)
         row_layout.addLayout(head)
@@ -1037,6 +1187,8 @@ class _AIProvidersSection(QWidget):
         key_edit = None
         save_btn = None
         key_lbl = None
+        choice_combo = None
+        choice_lbl = None
         if canonical_key:
             key_row = QHBoxLayout()
             key_row.setContentsMargins(24, 2, 0, 0)
@@ -1051,12 +1203,41 @@ class _AIProvidersSection(QWidget):
             _cap_w(self, key_lbl, 70)
             key_row.addWidget(key_lbl)
 
+            choice_combo = None
+            if key_choices:
+                # Its own line: beside the key field it left the field a few
+                # dozen pixels wide on a narrow page (td-hblfz review).
+                choice_row = QHBoxLayout()
+                choice_row.setContentsMargins(24, 2, 0, 0)
+                choice_row.setSpacing(8)
+                choice_lbl = QLabel("Issued by:")
+                # Same face as "API key:" below (refresh_theme replays both).
+                choice_lbl.setStyleSheet(f"font-size:{scaled_area_px('info_text')}px;")
+                choice_row.addWidget(choice_lbl)
+                choice_combo = QComboBox()
+                choice_combo.setMinimumHeight(28)
+                choice_combo.setStyleSheet(_settings_combo_style())
+                for write_name, label, _names in key_choices:
+                    choice_combo.addItem(label, write_name)
+                choice_combo.setCurrentIndex(
+                    max(0, choice_combo.findData(canonical_key)))
+                choice_combo.setToolTip("Where your GLM API key was issued. "
+                                        "The key is sent to that address.")
+                choice_combo.currentIndexChanged.connect(
+                    lambda _i, n=name: self._on_key_choice_changed(n))
+                choice_row.addWidget(choice_combo)
+                choice_row.addStretch()
+                row_layout.addLayout(choice_row)
+
             key_edit = QLineEdit()
             key_edit.setMinimumHeight(28)
             key_edit.setEchoMode(QLineEdit.EchoMode.Password)
             # INV-4: never load the stored key into the editable text — the
             # placeholder shows only the MASKED preview.
-            existing = self._settings.get_api_key(canonical_key)
+            existing = (self._stored_row_key({"canonical_key": canonical_key,
+                                              "choice_combo": choice_combo})
+                        if choice_combo is not None
+                        else self._settings.get_api_key(canonical_key))
             if existing:
                 key_edit.setPlaceholderText(
                     self._settings._mask_key(existing))
@@ -1087,10 +1268,74 @@ class _AIProvidersSection(QWidget):
             "key_lbl": key_lbl,
             "save_btn": save_btn,
             "canonical_key": canonical_key,
+            "choice_combo": choice_combo if canonical_key else None,
+            "choice_lbl": choice_lbl,
+            # Every env name the row owns: a save writes one and drops the
+            # others, so an older key under another name cannot win the route.
+            "owned_keys": choice_owned or ((canonical_key,) if canonical_key else ()),
             "is_session": is_session,
             "is_local": is_local,
             "subtitle": subtitle,
         }
+        if is_local:
+            self._add_local_server_fields(row_layout, self._rows[name])
+
+    def _add_local_server_fields(self, layout, refs):
+        from core.local_ai_config import local_server_values
+        form = QFormLayout()
+        values = local_server_values(self._settings)
+        refs["local_saved"] = (values["url"], values["model"])
+        refs["url_edit"] = QLineEdit(values["url"])
+        refs["url_edit"].setPlaceholderText("http://localhost:1234/v1")
+        refs["url_edit"].setToolTip("LM Studio or any OpenAI-compatible server. Enter its root, API base, or full chat/completions URL.")
+        refs["model_edit"] = QLineEdit(values["model"])
+        refs["model_edit"].setPlaceholderText("Model ID served by your local server")
+        refs["local_labels"] = []
+        for caption, field in (("Server address:", "url_edit"), ("Model ID:", "model_edit")):
+            label = QLabel(caption)
+            label.setStyleSheet(_provider_detail_lbl_style())
+            refs["local_labels"].append(label)
+            refs[field].setMinimumHeight(30)
+            form.addRow(label, refs[field])
+        layout.addLayout(form)
+        button = QPushButton("Save Local Server")
+        button.setStyleSheet(get_primary_button_style())
+        button.clicked.connect(lambda checked=False: self._on_save_local_server(refs))
+        self._primary_buttons.append(button)
+        layout.addWidget(button)
+        self._update_local_row(refs)
+
+    def _update_local_row(self, refs):
+        from core.local_ai_config import local_server_values
+        values = local_server_values(self._settings)
+        if refs["models_lbl"] is not None:
+            refs["models_lbl"].setText(values["model"])
+        from core.local_ai_config import local_ai_server
+        saved = self._settings.get("ai.local_server", _registry.default("ai.local_server"))
+        refs["detail_lbl"].setText(
+            "Choose Local LLM in AI Capture, Default chat model, or Vision Model above. Connection not checked."
+            if local_ai_server(saved) else "Invalid local server settings. Edit the address and model ID, then save.")
+
+    @_own_write
+    def _on_save_local_server(self, refs):
+        from core.local_ai_config import local_chat_url, local_ai_server
+        value = {"url": refs["url_edit"].text().strip(),
+                 "model": refs["model_edit"].text().strip()}
+        if not local_ai_server(value):
+            refs["detail_lbl"].setText("Enter a valid HTTP or HTTPS server address and a model ID.")
+            return
+        value["url"] = local_chat_url(value["url"])
+        from managers.settings_write import write_or_restore
+        ok, error = write_or_restore(self._settings, "ai.local_server", value)
+        if not ok:
+            refs["detail_lbl"].setText("Could not save local server: " + _sanitize_detail(error, settings=self._settings))
+            return
+        self._settings._notify_change("ai.local_server", value)
+        refs["url_edit"].setText(value["url"])
+        refs["local_saved"] = (value["url"], value["model"])
+        self._update_local_row(refs)
+        self._sync_default_model_label()
+        self._sync_vision_model_label()
 
     # ------------------------------------------------------------- probing ---
 
@@ -1123,6 +1368,7 @@ class _AIProvidersSection(QWidget):
         # Reset rows to the transient "checking" state.
         for refs in self._rows.values():
             refs["status_lbl"].setText("Checking…")
+            refs["status_lbl"].setProperty(_CHECKING_PROP, True)
             refs["status_color"] = _PROV_AMBER
             refs["status_lbl"].setStyleSheet(_status_tier_style(_PROV_AMBER))
             refs["dot"].setStyleSheet(_status_tier_style(_PROV_AMBER))
@@ -1253,7 +1499,7 @@ class _AIProvidersSection(QWidget):
             # Re-probe: rows may be stale ("Checking…") or empty after a close
             # that interrupted the previous worker.
             stale = any(
-                refs["status_lbl"].text().startswith("Checking")
+                bool(refs["status_lbl"].property(_CHECKING_PROP))
                 for refs in self._rows.values())
             if stale or not self._rows:
                 self.refresh_snapshots()
@@ -1279,17 +1525,72 @@ class _AIProvidersSection(QWidget):
                                        settings=self._settings,
                                        is_local=refs.get("is_local", False))
         refs["status_lbl"].setText(rendered["status_label"])
+        refs["status_lbl"].setProperty(_CHECKING_PROP, False)
         refs["status_color"] = rendered["color"]
         refs["status_lbl"].setStyleSheet(_status_tier_style(rendered["color"]))
         refs["dot"].setStyleSheet(_status_tier_style(rendered["color"]))
         detail = rendered["detail"] or rendered["hint"] or refs["subtitle"] or ""
         refs["detail_lbl"].setText(detail)
+        if refs.get("is_local"):
+            self._update_local_row(refs)
         # Refresh the masked placeholder in case the key changed elsewhere.
         if refs["key_edit"] is not None and refs["canonical_key"]:
-            existing = self._settings.get_api_key(refs["canonical_key"])
-            if existing:
+            existing = self._stored_row_key(refs)
+            if refs.get("override_note"):
+                refs["key_edit"].setPlaceholderText(refs["override_note"])
+            elif existing:
                 refs["key_edit"].setPlaceholderText(
                     self._settings._mask_key(existing))
+
+    def _stored_row_key(self, refs):
+        """The key stored for the row's current choice (any name it owns)."""
+        names = (refs["canonical_key"],)
+        if refs.get("choice_combo") is not None:
+            from core.ai_engines import catalog as _catalog
+            names = next((owned for w, _l, owned in _catalog.GLM_PAYG_CHOICES
+                          if w == refs["canonical_key"]), names)
+        return next((v for v in (self._settings.get_api_key(n) for n in names)
+                     if v), "")
+
+    def _drop_other_choice_keys(self, refs, canonical):
+        """One key per row: remove the row's other env names from .env, so a
+        key saved earlier under the other issuer cannot keep winning the GLM
+        route. The .env FILE is checked, not the process-overlaid value: an
+        empty process variable can mask a disk key that would come back.
+        Returns ``(ok, name)``, ``name`` being a process environment variable
+        that still outranks the saved key (the app cannot unset it), or ""."""
+        import os
+        from core.ai_engines import catalog as _catalog
+        own = next((names for w, _l, names in _catalog.GLM_PAYG_CHOICES
+                    if w == canonical), (canonical,))
+        ok = True
+        for other in refs.get("owned_keys") or ():
+            if other == canonical:
+                continue
+            try:
+                on_disk = self._settings.has_api_key_on_disk(other)
+            except EnvUnreadableError:
+                on_disk = True
+            if on_disk:
+                ok = self._settings.set_api_key(other, "") and ok
+        env = {n: self._settings.get_api_key(n)
+               for kind, n, _u, _s in _catalog.GLM_ROUTES if kind == "env"}
+        _choice, held_in, _source = _catalog.glm_payg_state(env)
+        overridden = (held_in if held_in and held_in not in own
+                      and os.environ.get(held_in) else "")
+        return ok, overridden
+
+    def _on_key_choice_changed(self, name):
+        """The issuer choice moved: the row now writes that env name."""
+        refs = self._rows.get(name)
+        if refs is None or refs.get("choice_combo") is None:
+            return
+        refs["canonical_key"] = refs["choice_combo"].currentData()
+        refs["override_note"] = ""
+        existing = self._stored_row_key(refs)
+        refs["key_edit"].setPlaceholderText(
+            self._settings._mask_key(existing) if existing
+            else f"Not set ({refs['canonical_key']})")
 
     # --------------------------------------------------------------- keys ---
 
@@ -1319,8 +1620,9 @@ class _AIProvidersSection(QWidget):
             # OSErrors) as ".env unreadable", masking real bugs behind a
             # misleading message. Anything else must propagate.
             try:
-                exists = (self._settings.has_api_key_on_disk(canonical)
-                          if canonical else False)
+                exists = any(self._settings.has_api_key_on_disk(n)
+                             for n in refs.get("owned_keys") or (canonical,)
+                             if n)
             except EnvUnreadableError:
                 refs["key_edit"].setPlaceholderText(
                     "Could not read stored key (.env unreadable)")
@@ -1351,37 +1653,53 @@ class _AIProvidersSection(QWidget):
                 # The section was torn down while the modal was open — abort
                 # before touching set_api_key or any (possibly-deleted) widget.
                 return
-            ok = self._settings.set_api_key(canonical, "")
+            ok = all([self._settings.set_api_key(n, "")
+                      for n in refs.get("owned_keys") or (canonical,)])
             refs["key_edit"].setText("")
             refs["key_edit"].setPlaceholderText(
                 f"Not set ({canonical})" if ok else "Clear failed")
             self.refresh_snapshots()
             return
         ok = self._settings.set_api_key(canonical, value)
+        overridden = ""
+        if ok and refs.get("choice_combo") is not None:
+            ok, overridden = self._drop_other_choice_keys(refs, canonical)
+        if ok and not overridden:
+            # A system environment variable outranks the .env (read_env):
+            # say so by name, or the row would show a key the app ignores.
+            import os
+            process = os.environ.get(canonical)
+            if process and process != value:
+                overridden = canonical
         # INV-4 (finding 8): wipe the editable text with setText("") — NOT
         # clear(), which leaves the raw key recoverable via Qt's undo history
         # (Ctrl+Z would restore the secret). setText("") resets undo/redo.
         refs["key_edit"].setText("")
+        refs["override_note"] = (
+            f"Saved, but {overridden} in your system environment is used first"
+            if ok and overridden else "")
         refs["key_edit"].setPlaceholderText(
-            self._settings._mask_key(value) if ok else "Save failed")
+            "Save failed" if not ok
+            else refs["override_note"] or self._settings._mask_key(value))
         # Re-probe just this row's status (key presence changed).
         self.refresh_snapshots()
 
     # ----------------------------------------------------------- defaults ---
 
+    @_own_write
     def _on_default_changed(self, *args):
         # Driven by currentIndexChanged (finding F5(a)); read the display text
         # directly instead of trusting a text argument.
         if self._suppress_default_save:
-            return
-        name = self.default_combo.currentText()
-        if not name:
             return
         # Finding 7 / 6(c): the "<name> (unavailable)" sentinel must never
         # persist and must never overwrite the stored (stale) value on its own.
         # Detect it by its private item-data role, never by matching text.
         cur = self.default_combo.currentIndex()
         if self.default_combo.itemData(cur, _SENTINEL_ROLE) == _SENTINEL_MARKER:
+            return
+        name = self.default_combo.currentData()  # the provider name (INV-3)
+        if not name:
             return
         # A real pick supersedes the stale persisted value: drop the sentinel
         # entry (so it can't be re-selected) and persist the chosen provider.
@@ -1405,21 +1723,117 @@ class _AIProvidersSection(QWidget):
         by the vendor CLI/subscription, shown as such."""
         if not hasattr(self, "_default_model_label"):
             return
-        name = self.default_combo.currentText()
+        cur = self.default_combo.currentIndex()
+        unavailable = (self.default_combo.itemData(cur, _SENTINEL_ROLE)
+                       == _SENTINEL_MARKER)  # by role, not text (INV-3)
+        name = self.default_combo.currentData() or ""
         cfg = None
         try:
             cfg = self._backend.builtin_key_provider_config(
                 self._backend.canonical_provider_name(name))
         except Exception:
             cfg = None
-        if name.endswith("(unavailable)"):
+        session_id = next((mid for a in self._backend.builtin_accounts()
+                           if getattr(a, "driver_name", None)
+                           for display, mid in a.models if display == name), None)
+        if unavailable:
             self._default_model_label.setText("Model: (unavailable)")
+        elif session_id:
+            self._default_model_label.setText(f"Model: {session_id}")
         elif cfg is not None:
+            if cfg.get("env_key") is None:
+                from core.local_ai_config import local_provider_config
+                cfg = local_provider_config(cfg, self._settings)
             self._default_model_label.setText(f"Model: {cfg.get('model')}")
         else:
             self._default_model_label.setText(
                 "Model: session (set by the provider CLI / subscription)")
 
+    def _build_app_settings_toggle(self, theme):
+        """The D-14 toggle row: the approved label and help line (the
+        registry entry's), default off. Shared by Core, Lite and Pro."""
+        from PySide6.QtWidgets import QCheckBox
+        entry = _registry.get(APP_SETTINGS_TOGGLE)
+        box = QWidget()
+        row = QVBoxLayout(box)
+        row.setContentsMargins(2, 0, 0, 0)
+        row.setSpacing(4)
+        self.app_settings_toggle = QCheckBox(entry.label)
+        self.app_settings_toggle.setToolTip(entry.help)
+        self.app_settings_toggle.setChecked(self._app_settings_toggle_value())
+        # clicked: the user's own click only, never a programmatic re-sync
+        self.app_settings_toggle.clicked.connect(self._on_app_settings_toggle)
+        row.addWidget(self.app_settings_toggle)
+        self._app_settings_help = QLabel(entry.help)
+        self._app_settings_help.setWordWrap(True)
+        self._app_settings_help.setStyleSheet(f"color: {theme['secondary_text']};")
+        row.addWidget(self._app_settings_help)
+        # A failed save of the toggle (W6b fix F4): the structured state is
+        # ``app_settings_toggle_state``; the line shows only approved words
+        # (cli_text gate), and stays hidden while its copy is pending.
+        self.app_settings_toggle_state = None
+        self._app_settings_status = QLabel("")
+        self._app_settings_status.setWordWrap(True)
+        self._app_settings_status.setVisible(False)
+        row.addWidget(self._app_settings_status)
+        # AI setting redesign (td-bztjj) item 7 and SPEC-FIND-006 §4.1: the
+        # AI setting panel's model and the Find Chart AI search's model.
+        from core.edition_features import ai_features
+        ai_features().add_model_rows(self, row)
+        return box
+
+    def _app_settings_toggle_value(self) -> bool:
+        """What is in effect: the SAVED file's value, read fresh (another
+        window may have switched it; the request service reads the file
+        too), else this manager's value, else off."""
+        from core.settings_registry import app_requests as _ar
+        path = getattr(self._settings, "_config_path", None)
+        saved = _ar.read_saved(path) if path else None
+        if saved is not None:
+            return _ar.toggle_on(saved)
+        return self._settings.get(APP_SETTINGS_TOGGLE,
+                                  _registry.default(APP_SETTINGS_TOGGLE)) is True
+
+    @_own_write
+    def _on_app_settings_toggle(self, checked):
+        """The ONLY writer of ai.allow_app_settings_changes (INV-17, D-17).
+
+        W6b fix F4: the value is shown only once it is durable. The save is
+        synchronous; when it fails, the in-memory value is restored and the
+        pending write dropped (a later unrelated save can never flush it),
+        the checkbox goes back to the SAVED value (a revocation that did not
+        reach the file is not displayed as done) and the failure is recorded
+        as a structured state, shown through the pending-copy gate."""
+        from managers.settings_write import write_or_restore
+        value = bool(checked)
+        ok, error = write_or_restore(self._settings, APP_SETTINGS_TOGGLE, value)
+        if ok:
+            self._settings._notify_change(APP_SETTINGS_TOGGLE, value)
+            self._show_app_settings_toggle_state(None)
+            return
+        saved = self._app_settings_toggle_value()
+        self.app_settings_toggle.setChecked(saved)        # setChecked: no clicked signal
+        self._show_app_settings_toggle_state(
+            {"code": "toggle.save_failed", "requested": value, "saved": saved,
+             "error": error})
+
+    def _show_app_settings_toggle_state(self, state):
+        """Record the toggle row's last outcome (None = saved). The status
+        line carries the approved wording only (``cli_text.TEXT``); while
+        the key is pending it stays hidden (never a marker, never a code)."""
+        from core.settings_registry import cli_text
+        self.app_settings_toggle_state = state
+        label = getattr(self, "_app_settings_status", None)
+        if label is None:
+            return
+        if state is None or cli_text.is_pending(state["code"]):
+            label.setText("")
+            label.setVisible(False)
+            return
+        label.setText(cli_text.message(state["code"]))
+        label.setVisible(True)
+
+    @_own_write
     def _on_chat_effort_changed(self, *args):
         """Persist ai.effort (minimal/low/medium/high). Suppressed during the
         construction-time restore so loading a value never re-writes it."""
@@ -1433,27 +1847,31 @@ class _AIProvidersSection(QWidget):
         """Show the model id the current vision selection resolves to."""
         if not hasattr(self, "_vision_model_label"):
             return
-        name = self.vision_combo.currentText()
+        name = self.vision_combo.currentData()  # None on the unavailable row
         cfg = self._vision_configs.get(name)
         override = self._settings.get("vision.model", "")
         if cfg is None:
             self._vision_model_label.setText("Model: (unavailable)")
         else:
+            from core.local_ai_config import local_provider_config
+            cfg = local_provider_config(cfg, self._settings)
             model = override or cfg.get("vision_model") or cfg.get("model")
             self._vision_model_label.setText(f"Model: {model}")
 
+    @_own_write
     def _on_vision_provider_changed(self, *args):
         """Persist vision.provider; reset vision.model to the provider's
         registry default (empty override)."""
         if getattr(self, "_suppress_vision_save", False):
             return
-        name = self.vision_combo.currentText()
+        name = self.vision_combo.currentData()  # the provider name (INV-3)
         if not name or name not in self._vision_configs:
             return  # never persist the "(unavailable)" surface entry
         self._settings.set("vision.provider", name)
         self._settings.set("vision.model", "")
         self._sync_vision_model_label()
 
+    @_own_write
     def _on_vision_effort_changed(self, *args):
         """Persist vision.effort (minimal/low/medium/high). Suppressed during
         the construction-time restore so loading a value never re-writes it."""
@@ -1465,12 +1883,27 @@ class _AIProvidersSection(QWidget):
 
     def _read_from_settings(self):
         """Re-sync the default combo from settings (focus refresh hook)."""
-        names = [self.default_combo.itemText(i)
+        for refs in self._rows.values():
+            for label in refs.get("local_labels", ()):
+                label.setStyleSheet(_provider_detail_lbl_style())
+            if refs.get("is_local"):
+                from core.local_ai_config import local_server_values
+                values = local_server_values(self._settings)
+                current = (refs["url_edit"].text(), refs["model_edit"].text())
+                if current == refs.get("local_saved"):
+                    refs["url_edit"].setText(values["url"])
+                    refs["model_edit"].setText(values["model"])
+                    refs["local_saved"] = (values["url"], values["model"])
+                self._update_local_row(refs)
+        if hasattr(self, "app_settings_toggle"):
+            self.app_settings_toggle.setChecked(self._app_settings_toggle_value())
+        names = [self.default_combo.itemData(i)
                  for i in range(self.default_combo.count())]
-        stored = self._settings.get("ai.default_provider", "")
-        if stored in names:
+        stored = self._backend.canonical_provider_name(
+            self._settings.get("ai.default_provider", "") or "")
+        if stored and stored in names:
             self._suppress_default_save = True
-            self.default_combo.setCurrentText(stored)
+            select_by_data(self.default_combo, stored)
             self._suppress_default_save = False
         self._sync_default_model_label()
         if hasattr(self, "vision_combo"):
@@ -1479,11 +1912,11 @@ class _AIProvidersSection(QWidget):
                     self._settings.get("vision.provider", ""))
             except Exception:
                 stored_v = self._settings.get("vision.provider", "")
-            vnames = [self.vision_combo.itemText(i)
+            vnames = [self.vision_combo.itemData(i)
                       for i in range(self.vision_combo.count())]
-            if stored_v in vnames:
+            if stored_v and stored_v in vnames:
                 self._suppress_vision_save = True
-                self.vision_combo.setCurrentText(stored_v)
+                select_by_data(self.vision_combo, stored_v)
                 self._suppress_vision_save = False
             self._sync_vision_model_label()
 
@@ -1512,6 +1945,9 @@ class _AIProvidersSection(QWidget):
         if hasattr(self, "_vision_effort_label"):
             self._vision_effort_label.setStyleSheet(
                 f"color: {theme['secondary_text']};")
+        if hasattr(self, "_app_settings_help"):
+            self._app_settings_help.setStyleSheet(
+                f"color: {theme['secondary_text']};")
         for refs in self._rows.values():
             # Card chrome is theme-driven (secondary/secondary_light) — replay
             # it like the labels below so a live theme switch can't strand the
@@ -1525,6 +1961,8 @@ class _AIProvidersSection(QWidget):
             # SIZE (status area) must still be replayed, preserving the live
             # semantic colour stored in refs['status_color'] (MED-1).
             refs["detail_lbl"].setStyleSheet(_provider_detail_lbl_style())
+            for label in refs.get("local_labels", ()):
+                label.setStyleSheet(_provider_detail_lbl_style())
             _status_qss = _status_tier_style(refs.get("status_color", _PROV_AMBER))
             refs["dot"].setStyleSheet(_status_qss)
             refs["status_lbl"].setStyleSheet(_status_qss)
@@ -1536,6 +1974,11 @@ class _AIProvidersSection(QWidget):
             key_lbl = refs.get("key_lbl")
             if key_lbl is not None:
                 key_lbl.setStyleSheet(f"font-size:{scaled_area_px('info_text')}px;")
+            if refs.get("choice_combo") is not None:
+                refs["choice_combo"].setStyleSheet(_settings_combo_style())
+            if refs.get("choice_lbl") is not None:
+                refs["choice_lbl"].setStyleSheet(
+                    f"font-size:{scaled_area_px('info_text')}px;")
         # Subgroup headings/help (info_text area) — replay font+colour (MED-2).
         for _w, _fn in self._group_labels:
             _w.setStyleSheet(_fn())

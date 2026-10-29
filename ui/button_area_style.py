@@ -41,3 +41,13 @@ def get_3d_button_style_area(accent_name: str = "blue", size: str = "medium") ->
     can keep the plain ``get_3d_button_style``."""
     base = get_3d_button_style(accent_name, size)
     return f"{base}\nQPushButton {{ font-size: {button_area_font_px(size)}px; }}\n"
+
+
+def dasha_level_button_size() -> tuple:
+    """Dasha level selectors 1-5: the box follows the 'buttons' font area, so a
+    larger button font never clips the digit (Lorris 2026-10-15: at 14 pt the
+    fixed 24x22 box cut the numbers). Never smaller than the old fixed size."""
+    from ui.qt_theme import get_dasha_level_button_size, scaled_px
+    base_w, base_h = get_dasha_level_button_size()
+    h = max(base_h, button_area_font_px("small") + scaled_px(10))
+    return max(base_w, h + scaled_px(2)), h

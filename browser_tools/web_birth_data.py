@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Optional, Dict, Any, List
 
 from core.time_utils import resolve_total_offset
+from tools.geocoding import DST_RELIABLE_FROM_YEAR
 
 
 # =============================================================================
@@ -226,7 +227,8 @@ def get_timezone_for_coordinates(lat: float, lon: float, birth_date: datetime = 
             from core.time_utils import format_offset_from_hours
             offset_str = format_offset_from_hours(std_hours)
 
-            return {'offset': offset_str, 'dst_active': bool(dst_flag)}
+            return {'offset': offset_str, 'dst_active': bool(dst_flag),
+                    'tz_name': tz_name}
 
     except ImportError:
         print("[WARN] timezonefinder not installed. Run: pip install timezonefinder")
@@ -593,17 +595,10 @@ def extract_birth_data(
     """Extract birth data from web sources.
 
     source="auto" chains: Wikidata -> DuckDuckGo.
-    source="dev_plugin" delegates to the external dev plugin if installed.
     """
     result = None
 
-    if source == "dev_plugin":
-        try:
-            if search_astrotheme:
-                result = search_astrotheme(name, visible, verbose)
-        except (ImportError, NameError):
-            return extract_birth_data(name, source="auto", verbose=verbose, visible=visible)
-    elif source == "auto":
+    if source == "auto":
         if verbose:
             print(f"[AUTO] Trying Wikidata...")
         result = search_wikidata(name, verbose)
@@ -644,7 +639,10 @@ def extract_birth_data(
             result["latitude"] = coords["latitude"]
             result["longitude"] = coords["longitude"]
 
-            birth_dt = datetime(result["year"], result["month"], result["day"])
+            # Resolve at the birth TIME: DST starts and ends at a clock hour,
+            # and midnight sits on the wrong side of it on changeover days.
+            birth_dt = datetime(result["year"], result["month"], result["day"],
+                                result.get("hour", 12), result.get("minute", 0))
             correction = check_tz_correction(city, country, result["year"], result["month"], result["day"])
             if correction:
                 result["timezone"] = correction['offset']
@@ -655,6 +653,15 @@ def extract_birth_data(
                 tz_info = get_timezone_for_coordinates(coords["latitude"], coords["longitude"], birth_dt)
                 result["timezone"] = tz_info['offset']
                 result["dst_active"] = tz_info['dst_active']
+                if result["year"] < DST_RELIABLE_FROM_YEAR and tz_info.get('tz_name'):
+                    # IANA keeps pre-1970 history only for the zone's
+                    # reference city (America/Chicago = Chicago, so Omaha 1925
+                    # gets Chicago's summer time). Callers can surface it.
+                    result["dst_unverified"] = tz_info['tz_name']
+                    if verbose:
+                        from tools.geocoding import dst_unverified_note
+                        print(f"[TZ-CHECK] WARNING: "
+                              f"{dst_unverified_note(tz_info['dst_active'], tz_info['tz_name'])}")
                 dst_label = " DST" if tz_info['dst_active'] else ""
                 if verbose:
                     print(f"[Geocode] Found: {coords['latitude']:.4f}, {coords['longitude']:.4f} (TZ: {tz_info['offset']}{dst_label})")

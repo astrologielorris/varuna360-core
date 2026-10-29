@@ -29,7 +29,7 @@ This document contains the complete descriptions of all 12 Ādityas (solar deiti
 ### Meaning & Love
 **Signification**: Celui qui porte, soutient et établit — the one who carries, supports, and establishes.
 
-**
+**Love Associated**: The love of creativity.
 
 **Core Essence**: Dhaataa is the divine creator and cosmic carrier. His essence is to offer unconditional support, from generation to prosperity. Particularly associated with creativity, children, ideas, and the creative fire Agni. Dhaataa is the first who starts the entire creation process — this requires immense force, like a volcano that erupts once to give prosperity. His love is the Love of Carrying, a fundamental force that supports existence itself and allows life to flourish.
 
@@ -48,7 +48,7 @@ Pulastya is the guardian of the Law of Sacred Progeny. This alliance reveals the
 ### Stories
 - Dhātā and his shadow twin Vidhātā work together — one establishing, the other disposing. They represent the dual nature of creation and dissolution.
 - As carrier, Dhātā is invoked during marriage ceremonies to establish the sacred bond between partners.
-- 
+- The Rishi Pulastya is one of the mind-born sons of Brahmā and father of many beings including the Rākṣasas.
 
 ### Attributes
 - Carrier and support of cosmic order
@@ -164,9 +164,9 @@ Once engaged, we learn that true friendship can help us reach our full potential
 
 **Love Associated**: The love of consciousness and truth.
 
-**Core Essence**: Varuna Aditya is one of the most ancient Vedic gods, the ancient lord who envelops all existence in his penetrating gaze.  His wisdom and influence transcend even Indra's. Hating lies above all, he binds transgressors with his fearsome noose (pāśa), while possessing the grace to pardon sins.
+**Core Essence**: Varuna Aditya is one of the most ancient Vedic gods, the ancient lord who envelops all existence in his penetrating gaze. God of the night sky and oceanic depths, he resides in the heart of the ocean itself, watching over immortality and cosmic law (Ṛta). His wisdom and influence transcend even Indra's. Hating lies above all, he binds transgressors with his fearsome noose (pāśa), while possessing the grace to pardon sins.
 
-His love is an All-Encompassing Love that knows neither limits nor borders — a love that meditates deeply to discern truth hidden beneath deceptive appearances. Through meditation (Dhyāna), instrument created by Brahman, he distinguishes authentic order from disguised chaos. 
+His love is an All-Encompassing Love that knows neither limits nor borders — a love that meditates deeply to discern truth hidden beneath deceptive appearances. Through meditation (Dhyāna), instrument created by Brahman, he distinguishes authentic order from disguised chaos. He waxes and wanes with the Moon (Candra), reflecting consciousness cycles.
 
 Those bearing this Aditya's imprint possess remarkable rapid adaptation capacity, changing and evolving with the fluidity of the waters he governs, while remaining anchored in deep consciousness of universal order.
 
@@ -188,7 +188,7 @@ Varuna's all-encompassing love can only be fully perceived through the expanded 
 
 ### Stories
 - Varuṇa hates lies and binds with his noose (pāśa) those who violate cosmic law. He also pardons sins and is guardian of immortality.
--  He lives in the ocean's heart and is associated with the western direction. All rivers and the ocean obey him. 
+- In Kṛtayuga, the Devas approached and anointed him king of all waters. He lives in the ocean's heart and is associated with the western direction. All rivers and the ocean obey him. He waxes and wanes with Candra (the Moon).
 - When Rāvaṇa attacked King Marutta's sacrifice, Varuṇa escaped as a swan (Hamsa) — very important archetypal behavior seen in these people.
 - Varuṇa rides the mythic Makara, a fierce beast devouring all smaller creatures. He can also be represented on a swan or chariot drawn by seven swans.
 - The famous rivalry between Vasishtha (Varuna's Rishi) and Viśvāmitra (Vishnu's Rishi, 8th Aditya) represents deep tension between contemplative spiritual law of consciousness (Vasishtha) and transforming love that transgresses laws (Viśvāmitra).
@@ -239,7 +239,7 @@ His name means "the vital sap" or "the body's very essence," referring to the br
 - **Victory over Vṛtra**: Indra faced the great Asura demon Vṛtra who had blocked all world rivers, causing catastrophic drought. To defeat him, Ṛṣi Dadhichi sacrificed his life, and his spine (bones) was forged into Vajra, the indestructible divine lightning weapon that allowed Indra to triumph, restore vital waters, and bring life back to earth.
 - **Self-conquest**: Indra earned his title of King of Devas not by birthright but by "conquering himself." This teaches that true power lies not in domination but self-mastery.
 - **The humility test**: Despite his status as king of gods, Indra was constantly tested by trials that humbled him. Each reminded him that true power lies not in domination but capacity to remain humble facing adversity.
-- **Seduction of Ahalyā**: Indra took sage Gautama's form to seduce his wife Ahalyā.  Later, Adi Parāśakti transformed these vaginas into a thousand eyes and restored his virility.
+- **Seduction of Ahalyā**: Indra took sage Gautama's form to seduce his wife Ahalyā. Discovered, he was cursed by Gautama to be covered with a thousand vaginas on his body, and his penis and scrotum fell off. Later, Adi Parāśakti transformed these vaginas into a thousand eyes and restored his virility.
 - **The guru Bṛhaspati insult**: At a divine assembly, Indra, blinded by pride, remained seated on his throne when his guru Bṛhaspati entered, omitting to rise and greet him. Offended, Bṛhaspati disappeared. Without guiding wisdom, Indra lost his power and was defeated by Asuras.
 
 ### Attributes
@@ -289,7 +289,7 @@ But the intestines first teach us an earthly, humble truth. Jesus said: "You are
 ### Rishi: Bhṛgu
 **Law**: Law of Man
 
- He was also one of the great authors of Vāstu, sacred architecture guiding physical manifestation.
+Bhṛgu, whose name means "divine light," is a monumental figure — father of astrology, author of Bhṛgu Saṃhitā where legend says he interpreted over 5 million horoscopes and divined the destiny of all living beings. He was also one of the great authors of Vāstu, sacred architecture guiding physical manifestation.
 
 But his most essential role was receiving and transmitting the Laws of Man. Contemporary of Manu, Bhṛgu received directly from him the principles that would govern humanity and transcribed the Manusmṛti, the eternal code he then recited to a select group of Rishis.
 
@@ -420,7 +420,7 @@ This Rishi refused established hierarchies and insisted that everyone could atta
 ### Meaning & Love
 **Signification**: The ray, the individual light, the one who shines through natural purity.
 
-**
+**Love Associated**: The love of what is good and beautiful in oneself, without external reason or justification.
 
 **Core Essence**: Amzu Aditya is a "sunbeam," a portion of divine light detached from its source. After Vishnu — who accepts and unifies all — comes Amzu, who represents the purity of what naturally shines. Amzu symbolizes inherent beauty and goodness in what is created, virtue emanating from a being simply because it's their nature. His love isn't conditional, isn't calculated. It's the love of radiant purity, natural excellence.
 
@@ -475,7 +475,7 @@ Bhaga distributes shares to each according to merit, past actions, and karma. He
 **Esoteric Core**: Where Western Sagittarius appears as wandering philosophy (actually Capricorn here), Bhaga is actually *Inheritance and Share*. Not about the journey but the Prize — the "Portion" or "Share" earned. Enjoyment of labor's fruits and tangible success from previous efforts.
 
 ### The Significant Story
-The most significant story of Bhaga concerns Daksha's sacrifice.   During this combat, Rudra tore out Bhaga's eyes, Savitri's arms, and Pushan's teeth. 
+The most significant story of Bhaga concerns Daksha's sacrifice. After the age of Devas, gods gathered to decide each one's share of sacrifices, but in fixing these shares, they left out Rudra. Enraged by this negligence, Rudra built a bow and fought against the gods. During this combat, Rudra tore out Bhaga's eyes, Savitri's arms, and Pushan's teeth. Finally, the gods appeased Rudra, who restored Bhaga's eyes — but these eyes were then decorated with rays, transforming his vision into something clearer and more powerful.
 
 However, this story reveals a deeper truth: Bhaga believes he's responsible for everything, that he does everything by his own strength. This belief creates perpetual pain, as his plans are constantly thwarted by forces he doesn't control. Only when he learns to renounce the fruits of his actions — the first step of Karma Yoga — does he discover peace. His restored eyes finally see that it's not him doing everything; he's simply a channel through which universal wealth flows to be distributed.
 
@@ -487,14 +487,14 @@ However, anatomically, it's the buttocks (Amzu) that generate the majority of mo
 ### Rishi: Ayu/Kratu
 **Law**: Intelligent Will
 
- Kratu means intentional, intelligent, and convicted will.   
+Ayu means "life" but is also the root meaning "to take possession." Kratu means intentional, intelligent, and convicted will. Kratu is also the sacrificial rites, particularly those requiring a Yupa (sacrificial post). Kratu is one of the mind-born sons of Brahma, married Kriya, and was father of the 60,000 Balakhilyas. Kratu was a counselor in Brahma and Indra's councils.
 
-The connection between Bhaga and Ayu/Kratu reveals an essential truth: authentic focus demands intelligent will — not blind obstinacy but clear intention guided by wisdom. 
+The connection between Bhaga and Ayu/Kratu reveals an essential truth: authentic focus demands intelligent will — not blind obstinacy but clear intention guided by wisdom. How will and intelligence are used paves the road and determines your share.
 
 ### Stories
 - **Bhaga and Daksha's sacrifice**: At Daksha's sacrifice, the gods omitted giving a share to Rudra. Enraged, Rudra tore out Bhaga's eyes. This loss symbolizes how pride of believing one does everything alone leads to losing true vision. Later, Rudra restored Bhaga's eyes, but decorated with rays — his vision was now clearer and more powerful.
 - **Bhaga winks at Daksha**: At the sacrifice where Shiva was insulted, Bhaga winked at Daksha in silent complicity. For this, Vīrabhadra tore out his eyes. Shiva then ordered Bhaga to see with Mitra's eye, teaching him to see with friendship and compassion rather than selfish complicity.
-- **
+- **Marriage with Siddhi**: Bhaga married Siddhi (perfection), and together they engendered three sons — Mahiman (grandeur), Vibhu (expansion), and Prabhu (supremacy) — and three daughters — Suvrata (good vows), Varāroha (noble ascension), and Āśīs (blessing).
 
 ### Attributes
 - **Just dispenser**: Distributes according to merit without favoritism or prejudice
@@ -520,9 +520,9 @@ The connection between Bhaga and Ayu/Kratu reveals an essential truth: authentic
 
 **Love Associated**: The love of Nourishing and Guiding.
 
-**Core Essence**: Puushaa is the "Nourisher" whose sacred function is to trace paths, nourish, and protect all who travel.  He goes forward and back on both worlds, discerning the merits of the dead."
+**Core Essence**: Puushaa is the "Nourisher" whose sacred function is to trace paths, nourish, and protect all who travel. The Rig Veda celebrates him thus: "Pūṣan has been born on the best path of paths, on the best path of heaven, on the best path of earth. He goes forward and back on both worlds, discerning the merits of the dead."
 
-Puushaa has no children — all his energy is devoted to serving those who wander, who seek, who need guidance. He's the knower of invisible and visible paths.  He guides souls of the deceased to their appropriate destination according to their merits. He protects herds and travelers from getting lost. He possesses golden aerial ships and pulls his chariot with goats rather than horses — symbol of his humility and refusal of ostentation.
+Puushaa has no children — all his energy is devoted to serving those who wander, who seek, who need guidance. He's the knower of invisible and visible paths. He leads the bride to the groom during sacred weddings. He guides souls of the deceased to their appropriate destination according to their merits. He protects herds and travelers from getting lost. He possesses golden aerial ships and pulls his chariot with goats rather than horses — symbol of his humility and refusal of ostentation.
 
 **Esoteric Core**: Where Western Capricorn appears as cold ambition (actually Aquarius here), Pusha is actually *Nourishment and Guidance*. Not about climbing the mountain alone but the Shepherd. Energy that finds the lost path and nourishes those on the journey. About safe travels and ensuring everyone makes it to the destination fed and protected.
 
@@ -534,7 +534,7 @@ The shanks symbolize life aspects that function with discretion and humility, wi
 ### Rishi: Gautama
 **Law**: Obtaining What's Needed
 
-Gautama's story reveals this law's depth.  He's considered in many respects the holiest of all Rishis.
+Gautama's story reveals this law's depth. He was born extraordinarily: there was such brilliance at his birth that surrounding darkness was removed, and so the boy was named Gautama (Gau=rays of light, Tamas=darkness), meaning "the one who removes darkness." He's considered in many respects the holiest of all Rishis.
 
 The connection between Puushaa and Gautama is profound: the love of nourishing and guiding requires the capacity to obtain what's needed to serve others. During a terrible hundred-year drought, Gautama obtained an inexhaustible water source from Varuṇa and nourished all sages who came to him, serving them with a father's devotion.
 
@@ -571,7 +571,7 @@ The connection between Puushaa and Gautama is profound: the love of nourishing a
 
 In the Rig Veda, Parjanya is described as the one who responds to calls from Maruts (wind divinities), Vritra (resistance), Varuna (cosmic order), and Soma (Moon and immortality nectar). He doesn't take spontaneous initiatives; instead, he's constantly solicited by other universe forces to accomplish his essential role. This "non-action" until invitation is a mark of his true sovereignty — for only one who doesn't need to act can wait patiently for the right moment.
 
- His rain fertilizes not only physical earth but also soul's inner worlds, dissolving dark clouds of ignorance and mental confusion to reveal consciousness clarity.
+Parjanya is also the presiding deity of Manas, the mental plane and consciousness. His rain fertilizes not only physical earth but also soul's inner worlds, dissolving dark clouds of ignorance and mental confusion to reveal consciousness clarity.
 
 **Esoteric Core**: Where Western Aquarius appears as detached intellect (actually Pisces here), Parjanya is actually *Cyclic Cleansing*. The "Rain Cloud" — release of emotional waters fertilizing dry earth. Represents the cycle of tears, rain, and renewal — cleansing the collective atmosphere so life can grow again.
 

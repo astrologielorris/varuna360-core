@@ -33,6 +33,9 @@ class TransitOverlayManager(QObject):
 
         self.transit_enabled = False
         self.transit_mode = "auto"
+        # True while the AI coach holds the rim at a story time (show_at_jd):
+        # the mediator then changes the screen without persisting settings
+        self.story_time = False
         self.transit_jd = None
         self.transit_chart = None
         self.transit_rashi = None
@@ -63,6 +66,7 @@ class TransitOverlayManager(QObject):
             return
         # SPEC-TRN-006 B-13: leaving overlay mode for live sky; drop stale overlay
         # metadata so the chip/label do not survive into auto mode.
+        self.story_time = False
         self._clear_overlay_metadata()
         self.transit_enabled = True
         self.transit_mode = "auto"
@@ -72,6 +76,7 @@ class TransitOverlayManager(QObject):
 
     def disable_transit(self):
         """Deactivate transit overlay and clear all state."""
+        self.story_time = False
         self.transit_enabled = False
         self._timer.stop()
         self.transit_jd = None
@@ -141,6 +146,7 @@ class TransitOverlayManager(QObject):
             return False
 
         # --- atomic commit (nothing above mutated any field) ---
+        self.story_time = False
         self._timer.stop()  # an overlay is a frozen moment, never auto-refreshed
         self._set_transit_bundle(chart, rashi, planets, cusps, jd)
         self.overlay_chart_obj = chart
@@ -177,11 +183,49 @@ class TransitOverlayManager(QObject):
         """Lock the overlay to a specific Julian Day (dasha-locked mode)."""
         # SPEC-TRN-006 B-13: dasha can lock time while an overlay is up; drop
         # overlay metadata so a stale chip name cannot linger in dasha_locked mode.
+        self.story_time = False
         self._clear_overlay_metadata()
         self.transit_mode = "dasha_locked"
         self._timer.stop()
         self._calculate_for_jd(target_jd)
         self.transit_state_changed.emit()
+
+    def show_at_jd(self, target_jd):
+        """Rim ON and locked to ``target_jd``, whatever it showed before (the AI
+        coach's story time, SPEC-COACH-001 §4.3). ``snapshot`` / ``restore``
+        put the previous rim back."""
+        self._clear_overlay_metadata()
+        self.story_time = True
+        self.transit_enabled = True
+        self.transit_mode = "dasha_locked"
+        self._timer.stop()
+        self._calculate_for_jd(target_jd)
+        self.transit_state_changed.emit()
+
+    def snapshot(self):
+        """What the rim shows now, for ``restore``."""
+        snap = {"enabled": self.transit_enabled, "mode": self.transit_mode,
+                "jd": self.transit_jd}
+        if self.transit_mode == "overlay_chart":
+            snap["overlay"] = (self.overlay_chart_obj, self.overlay_label,
+                               self.overlay_source, self.overlay_birth)
+        return snap
+
+    def restore(self, snap):
+        """Put back the rim a ``snapshot`` recorded: off, live sky, a locked
+        moment, or the overlay chart."""
+        if not snap or not snap.get("enabled"):
+            if self.transit_enabled:
+                self.disable_transit()
+            return
+        if snap.get("mode") == "overlay_chart" and snap.get("overlay") and \
+                snap["overlay"][0] is not None:
+            chart, label, source, birth = snap["overlay"]
+            self.overlay_chart(chart, label=label, source=source, birth=birth)
+        elif snap.get("mode") == "dasha_locked" and snap.get("jd") is not None:
+            self.lock_to_jd(snap["jd"])
+        else:
+            self.enable_transit()
 
     def lock_to_datetime(self, target_dt):
         """Lock to a specific datetime (convenience wrapper)."""
@@ -250,10 +294,12 @@ class TransitOverlayManager(QObject):
         The overlay must always render in this same frame (INV-3). Recorded at
         build time as overlay_frame and compared on every active-chart rebuild.
         """
+        from core import custom_ayanamsa_settings
         g = self._gui
-        return (g.state.aditya_mode,
-                getattr(g, 'chart_sidereal_ayanamsa_id', 100),
-                g.state.house_system)
+        ayanamsa_id = getattr(g, 'chart_sidereal_ayanamsa_id', 100)
+        # + the id-255 value/year: editing it keeps the id (review 2026-10-23)
+        return (g.state.aditya_mode, ayanamsa_id, g.state.house_system,
+                custom_ayanamsa_settings.frame_part(ayanamsa_id))
 
     def _on_active_chart_changed(self, reason):
         """ChartState callback (fn(reason) on every state mutation).

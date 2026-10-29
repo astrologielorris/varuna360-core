@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="512" height="512">
+  <title>Cancer</title>
+  <g fill="none" stroke="#4F86D0" stroke-width="7" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M88 40 C80 20 56 12 36 18 C20 23 12 36 18 44 C24 52 40 50 42 40 C43 33 37 29 31 31"/>
+    <path d="M12 60 C20 80 44 88 64 82 C80 77 88 64 82 56 C76 48 60 50 58 60 C57 67 63 71 69 69"/>
+  </g>
+</svg>

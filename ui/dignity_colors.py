@@ -16,6 +16,12 @@ DIGNITY_COLORS = {
 }
 
 
+# Item data role carrying a dignity cell's CODE ("EX", "DB", ...), so code
+# that colours or bolds a cell reads the code, never the cell's display text
+# (SPEC-LOC-002 INV-3). The shared cell-key role (ui/item_roles.py).
+from ui.item_roles import ITEM_KEY_ROLE as DIGNITY_CODE_ROLE  # noqa: E402
+
+
 def dignity_colors(code):
     """Return live, saturation-aware (background, foreground), or None."""
     colors = DIGNITY_COLORS.get(code)

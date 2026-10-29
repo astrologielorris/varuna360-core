@@ -27,7 +27,7 @@ import os
 import sqlite3
 import threading
 import time
-from typing import Optional
+from typing import List, Optional
 
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal, Slot
 
@@ -157,7 +157,7 @@ def cache_store(key: str, result: GeocodeResult):
 # Tier 1: local dataset
 # --------------------------------------------------------------------------
 
-def _local_lookup(query: str) -> Optional[GeocodeResult]:
+def _local_lookup(query: str, countries: bool = True) -> Optional[GeocodeResult]:
     # SPEC-MAP-003: the ONE city table, the union of both sources. Reading a
     # single table with an ImportError fallback missed six well-known cities
     # (New York, Los Angeles, Toronto, Dubai, Mumbai, Sydney), so searching for
@@ -174,7 +174,10 @@ def _local_lookup(query: str) -> Optional[GeocodeResult]:
             return GeocodeResult(data.get('lat', 0.0), data.get('lon', 0.0),
                                  name, data.get('country', ''), source="local")
     # A country name resolves to its capital — "france" should not need a
-    # network round trip.
+    # network round trip. Not for a caller that must not guess a birthplace
+    # (``countries=False``, forward_candidates).
+    if not countries:
+        return None
     for name, data in WORLD_CAPITALS.items():
         if _norm(data.get('country', '')) == wanted:
             return GeocodeResult(data.get('lat', 0.0), data.get('lon', 0.0),
@@ -296,6 +299,43 @@ def forward(query: str, use_cache: bool = True) -> Optional[GeocodeResult]:
     if use_cache:
         cache_store(query, result)
     return result
+
+
+def forward_candidates(query: str, limit: int = 5) -> List[GeocodeResult]:
+    """Every place a name may mean, for a caller that must not guess (the
+    desktop MCP server's typed birth data, SPEC-LMCP-001 §4.3: "Sceaux, France"
+    is a Paris suburb AND a village in Côte-d'Or). Never a country's capital for
+    a country name. A city of the local table comes first, followed by its
+    namesakes from the network when it is reachable ("Paris" is also in Texas);
+    offline, the local city or the cache's one place (``source`` says which, so
+    the caller can say it was not checked for namesakes). MAY BLOCK — never call
+    from the GUI thread. Raises ``OSError`` when the network lookup fails and
+    nothing local or cached answers."""
+    if not query or not query.strip():
+        return []
+    local = _local_lookup(query, countries=False)
+    geolocator = _geolocator()
+    if geolocator is None:
+        hit = local or cache_lookup(query)
+        return [hit] if hit is not None else []
+    try:
+        global _nominatim_calls
+        _throttle()
+        with _rate_lock:
+            _nominatim_calls += 1
+        found = geolocator.geocode(query, language="en", addressdetails=True,
+                                   exactly_one=False, limit=limit) or []
+    except Exception:
+        hit = local or cache_lookup(query)
+        if hit is not None:
+            return [hit]
+        raise OSError("place lookup failed") from None
+    out = [local] if local is not None else []
+    for location in found:
+        city, country = _extract(location)
+        out.append(GeocodeResult(location.latitude, location.longitude, city, country,
+                                 getattr(location, "address", ""), source="network"))
+    return out
 
 
 def reverse(lat: float, lon: float, use_cache: bool = True) -> Optional[GeocodeResult]:

@@ -1,0 +1,17 @@
+{
+ "_comment": [
+  "SPEC-LOC-002 §3.5: long-form reference content per language (data, INV-1).",
+  "base: the English source; languages: per-language files (same shape as the base JSON, or a JSON map for a Markdown base).",
+  "Paths are relative to the project root (the parent of this i18n/ folder). A language gains content by adding a file and an entry here."
+ ],
+ "content": {
+  "aditya_descriptions": {
+   "base": "core/data/adityas-complete.md",
+   "languages": {"fr": "core/data/aditya_descriptions_fr.json"}
+  },
+  "hora_trimsamsa_reference": {
+   "base": "core/data/hora_trimsamsa_reference.json",
+   "languages": {"fr": "core/data/hora_trimsamsa_reference_fr.json"}
+  }
+ }
+}

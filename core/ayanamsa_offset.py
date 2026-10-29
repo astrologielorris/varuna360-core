@@ -1,8 +1,26 @@
 """Shared ecliptic ayanamsa offset matching libaditya chart coordinates."""
-from functools import lru_cache
+from functools import lru_cache, wraps
 
 
-@lru_cache(maxsize=65536)
+def _definition_cache(function):
+    """Custom answers depend on the scoped definition as well as id 255."""
+    from libaditya.custom_ayanamsa import get_custom_ayanamsa
+    position = function.__code__.co_varnames.index("ayanamsa_id")
+
+    @lru_cache(maxsize=65536)
+    def cached(args, kwargs, definition):
+        return function(*args, **dict(kwargs))
+
+    @wraps(function)
+    def call(*args, **kwargs):
+        aid = args[position] if len(args) > position else kwargs.get("ayanamsa_id")
+        definition = get_custom_ayanamsa() if aid == 255 else None
+        return cached(args, tuple(sorted(kwargs.items())), definition)
+    call.cache_clear, call.cache_info = cached.cache_clear, cached.cache_info
+    return call
+
+
+@_definition_cache
 def birth_ayanamsa_offset(jd, ayanamsa_id):
     """Engine ecliptic sign offset at this birth, independent of active chart."""
     from libaditya import swe, utils
@@ -10,7 +28,8 @@ def birth_ayanamsa_offset(jd, ayanamsa_id):
         return 0.0
     if ayanamsa_id in (99, 100):
         return -utils.vedanga_ecliptic_aval(jd)
-    swe.set_sid_mode(36 if ayanamsa_id == 98 else ayanamsa_id)
+    from libaditya.custom_ayanamsa import apply_sid_mode
+    apply_sid_mode(36 if ayanamsa_id == 98 else ayanamsa_id)
     if ayanamsa_id == 97:
         utils.set_swe_true_sidereal_ayanamsa()
     # Include nutation, matching the apparent tropical longitudes in the index
@@ -19,7 +38,7 @@ def birth_ayanamsa_offset(jd, ayanamsa_id):
 
 
 
-@lru_cache(maxsize=65536)
+@_definition_cache
 def birth_sidereal_ascendant_index(jd, lat, lon, ayanamsa_id):
     """Use the exact house engine; special sidereal modes are not scalar shifts.
 
@@ -30,7 +49,7 @@ def birth_sidereal_ascendant_index(jd, lat, lon, ayanamsa_id):
     return ascendant_probe(jd, lat, lon, 'sidereal', ayanamsa_id)[0]
 
 
-@lru_cache(maxsize=65536)
+@_definition_cache
 def birth_projected_planet_index(jd, ayanamsa_id, planet_name):
     """Exact individual planet for Swiss non-scalar ecliptic projections.
 
@@ -46,3 +65,14 @@ def birth_projected_planet_index(jd, ayanamsa_id, planet_name):
                      signize=True, toround=(True, 3), sign_names='zodiac')
     planet = getattr(planets, planet_name)(context=ctx)
     return planet.amsha_sign_index()
+
+
+def _clear_ayanamsa_caches():
+    """The custom ayanamsa (id 255) changed: every cached 255 answer is stale."""
+    birth_ayanamsa_offset.cache_clear()
+    birth_sidereal_ascendant_index.cache_clear()
+    birth_projected_planet_index.cache_clear()
+
+
+from libaditya.custom_ayanamsa import on_change as _on_custom_change  # noqa: E402
+_on_custom_change(_clear_ayanamsa_caches)

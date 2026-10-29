@@ -8,7 +8,7 @@ Creates QGraphicsDropShadowEffect for planet icons using Chart Display settings
 from app_settings.json. Supports global and per-planet shadow overrides.
 
 Used by: chart_view.py, wheel_items.py, north_indian_items.py (and via PlanetItem,
-also antikythera_map_view.py).
+also a Pro map view).
 
 IMPORTANT: Caller MUST `del` the returned effect after setGraphicsEffect()
 to avoid a Qt/Python dual-ownership crash. Once Qt owns the effect, the
@@ -38,8 +38,8 @@ def resolve_planet_shadow(planet_name=None, display=None):
         The settings dict to read, or None when shadows are switched off.
     """
     if display is None:
-        from managers.settings_manager import get_settings
-        display = get_settings().get_chart_display()
+        from apps.widgets.chart_display_snapshot import chart_display
+        display = chart_display()      # the merged tree, rebuilt on a settings change only
 
     shadow_settings = display.get("shadow", {})
     if not shadow_settings.get("enabled", True):

@@ -1,0 +1,12 @@
+{
+ "panel.info.fold_tip": "Fold or unfold this panel",
+ "panel.info.splitter.auto": "AUTO",
+ "panel.info.splitter.auto_tip": "Panels AUTO: heights follow the window height",
+ "panel.info.splitter.knob_tip": "Click: swap which side is open. Drag: resize, snaps to fold / fit / half",
+ "panel.info.summary.avastha": "Avastha total {value} {planet}",
+ "panel.info.summary.strength": "Strongest: {planet} {value}",
+ "panel.info.title.aspects": "Aspects",
+ "panel.info.title.avastha": "Avastha",
+ "panel.info.title.karakas": "Karakas",
+ "panel.info.title.strength": "Strength"
+}

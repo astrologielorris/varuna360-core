@@ -83,13 +83,14 @@ NISARGA_MATURATION = [
 SUB_PERIOD_COUNT = 12
 
 
-def calculate_current_age(birth_year, birth_month, birth_day):
+def calculate_current_age(birth_year, birth_month, birth_day, today=None):
     """Calculate current age as a float (e.g. 33.7 years).
 
     Returns:
         float: Current age in years, or None if birth date is in the future
     """
-    today = date.today()
+    if today is None:   # tools pass an explicit date (AIC plan 2)
+        today = date.today()
     try:
         birth = date(int(birth_year), int(birth_month), int(birth_day))
     except (ValueError, TypeError):
@@ -154,7 +155,8 @@ def _age_str(total_months):
     return f"{years}y {months}m"
 
 
-def format_nisarga_level1(birth_year, birth_month, birth_day, date_format=None):
+def format_nisarga_level1(birth_year, birth_month, birth_day, date_format=None,
+                          today=None):
     """Format Level 1: natural periods + maturation section at bottom.
 
     Returns list of dicts, each with:
@@ -164,7 +166,7 @@ def format_nisarga_level1(birth_year, birth_month, birth_day, date_format=None):
         - is_separator: bool (section header, not a real entry)
         - lord: planet name (or None for separators)
     """
-    age = calculate_current_age(birth_year, birth_month, birth_day)
+    age = calculate_current_age(birth_year, birth_month, birth_day, today)
     current_period_idx = get_current_nisarga_index(age)
     current_mat_idx = get_current_maturation_index(age)
     birth = _birth_date(birth_year, birth_month, birth_day)
@@ -255,7 +257,8 @@ def format_nisarga_level1(birth_year, birth_month, birth_day, date_format=None):
     return entries
 
 
-def format_nisarga_level2(birth_year, birth_month, birth_day, date_format=None):
+def format_nisarga_level2(birth_year, birth_month, birth_day, date_format=None,
+                          today=None):
     """Format Level 2: sub-periods (each main period divided into 12).
 
     Sub-periods: Mo/1, Mo/2... Mo/12, Ma/1, Ma/2...
@@ -263,9 +266,10 @@ def format_nisarga_level2(birth_year, birth_month, birth_day, date_format=None):
 
     Returns list of dicts with: text, is_current, lord, sub_index
     """
-    age = calculate_current_age(birth_year, birth_month, birth_day)
+    age = calculate_current_age(birth_year, birth_month, birth_day, today)
     birth = _birth_date(birth_year, birth_month, birth_day)
-    today = date.today()
+    if today is None:
+        today = date.today()
 
     entries = []
 
@@ -319,3 +323,34 @@ def format_nisarga_level2(birth_year, birth_month, birth_day, date_format=None):
             })
 
     return entries
+
+
+def nisarga_age_table(birth_year, birth_month, birth_day):
+    """The Planetary Ages as data: each Nisarga period and each maturation
+    year with its ages and ISO start/end dates (the same constants and the
+    same birth-date arithmetic as ``format_nisarga_level1``). For tools that
+    need the numbers, not the panel's row text (td-1u8rs).
+
+    Returns ``{"periods": [...], "maturation": [...]}``, or empty lists when
+    the birth date is not a valid date."""
+    birth = _birth_date(birth_year, birth_month, birth_day)
+    if birth is None:
+        return {"periods": [], "maturation": []}
+
+    def _iso(years):
+        try:
+            return (birth + relativedelta(years=years)).isoformat()
+        except (ValueError, OverflowError):
+            return None
+
+    periods = [{"lord": p["lord"], "start_age": p["start_age"],
+                "end_age": p["end_age"], "duration": p["duration"],
+                "description": p["description"],
+                "start": _iso(p["start_age"]), "end": _iso(p["end_age"])}
+               for p in NISARGA_PERIODS]
+    # A planet matures during the year before its listed age.
+    maturation = [{"lord": m["lord"], "age": m["age"],
+                   "start_age": m["age"] - 1, "end_age": m["age"],
+                   "start": _iso(m["age"] - 1), "end": _iso(m["age"])}
+                  for m in NISARGA_MATURATION]
+    return {"periods": periods, "maturation": maturation}

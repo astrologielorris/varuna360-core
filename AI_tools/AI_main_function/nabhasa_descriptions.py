@@ -1,20 +1,17 @@
 # Copyright (C) 2026 Lorris Turpin / 360 Hearts in the Sky
 # Licensed under AGPL-3.0 — see LICENSE file for details.
 """
-Per-yoga readings for the Nabhasa Yogas panel.
-==============================================
-A reading for every Nabhasa yoga (3 Asraya, 2 Dala, 7 Sankhya, 20 Akriti) and
-the 5 Pancha Mahapurusha yogas.
+Nabhasa Yogas panel reference data.
+===================================
+For every Nabhasa yoga (3 Asraya, 2 Dala, 7 Sankhya, 20 Akriti) and the 5
+Pancha Mahapurusha yogas: the classical source of its definition and its
+classical auspiciousness class (the card colour). The Nabhasa families are
+given in Varahamihira's Brihat Jataka chapter 12 (with parity in
+Kalyanavarma's Saravali chapter 21); the Pancha Mahapurusha yogas in Brihat
+Jataka chapter 11; the multiple-yoga escalation rule in Mantreswara's
+Phaladeepika 6.4.
 
-Sourcing policy (Golden principle 6, mirrors parivartana_descriptions.py):
-  * The classical phala ("") is a FACT and is cited to
-    its classical text. The Nabhasa families are given in Varahamihira's Brihat
-    Jataka chapter 12 (with parity in Kalyanavarma's Saravali chapter 21); the
-    Pancha Mahapurusha yogas in Brihat Jataka chapter 11; the multiple-yoga
-    escalation rule in Mantreswara's Phaladeepika 6.4.
-  * The psychological / house-type layer is PARAPHRASED in the app author's own
-    voice from the modern teaching of Ernst Wilhelm, expressed only in the app
-    author's own wording of the underlying idea.
+The per-yoga reading texts are not part of this (LTS) branch.
 
 Note: Phaladeepika is NOT cited for the Akriti definitions. Phaladeepika 6.44-57
 gives a DIFFERENT twelve-yoga "Bhava" set, not Varahamihira's twenty Akriti, so
@@ -29,8 +26,7 @@ _BJ11 = "Brihat Jataka 11 (Varahamihira)"
 _PD64 = "Phaladeepika 6.4 (Mantreswara)"
 
 # Auspiciousness class per yoga, used for the card's semantic colour ramp.
-# 
-# 
+# "auspicious" / "difficult" / "mixed". Classical valuation.
 AUSPICIOUSNESS = {
     # Asraya
     "Rajju": "difficult", "Musala": "auspicious", "Nala": "mixed",
@@ -55,401 +51,18 @@ AUSPICIOUSNESS = {
 }
 
 # =====================================================================
-# 
+# Classical source of each yoga's definition (the citation only; no reading
+# text ships on this branch).
 # =====================================================================
-ASRAYA_DESC = {
-    "Rajju": {
-        "cite": _BJ12,
-        "reading": (
-            " "
-            " "
-            " "
-            " "
-            " "
-            "steady place to land."
-        ),
-    },
-    "Musala": {
-        "cite": _BJ12,
-        "reading": (
-            " "
-            " "
-            " "
-            " "
-            ""
-        ),
-    },
-    "Nala": {
-        "cite": _BJ12,
-        "reading": (
-            " "
-            " "
-            " "
-            " "
-            ""
-        ),
-    },
+_FAMILIES = {
+    "asraya": ('Rajju', 'Musala', 'Nala'),
+    "dala": ('Mala', 'Sarpa'),
+    "sankhya": ('Gola', 'Yuga', 'Sula', 'Kedara', 'Pasa', 'Dama', 'Veena'),
+    "akriti": ('Sringataka', 'Hala', 'Gada', 'Sakata', 'Vihaga', 'Kamala', 'Vapi', 'Vajra', 'Yava', 'Yupa', 'Sara', 'Shakti', 'Danda', 'Nauka', 'Kuta', 'Chatra', 'Chapa', 'Ardha Chandra', 'Chakra', 'Samudra'),
+    "pmp": ('Ruchaka', 'Bhadra', 'Hamsa', 'Malavya', 'Sasa'),
 }
-
-# =====================================================================
-# 
-# =====================================================================
-DALA_DESC = {
-    "Mala": {
-        "cite": _BJ12,
-        "reading": (
-            " "
-            " "
-            " "
-            " "
-            ""
-        ),
-    },
-    "Sarpa": {
-        "cite": _BJ12,
-        "reading": (
-            " "
-            " "
-            " "
-            " "
-            " "
-            "verdict on the person."
-        ),
-    },
-}
-
-# =====================================================================
-# 
-# =====================================================================
-SANKHYA_DESC = {
-    "Gola": {
-        "cite": _BJ12,
-        "reading": (
-            " "
-            " "
-            " "
-            ""
-        ),
-    },
-    "Yuga": {
-        "cite": _BJ12,
-        "reading": (
-            " "
-            " "
-            " "
-            " "
-            "whatever is nearest."
-        ),
-    },
-    "Sula": {
-        "cite": _BJ12,
-        "reading": (
-            " "
-            " "
-            " "
-            ""
-        ),
-    },
-    "Kedara": {
-        "cite": _BJ12,
-        "reading": (
-            " "
-            " "
-            " "
-            " "
-            "life."
-        ),
-    },
-    "Pasa": {
-        "cite": _BJ12,
-        "reading": (
-            " "
-            " "
-            " "
-            " "
-            ""
-        ),
-    },
-    "Dama": {
-        "cite": _BJ12,
-        "reading": (
-            " "
-            " "
-            " "
-            ""
-        ),
-    },
-    "Veena": {
-        "cite": _BJ12,
-        "reading": (
-            " "
-            " "
-            " "
-            " "
-            ""
-        ),
-    },
-}
-
-# =====================================================================
-# 
-# =====================================================================
-AKRITI_DESC = {
-    "Sringataka": {
-        "cite": _BJ12,
-        "reading": (
-            " "
-            " "
-            " "
-            " "
-            ""
-        ),
-    },
-    "Hala": {
-        "cite": _BJ12,
-        "reading": (
-            " "
-            " "
-            " "
-            " "
-            ""
-        ),
-    },
-    "Gada": {
-        "cite": _BJ12,
-        "reading": (
-            " "
-            " "
-            " "
-            ""
-        ),
-    },
-    "Sakata": {
-        "cite": _BJ12,
-        "reading": (
-            " "
-            " "
-            " "
-            ""
-        ),
-    },
-    "Vihaga": {
-        "cite": _BJ12,
-        "reading": (
-            " "
-            " "
-            " "
-            " "
-            " "
-            ""
-        ),
-    },
-    "Kamala": {
-        "cite": _BJ12,
-        "reading": (
-            " "
-            " "
-            " "
-            ""
-        ),
-    },
-    "Vapi": {
-        "cite": _BJ12,
-        "reading": (
-            " "
-            " "
-            " "
-            " "
-            "gathered patiently."
-        ),
-    },
-    "Vajra": {
-        "cite": _BJ12,
-        "reading": (
-            " "
-            " "
-            " "
-            " "
-            " "
-            ""
-        ),
-    },
-    "Yava": {
-        "cite": _BJ12,
-        "reading": (
-            " "
-            " "
-            " "
-            " "
-            " "
-            " "
-            "the effect."
-        ),
-    },
-    "Yupa": {
-        "cite": _BJ12,
-        "reading": (
-            " "
-            " "
-            " "
-            ""
-        ),
-    },
-    "Sara": {
-        "cite": _BJ12,
-        "reading": (
-            " "
-            " "
-            " "
-            " "
-            "shape neglects."
-        ),
-    },
-    "Shakti": {
-        "cite": _BJ12,
-        "reading": (
-            " "
-            " "
-            " "
-            " "
-            "genuinely satisfied."
-        ),
-    },
-    "Danda": {
-        "cite": _BJ12,
-        "reading": (
-            " "
-            " "
-            " "
-            ""
-        ),
-    },
-    "Nauka": {
-        "cite": _BJ12,
-        "reading": (
-            " "
-            " "
-            " "
-            " "
-            ""
-        ),
-    },
-    "Kuta": {
-        "cite": _BJ12,
-        "reading": (
-            " "
-            " "
-            " "
-            ""
-        ),
-    },
-    "Chatra": {
-        "cite": _BJ12,
-        "reading": (
-            " "
-            " "
-            " "
-            " "
-            "earns honour for it."
-        ),
-    },
-    "Chapa": {
-        "cite": _BJ12,
-        "reading": (
-            " "
-            " "
-            " "
-            " "
-            "has cause to."
-        ),
-    },
-    "Ardha Chandra": {
-        "cite": _BJ12,
-        "reading": (
-            " "
-            " "
-            " "
-            " "
-            ""
-        ),
-    },
-    "Chakra": {
-        "cite": _BJ12,
-        "reading": (
-            " "
-            " "
-            " "
-            " "
-            "few real failings."
-        ),
-    },
-    "Samudra": {
-        "cite": _BJ12,
-        "reading": (
-            " "
-            " "
-            " "
-            ""
-        ),
-    },
-}
-
-# =====================================================================
-# 
-# =====================================================================
-PMP_DESC = {
-    "Ruchaka": {
-        "cite": _BJ11,
-        "reading": (
-            " "
-            " "
-            " "
-            " "
-            ""
-        ),
-    },
-    "Bhadra": {
-        "cite": _BJ11,
-        "reading": (
-            " "
-            " "
-            " "
-            " "
-            ""
-        ),
-    },
-    "Hamsa": {
-        "cite": _BJ11,
-        "reading": (
-            " "
-            " "
-            " "
-            " "
-            ""
-        ),
-    },
-    "Malavya": {
-        "cite": _BJ11,
-        "reading": (
-            " "
-            " "
-            " "
-            " "
-            ""
-        ),
-    },
-    "Sasa": {
-        "cite": _BJ11,
-        "reading": (
-            " "
-            " "
-            " "
-            " "
-            " "
-            ""
-        ),
-    },
-}
+CITES = {name: (_BJ11 if family == "pmp" else _BJ12)
+         for family, members in _FAMILIES.items() for name in members}
 
 # The multiple-Mahapurusha escalation, cited to Phaladeepika 6.4. The widget
 # shows this when more than one PMP forms.
@@ -462,57 +75,49 @@ PMP_ESCALATION = {
     5: "five formed: greater than an emperor.",
 }
 
-_ALL_TABLES = (ASRAYA_DESC, DALA_DESC, SANKHYA_DESC, AKRITI_DESC, PMP_DESC)
-
-
 def describe_nabhasa_yoga(name):
-    """Return {"reading": str, "cite": str, "auspiciousness": str} for a yoga
-    name (canonical Akriti names, not variant names), or None if unknown."""
-    for table in _ALL_TABLES:
-        if name in table:
-            entry = table[name]
-            return {
-                "reading": entry["reading"],
-                "cite": entry["cite"],
-                "auspiciousness": AUSPICIOUSNESS.get(name, "mixed"),
-            }
-    return None
+    """Return {"cite": str, "auspiciousness": str} for a yoga name (canonical
+    Akriti names, not variant names), or None if unknown. No "reading" key:
+    the per-yoga reading text is not part of this branch, and the panel shows
+    no reading area."""
+    if name not in CITES:
+        return None
+    return {"cite": CITES[name], "auspiciousness": AUSPICIOUSNESS.get(name, "mixed")}
 
 
 # =====================================================================
-# 
-# classical taxonomy cited; NO pro/ import (H11).
+# Inline (i) tutorial: how to use the panel (usage only, no interpretation);
+# classical sources cited; NO pro/ import (H11).
 # =====================================================================
-DOC_TITLE = ""
+DOC_TITLE = "Nabhasa Yogas: how to use this panel"
 DOC_SECTIONS = [
-    ("WHAT THEY ARE",
-     " "
-     " "
-     " "
-     "chart is read against."),
+    ("WHAT THE PANEL SHOWS",
+     "The panel checks the seven planets (Sun through Saturn) against the "
+     "Nabhasa yoga patterns. The top card is the shape the chart comes closest "
+     "to. Below it come the Foundation cards, the twenty Akriti shapes ranked "
+     "from most to least formed, and the five Pancha Mahapurusha yogas. Click "
+     "view combination on a card to open the complete pattern in North and South "
+     "Indian styles. The button is off while the chart is shown as a wheel; "
+     "switch to a diamond or square chart to use it."),
     ("THE FOUR FAMILIES",
-     " "
-     " "
-     " "
-     " "
-     ""),
-    ("MOST NEARLY FORMED",
-     " "
-     " "
-     " "
-     " "
-     ""),
+     "Asraya groups the planets by the modality of their signs (movable, fixed "
+     "or dual). Dala counts the gentle and the cruel planets in the four angles. "
+     "Sankhya counts how many signs the seven planets occupy. Akriti checks the "
+     "pattern of houses the planets occupy."),
+    ("BARS, CHIPS AND COLOURS",
+     "Each shape is scored by how many of the seven planets would have to move "
+     "to complete it. The chip and the strength bar show how many already fit, "
+     "for example 5/7 planets. FORMED means all seven fit. The card colour shows "
+     "the classical class of the yoga: auspicious, mixed or difficult."),
     ("PANCHA MAHAPURUSHA",
-     " "
-     " "
-     " "
-     " "
-     ""),
+     "A Mahapurusha yoga forms when Mars, Mercury, Jupiter, Venus or Saturn sits "
+     "in an angle from the ascendant in its own or exaltation sign. This panel "
+     "follows Ernst Wilhelm's rule: moolatrikona is not counted, and the Sun or "
+     "Moon sitting with the planet cancels the yoga. Each card shows FORMED, "
+     "CANCELLED or not formed, with the planet's house and dignity below."),
     ("CLASSICAL SOURCES",
      "The Nabhasa families are given in Varahamihira's Brihat Jataka chapter 12, "
      "with parity in Kalyanavarma's Saravali chapter 21. The Pancha Mahapurusha "
-     " "
-     " "
-     " "
-     ""),
+     "yogas are in Brihat Jataka chapter 11. The note shown when more than one "
+     "of them forms is from Mantreswara's Phaladeepika 6.4."),
 ]

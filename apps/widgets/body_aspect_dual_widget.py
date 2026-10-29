@@ -1,7 +1,11 @@
 """SPEC-BODY-002: Body Graph Rashi Aspect Dual View.
 
 Wraps the SPEC-BODY-001 BodyGraphView (chart_stack index 3) in a splitter next
-to a second SouthIndianView that carries rashi-aspect arrows. Hovering a sign on
+to a South Indian chart that carries rashi-aspect arrows. That chart follows
+Settings > South Indian style like every other South Indian host (2026-10-08):
+it is a SouthIndianHostWidget (classic image-backed + vector children, stack
+index from display.south_indian_style), registered in the same live-host
+registry, so a style change swaps it live through sync_all_south_indian_hosts. Hovering a sign on
 the aspect side highlights its incoming+outgoing arrows AND the corresponding
 body zones on the left (cross-view sync).
 
@@ -20,11 +24,17 @@ Aspect correctness (grounding B1/B7, codex+opencode reviewed):
   * varga source is guarded exactly like the other views:
     chart.varga(vc) if vc and vc != 1 else chart.rashi().
 
-Scene lifecycle (grounding B5): the SouthIndianView clears its whole scene on
-every draw_full_chart(). Arrows + hover zones are therefore recreated AFTER each
+Scene lifecycle (grounding B5): either South Indian child clears its whole
+scene on every draw_full_chart(). Arrows + hover zones are therefore recreated AFTER each
 render and NO Python reference to a scene item is held across a redraw. Stale
 arrow items are removed by their "rashi_aspect_arrow" tag off the live scene
-(ref-free), guarded against the wrapped-C++-deleted race.
+(ref-free), guarded against the wrapped-C++-deleted race. A host-level redraw
+(the style/finish broadcast) is followed by _AspectSIHost's redraw hook, which
+re-adds arrows + hover zones on whichever child is now active. A child can
+also redraw itself (e.g. its Cards of Truth settings subscription), which the
+host never sees: every child scene's `changed` signal, and every hover/leave,
+first checks a sentinel hover zone with shiboken isValid and rebuilds the
+overlay when it died (_ensure_overlay), so no path leaves dead refs behind.
 """
 from contextlib import contextmanager
 from math import hypot
@@ -32,11 +42,15 @@ from math import hypot
 from PySide6.QtCore import Qt, QEvent, QTimer, QPointF
 from PySide6.QtGui import QColor, QPen, QBrush, QPainterPath, QPolygonF
 from PySide6.QtWidgets import QWidget, QSplitter, QHBoxLayout
+from shiboken6 import isValid
 
+from apps.widgets import south_indian_geometry as si_geo
 from apps.widgets.body_graph_view import BodyGraphView
+from apps.widgets.paint_on_show import hidden_live, when_shown
 from apps.widgets.chart_view import (
     SouthIndianView, HoverSignal, HoverZoneItem, PlanetClickSignal,
 )
+from apps.widgets.south_indian_vector_view import SouthIndianHostWidget
 from libaditya.constants import rashi_aspects as RASHI_ASPECT_TABLES
 from managers.settings_manager import get_settings
 
@@ -46,8 +60,10 @@ _BRIGHT = "#FF2020"
 _GREY = "#888888"
 
 # state -> (color, alpha, pen width, z).
-# z=78 sits above planet icons (z=75) so arrowheads are always visible;
-# planet text (z=80) stays on top. Hovered arrows lift to z=82.
+# z=78 sits above planet icons (z=75 on both the classic and the vector view)
+# so arrowheads are always visible; planet text (z=80 on both) stays on top.
+# Hovered arrows lift to z=82. Nothing else on the inert (center_box_enabled=
+# False) vector scene sits above 80 except the unavailable-body notice (200).
 # "hidden" is the idle state: arrows exist but are invisible until hover.
 _ARROW_STYLES = {
     "one_way": (_CRIMSON, 102, 2.5, 78),
@@ -87,17 +103,50 @@ def compute_aspect_pairs(has_grahas, table):
     return pairs
 
 
+class _AspectSIHost(SouthIndianHostWidget):
+    """The aspect side's South Indian host.
+
+    Built with center_box_enabled=False on BOTH children: no medallion, no
+    built-in hover zones, no center preview, no retinue, no Cards of Truth
+    index, so nothing covers the arrows that bow through the center void and
+    the dual widget owns all hover wiring (the vector child's inert mode,
+    SPEC-SIC-003 INV-6, is the vector equivalent of the classic flag).
+
+    Style selection is the host's own (sync_style reads
+    display.south_indian_style; the settings-apply handler reaches this host
+    through the live-host registry). The one addition: draw_full_chart, which
+    refresh_host calls right after sync_style, clears both children's scenes,
+    so the owner is told to re-add its arrows + hover zones afterwards.
+    """
+
+    def __init__(self, parent=None, on_redrawn=None):
+        super().__init__(parent, center_box_enabled=False)
+        self._on_redrawn = on_redrawn
+        # The inert vector child skips the finish broadcast by default (it is
+        # meant for off-screen minis). This one is on screen: let the
+        # Standard/wood finish reach it like the main chart. The broadcast
+        # redraws vector views before hosts, so our hook still runs last.
+        self.vector_view.appearance.live = True
+
+    def draw_full_chart(self):
+        super().draw_full_chart()
+        hook = getattr(self, "_on_redrawn", None)
+        if hook is not None:
+            hook()
+
+
 class BodyAspectDualWidget(QWidget):
-    """Splitter shell: BodyGraphView (left) + aspect SouthIndianView (right)."""
+    """Splitter shell: BodyGraphView (left) + aspect South Indian host (right)."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
 
         # --- child views ---
         self.body_graph_view = BodyGraphView(self)
-        # center_box_enabled=False: no built-in hover zones / center preview, so
-        # arrows at z=40 are never covered and we own the hover wiring.
-        self.aspect_si_view = SouthIndianView(self, center_box_enabled=False)
+        # center_box_enabled=False on both children: no built-in hover zones /
+        # center preview, so arrows are never covered and we own the hover
+        # wiring. Classic or vector follows display.south_indian_style.
+        self.aspect_si_host = _AspectSIHost(self, on_redrawn=self._on_host_redrawn)
 
         # --- splitter layout (equal halves by default) ---
         # Was 70/30. The aspect side is a full South Indian chart, four columns
@@ -105,7 +154,7 @@ class BodyAspectDualWidget(QWidget):
         # after Shift+F2. Both sides carry a whole chart, so both get half.
         self.splitter = QSplitter(Qt.Orientation.Horizontal, self)
         self.splitter.addWidget(self.body_graph_view)
-        self.splitter.addWidget(self.aspect_si_view)
+        self.splitter.addWidget(self.aspect_si_host)
         self.splitter.setStretchFactor(0, 1)
         self.splitter.setStretchFactor(1, 1)
         self.splitter.setCollapsible(0, False)
@@ -118,7 +167,7 @@ class BodyAspectDualWidget(QWidget):
         self.planet_click_signal = PlanetClickSignal()
         self.body_graph_view.planet_click_signal.clicked.connect(
             self.planet_click_signal.clicked.emit)
-        self.aspect_si_view.planet_click_signal.clicked.connect(
+        self.aspect_si_host.planet_click_signal.clicked.connect(
             self.planet_click_signal.clicked.emit)
 
         # --- arrow bookkeeping (rebuilt every render; no refs across scene.clear) ---
@@ -128,16 +177,20 @@ class BodyAspectDualWidget(QWidget):
         self._hovered_sign = None  # 0-based currently hovered zodiac index, or None
         self._rendering = False    # reentrancy guard for all scene-rebuild paths
         self._si_dirty = False     # aspect side needs a refresh when next shown
+        self._overlay_sentinel = None  # one of our hover zones; dead = overlay wiped
 
         # --- our own hover signal for the aspect SI (its own is unconnected) ---
         self._aspect_hover_signal = HoverSignal(self)
         self._aspect_hover_signal.hover_enter.connect(self._on_aspect_hover)
-        self.aspect_si_view.viewport().installEventFilter(self)
-        self.aspect_si_view.viewport().setMouseTracking(True)
+        for child in self._aspect_children():
+            child.viewport().installEventFilter(self)
+            child.viewport().setMouseTracking(True)
+            # Catch redraws the host never sees (a child redrawing itself).
+            child.scene.changed.connect(self._ensure_overlay)
 
         # --- panel visibility (persisted) ---
         self._panel_visible = bool(get_settings().get("chart.show_aspect_panel", False))
-        self.aspect_si_view.setVisible(self._panel_visible)
+        self.aspect_si_host.setVisible(self._panel_visible)
 
         # --- splitter-size persistence (debounced so a drag isn't 100 disk writes) ---
         self._splitter_save_timer = QTimer(self)
@@ -181,13 +234,23 @@ class BodyAspectDualWidget(QWidget):
             self._hovered_sign = None
             if chart is None:
                 # Clear the aspect side too, else it keeps a stale chart + arrows.
-                # (SouthIndianView.update_from_chart is NOT None-safe, so clear the
-                # scene directly.) No refs are held across this clear.
-                self.aspect_si_view.scene.clear()
+                # (update_from_chart is NOT None-safe, so use clear_chart, which
+                # fans to both children.) No refs are held across this clear.
                 self._arrows = {}
+                self._overlay_sentinel = None
+                self.aspect_si_host.clear_chart()
                 self._si_dirty = False
             elif self._panel_visible:
-                self._refresh_aspect_side()
+                if hidden_live(self):
+                    # A hidden page: the aspect side takes the chart now (its
+                    # children draw at their show), the arrows and hover zones
+                    # go on that drawn scene when this page is shown.
+                    self._arrows = {}
+                    self._overlay_sentinel = None
+                    self._push_aspect_chart()
+                    when_shown(self, "aspect_overlay", BodyAspectDualWidget._draw_overlay)
+                else:
+                    self._refresh_aspect_side()
                 self._si_dirty = False
             else:
                 self._si_dirty = True
@@ -195,7 +258,7 @@ class BodyAspectDualWidget(QWidget):
     def ensure_visible(self):
         self.body_graph_view.ensure_visible()
         if self._panel_visible:
-            self.aspect_si_view.ensure_visible()
+            self.aspect_si_host.ensure_visible()
 
     def refresh_theme(self):
         self.body_graph_view.refresh_theme()
@@ -203,7 +266,8 @@ class BodyAspectDualWidget(QWidget):
             # SI.refresh_theme() re-reads theme colours and redraws (clearing our
             # arrows/hover zones), so rebuild the aspect side afterwards.
             with self._render_guard():
-                self.aspect_si_view.refresh_theme()
+                self._arrows = {}
+                self.aspect_si_host.refresh_theme()
                 self._compute_and_draw_aspects()
                 self._create_aspect_hover_zones()
             if self._hovered_sign is not None:
@@ -220,7 +284,16 @@ class BodyAspectDualWidget(QWidget):
     def show_outer_planets(self, value):
         # write-through to BOTH child views (F8 handler sets this then re-renders)
         self.body_graph_view.show_outer_planets = value
-        self.aspect_si_view.show_outer_planets = value
+        self.aspect_si_host.show_outer_planets = value
+
+    @property
+    def aspect_si_view(self):
+        """The ACTIVE aspect South Indian view (classic or vector), a
+        QGraphicsView: arrows, hover zones and the fullscreen refit target."""
+        return self.aspect_si_host.active_view
+
+    def _aspect_children(self):
+        return (self.aspect_si_host.classic_view, self.aspect_si_host.vector_view)
 
     @property
     def _current_chart(self):
@@ -269,7 +342,7 @@ class BodyAspectDualWidget(QWidget):
         visible = bool(visible)
         self._panel_visible = visible
         get_settings().set("chart.show_aspect_panel", visible)
-        self.aspect_si_view.setVisible(visible)
+        self.aspect_si_host.setVisible(visible)
         if visible:
             w = self.width() or 1200
             frac = self._aspect_split_fraction()
@@ -280,14 +353,14 @@ class BodyAspectDualWidget(QWidget):
                 self._si_dirty = False
             # defer fit until the splitter has laid the children out (context-object
             # overload auto-cancels if the widget is destroyed first)
-            QTimer.singleShot(0, self, self._fit_both)
+            QTimer.singleShot(0, self, lambda: self._fit_both())
         else:
             self._on_aspect_hover_leave()   # clear any active highlight
-            QTimer.singleShot(0, self, self.body_graph_view.ensure_visible)
+            QTimer.singleShot(0, self, lambda: self.body_graph_view.ensure_visible())
 
     def _fit_both(self):
         self.body_graph_view.ensure_visible()
-        self.aspect_si_view.ensure_visible()
+        self.aspect_si_host.ensure_visible()
 
     #: Left-pane share used when nothing usable has been saved.
     DEFAULT_ASPECT_SPLIT = 0.5
@@ -336,11 +409,26 @@ class BodyAspectDualWidget(QWidget):
             return
         # SI.update_from_chart -> draw_full_chart -> scene.clear() destroys any
         # prior arrows AND hover zones. Recreate them AFTER, holding no old refs.
-        self.aspect_si_view.update_from_chart(
-            chart, varga_code=self._varga_code,
-            use_western_names=self._use_western, aditya_mode=self._aditya_mode)
+        # The host fans the chart to BOTH children (INV-12) so a later style
+        # swap shows the current chart, not a stale one.
+        self._arrows = {}
+        self._push_aspect_chart()
         self._compute_and_draw_aspects()
         self._create_aspect_hover_zones()
+
+    def _push_aspect_chart(self):
+        self.aspect_si_host.update_from_chart(
+            self._current_chart, varga_code=self._varga_code,
+            use_western_names=self._use_western, aditya_mode=self._aditya_mode)
+
+    def _draw_overlay(self):
+        """A hidden page's arrows + hover zones, once shown (its children have
+        drawn by then: Qt shows the children before their parent)."""
+        if self._current_chart is None or not self._panel_visible:
+            return
+        with self._render_guard():
+            self._compute_and_draw_aspects()
+            self._create_aspect_hover_zones()
 
     def _signs_for_current(self):
         """Return the 1-based Signs object for the active chart, varga-guarded."""
@@ -378,24 +466,41 @@ class BodyAspectDualWidget(QWidget):
             self._arrows[(i, j)] = arr
 
     def _clear_arrow_items(self):
-        """Remove prior arrow items by tag off the LIVE scene (ref-free).
+        """Remove prior arrow items by tag off the LIVE scenes (ref-free).
 
         After a draw_full_chart the scene was already cleared, so this is a no-op
         then; on a settings-driven redraw it removes the still-live tagged items.
+        Both children are swept, so arrows drawn before a style swap never
+        linger on the now-hidden child.
         """
-        scene = self.aspect_si_view.scene
-        for it in list(scene.items()):
-            try:
-                if it.data(Qt.ItemDataRole.UserRole) == _ARROW_TAG:
-                    scene.removeItem(it)
-            except (RuntimeError, ValueError):
-                pass
         self._arrows = {}
+        for child in self._aspect_children():
+            scene = child.scene
+            for it in list(scene.items()):
+                try:
+                    if it.data(Qt.ItemDataRole.UserRole) == _ARROW_TAG:
+                        scene.removeItem(it)
+                except (RuntimeError, ValueError):
+                    pass
 
     # ---- geometry ----------------------------------------------------------
+    def _grid(self):
+        """(cell size, scene size) in the ACTIVE view's own scene coordinates.
+
+        Classic: SouthIndianView.cell_size / chart_size. Vector:
+        south_indian_geometry CELL_SIZE / SCENE_SIZE. Both use the same
+        sign->cell map (ZODIAC_POSITIONS, SPEC-SIC-002 INV-1).
+        """
+        view = self.aspect_si_view
+        if view is self.aspect_si_host.vector_view:
+            return float(si_geo.CELL_SIZE), float(si_geo.SCENE_SIZE)
+        return float(view.cell_size), float(view.chart_size)
+
     def _cell_center(self, gui_idx):
         """Scene-coordinate centre of the cell for a 0-based zodiac index."""
-        cs = self.aspect_si_view.cell_size
+        if self.aspect_si_view is self.aspect_si_host.vector_view:
+            return si_geo.cell_rect(gui_idx).center()
+        cs, _ = self._grid()
         for (row, col), z in SouthIndianView.ZODIAC_POSITIONS.items():
             if z == gui_idx:
                 return QPointF(col * cs + cs / 2.0, row * cs + cs / 2.0)
@@ -411,8 +516,8 @@ class BodyAspectDualWidget(QWidget):
         scene = self.aspect_si_view.scene
         ci = self._cell_center(i - 1)
         cj = self._cell_center(j - 1)
-        center = QPointF(self.aspect_si_view.chart_size / 2.0,
-                         self.aspect_si_view.chart_size / 2.0)
+        _, size = self._grid()
+        center = QPointF(size / 2.0, size / 2.0)
 
         mid = QPointF((ci.x() + cj.x()) / 2.0, (ci.y() + cj.y()) / 2.0)
         chord = QPointF(cj.x() - ci.x(), cj.y() - ci.y())
@@ -492,7 +597,9 @@ class BodyAspectDualWidget(QWidget):
         highlighted state (all others dimmed). The void zones use index -1 so
         _on_aspect_hover clears the highlight instead of selecting a sign.
         """
-        cs = self.aspect_si_view.cell_size
+        # Whole grid cells (not the vector view's inset cards), so the gutter
+        # between cards never opens a hover gap.
+        cs, _ = self._grid()
         scene = self.aspect_si_view.scene
         for (row, col), zodiac_idx in SouthIndianView.ZODIAC_POSITIONS.items():
             hz = HoverZoneItem(col * cs, row * cs, cs, cs,
@@ -505,11 +612,13 @@ class BodyAspectDualWidget(QWidget):
                                    -1, self._aspect_hover_signal)
                 hz.setZValue(50)
                 scene.addItem(hz)
+        self._overlay_sentinel = hz
 
     def _on_aspect_hover(self, zodiac_idx):
         """A sign cell was hovered: highlight its arrows + related body zones."""
         if self._rendering:
             return
+        self._ensure_overlay()
         if zodiac_idx < 0:
             self._on_aspect_hover_leave()
             return
@@ -529,6 +638,7 @@ class BodyAspectDualWidget(QWidget):
         """Pointer left the aspect viewport: hide all arrows + clear body zones."""
         if self._rendering:
             return  # never touch arrow items mid-render (may be being rebuilt)
+        self._ensure_overlay()
         self._hovered_sign = None
         for arr in self._arrows.values():
             self._style_arrow(arr, "hidden")
@@ -537,9 +647,45 @@ class BodyAspectDualWidget(QWidget):
     def eventFilter(self, obj, event):
         # HoverSignal.hover_leave is never emitted by the item; detect the
         # pointer leaving the viewport instead (grounding: no existing leaveEvent).
-        if obj is self.aspect_si_view.viewport() and event.type() == QEvent.Type.Leave:
+        if event.type() == QEvent.Type.Leave and any(
+                obj is child.viewport() for child in self._aspect_children()):
             self._on_aspect_hover_leave()
         return super().eventFilter(obj, event)
+
+    def _overlay_alive(self):
+        """True when our hover zones (and so our arrows, drawn in the same
+        pass) still live on the ACTIVE child's scene. Ref-safe: isValid never
+        dereferences a deleted C++ object."""
+        hz = self._overlay_sentinel
+        return (hz is not None and isValid(hz)
+                and hz.scene() is self.aspect_si_view.scene)
+
+    def _ensure_overlay(self, *_):
+        """Rebuild arrows + hover zones if a redraw we did not drive wiped them
+        (connected to both children's scene.changed; also run before hover)."""
+        if self._rendering or self._current_chart is None:
+            return
+        if self._overlay_sentinel is None and not self._arrows:
+            return              # never drawn yet (panel not shown since load)
+        if self._overlay_alive():
+            return
+        self._on_host_redrawn()
+
+    def _on_host_redrawn(self):
+        """The host redrew both children (style swap / finish broadcast):
+        every arrow and hover zone is gone. Re-add them on the active child."""
+        self._arrows = {}   # the items died with scene.clear(); drop the refs
+        self._overlay_sentinel = None
+        if self._current_chart is None:
+            return
+        if not self._panel_visible:
+            self._si_dirty = True
+            return
+        with self._render_guard():
+            self._compute_and_draw_aspects()
+            self._create_aspect_hover_zones()
+        if self._hovered_sign is not None:
+            self._on_aspect_hover(self._hovered_sign)
 
     # ================================================================== #
     # Settings reaction (W3c): redraw arrows on aspect-system change      #

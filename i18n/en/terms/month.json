@@ -1,0 +1,50 @@
+{
+ "1": {
+  "abbr": "Jan",
+  "name": "January"
+ },
+ "10": {
+  "abbr": "Oct",
+  "name": "October"
+ },
+ "11": {
+  "abbr": "Nov",
+  "name": "November"
+ },
+ "12": {
+  "abbr": "Dec",
+  "name": "December"
+ },
+ "2": {
+  "abbr": "Feb",
+  "name": "February"
+ },
+ "3": {
+  "abbr": "Mar",
+  "name": "March"
+ },
+ "4": {
+  "abbr": "Apr",
+  "name": "April"
+ },
+ "5": {
+  "abbr": "May",
+  "name": "May"
+ },
+ "6": {
+  "abbr": "Jun",
+  "name": "June"
+ },
+ "7": {
+  "abbr": "Jul",
+  "name": "July"
+ },
+ "8": {
+  "abbr": "Aug",
+  "name": "August"
+ },
+ "9": {
+  "abbr": "Sep",
+  "name": "September"
+ }
+}

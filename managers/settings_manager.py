@@ -25,6 +25,7 @@ except ImportError:
     debug_print = print  # Fallback for standalone testing
 
 from core.fs_safety import atomic_write_json, write_bytes_atomic
+from managers import ai_write_hook as _ai_write_hook
 
 
 def _get_log():
@@ -45,13 +46,6 @@ _MANAGERS_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(_MANAGERS_DIR)
 
 # Default styled South Indian appearance; every value remains user-configurable.
-
-# td-cyap (sol F5): single source of truth for the house-number size ceiling.
-# Above this the wheel's 1-12 numbers collide. The spinbox range AND both view
-# read-sites clamp to it via min(HOUSE_NUMBER_FONT_MAX, stored), so a stored or
-# legacy value above the cap can never be painted or collide — the guarantee
-# does not rely on the UI having clamped the value first.
-HOUSE_NUMBER_FONT_MAX = 28
 
 DEFAULT_CHART_DISPLAY = {   'shadow': {   'enabled': True,
                   'blur_radius': 15,
@@ -129,10 +123,8 @@ DEFAULT_CHART_DISPLAY = {   'shadow': {   'enabled': True,
                         'offset_x': 8,
                         'offset_y': 38,
                         'font_family': 'default',
-                        # td-cyap: wheel-parity default (was a dead 16). Single
-                        # source of truth for both views + the settings control.
-                        # No migration: no profile persists a house_number key,
-                        # so existing installs pick up 23 via the deep-merge.
+                        # Retired 2026-10-08: size is display.fonts.house_numbers now
+                        # (one-time carry-over: managers/font_area_migration.py).
                         'font_size': 23,
                         'font_weight': 'normal',
                         'outline_enabled': False,
@@ -472,246 +464,10 @@ DEFAULT_SOUTH_INDIAN_DISPLAY = {
     "glow_intensity": 50        # 0-100
 }
 
-# Default settings structure
-DEFAULT_SETTINGS = {
-    "version": "2.0",
-
-    # Nakshatra Compatibility (Kuta) rule toggles. Defaults = Ernst/Kala values
-    # (golden-tested). These are GENUINE cross-tradition variants only, each with two
-    # documented classical sources — NOT Ernst-vs-Ernst readings.
-    "nakshatra_compat": {
-        # Stree Deergha threshold: "14_9" = Ernst/Kala (man >=14, secondary 9);
-        # "9_7" = mainstream South-Indian Porutham (man >=9, secondary 7).
-        "stree_deergha_scale": "14_9",
-        # Mahendra offset set: True = Kala full 3-step series incl. 19th;
-        # False = some Tamil sources omit the 19th.
-        "mahendra_include_19th": True,
-        # Total-points thresholds: "17_20" = Ernst/Kala (17 avg / 20 ideal);
-        # "18_36" = North-Indian Guna Milan (18/36 minimum).
-        "total_threshold": "17_20",
-    },
-
-    "appearance": {
-        "theme": "Dark Blue",
-        "font_family": "Inter",
-        "font_size_preset": "medium"
-    },
-
-    "font_sizes": {
-        "chart_title": 12,
-        "chart_degree": 8,
-        "chart_planet": 10,
-        "dasha_header": 14,
-        "dasha_body": 11,
-        "button": 11,
-        "label": 10,
-        "heading": 16,
-        "body": 13,
-        "small": 11,
-        "tiny": 10
-    },
-
-    "display": {
-        "background": "stone_06",
-        "font_scale": 1.0,
-        # SPEC-SAT-001: global UI color saturation, 0-100 (100 = full color,
-        # a no-op). Desaturates the WHOLE UI live — theme chrome, semantic
-        # palettes and planet/sign icon images — for taming oversaturated
-        # displays. Boot deep-merge (:866) propagates this key to existing
-        # settings files. DISPLAY-ONLY: never affects any calculation.
-        "color_saturation": 100,
-        # SPEC-SIC-002: which South Indian implementation renders the SI chart.
-        # "vector" (default since the 4.0 macOS test round) = the Conventional
-        # clean vector theme; "classic" = the image-backed view. Fresh installs
-        # get vector; existing settings files already carry their stored choice
-        # and the boot deep-merge (:773) never overwrites present keys.
-        "south_indian_style": "vector",
-        "south_indian_vector_finish": "ash",
-        # td-iaqm.5 (CP5): SI sign display folded into app-wide display.sign_display; retired key never shipped.
-        # SPEC-CAL-001: calendar convention for DISPLAYING pre-1582 dates.
-        # 'astronomical' = Julian calendar pre-1582 (current behaviour, matches
-        # NASA/Swiss Ephemeris). 'proleptic_gregorian' = Gregorian extended
-        # backwards (Kala norm). DISPLAY-ONLY: never affects JD/computation.
-        "calendar_convention": "astronomical",
-        # td-okit c0-2 (decision 7): the numeric date order for the dasha rows
-        # (Vedanga/Vimshottari, Planetary Ages, Zodiacal Releasing). US English
-        # default "MM/DD/YYYY"; "DD/MM/YYYY" for the rest of the world. DISPLAY-
-        # ONLY: the age column and remote ISO derive from the JD, never from this
-        # text, so the setting can never change a calculation. Lockable like
-        # every display.* key. Follow-up td-fwj1 adopts it on the other surfaces
-        # (chart title, overlay, New/Edit form, transit panel).
-        "date_format": "MM/DD/YYYY",
-        "fonts": {
-            "tables": 11,
-            "table_headers": 12,
-            "panel_titles": 14,
-            "info_text": 11,
-            "buttons": 10,
-            "action_buttons": 12,
-            "sidebar": 10,
-            "status": 9,
-            "tabs": 12,
-            "chart_labels": 16,
-            "chart_memory": 10
-        },
-    },
-
-    "chart": {
-        "view_type": "south_indian",
-        "show_outer_planets": True,
-        "show_planet_names": False,
-        "show_retinue_rings": False,
-        "show_trimsamsha_degrees": False,
-        "show_element_pies": False,
-        "cusp_glow_mode": 2,
-        "wheel_house_display": "sign_based",
-        # SPEC-BODY-002: Body Graph rashi-aspect dual view.
-        # rashi_aspect_system: "quadrant" | "element" | "conventional".
-        # show_aspect_panel persists the Shift+F2 toggle.
-        # aspect_split_fraction persists the splitter proportion as the LEFT
-        # pane's share of the width (float 0-1, or None until the reader drags
-        # it). It replaces the old aspect_splitter_sizes, which stored absolute
-        # pixels and was written on every drag but read nowhere. A new key
-        # rather than a reused one: the stored pixel pairs were produced by the
-        # superseded 70/30 default, so honouring them would have resurrected a
-        # default nobody chose.
-        "rashi_aspect_system": "quadrant",
-        "show_aspect_panel": False,
-        "aspect_split_fraction": None
-    },
-
-    "zodiac": {
-        "mode": "aditya",
-        "ayanamsa_id": 27,
-        "house_system": "campanus",
-        "use_western_names": False,
-        "nakshatra_coords": "neither",
-        "human_design": False,
-        "sign_language": "en"
-    },
-
-    # SPEC-COT-001: the Cards of Truth position order, shared by the Cards of
-    # Truth view, the Planet Placements dialog and the Settings combo. The default is
-    # solar_system because that is what Kala uses (D-5, verified) —
-    # the LIBRARY default is "vedic" and it relabels three of the seven main
-    # cards and moves their occupants. This key had no entry here at all, so
-    # every reader supplied its own inline fallback and they all said "vedic".
-    "cot": {
-        "planet_order": "solar_system",
-        # SPEC-COT-001 §4.10: draw each sign's card (by lordship) inside the
-        # South Indian vector chart. On by default since 2026-09-24 (Lorris):
-        # fresh installs show the plaque in all twelve boxes.
-        "show_in_chart": True
-    },
-
-    "dasha": {
-        "left":  {"ayanamsa_id": 100},
-        "right": {"mode": "nisarga", "ayanamsa_id": 98},
-        # dasha.year_length/zr defaults: managers/settings_defaults_ext.py (SI ceiling).
-    },
-
-    # Transit panel (Pro) preferences.
-    #   reading_date_use_ai (SPEC-TRN-005 B2): the ✨ engine selector on the
-    #     reading-date paste field. False (default) = offline regex engine only
-    #     (INV-1, hermetically offline, images refused); True = LLM engine only
-    #     (INV-2). Persisted so the operator's engine choice survives restart.
-    "transit": {
-        "reading_date_use_ai": False
-    },
-
-    # AI provider layer (Pro) — SPEC-PROV-001 §4 / plan task A5.
-    #   default_provider: the provider the AI Tools chat (and the reading-date
-    #     LLM path) are INTENDED to select by default. Persisted so the
-    #     operator's choice survives restart. The value is a REGISTRY PROVIDER
-    #     NAME (e.g. "DeepSeek", "Claude", "Codex"), NOT an env-key. NOTE: as of
-    #     A5 this setting is written by the settings UI but NOT yet consumed at
-    #     runtime — exploration_chat_manager still hardcodes its default. Wiring
-    #     it as the chat manager's initial provider is C1 (registry cutover)
-    #     scope (bead td-dnbs C1). When the stored name is no longer registered
-    #     the settings section surfaces it EXPLICITLY as a disabled
-    #     "<name> (unavailable)" combo entry (not a silent first-item fallback),
-    #     leaving the stale value persisted until the user picks a real one.
-    "ai": {
-        "default_provider": "DeepSeek"
-    },
-
-    # Vision model for IMAGE extraction (SPEC-TRN-005 reading-date paste) —
-    # deliberately SEPARATE from ai.default_provider (the chat/text provider):
-    # image extraction is a simple OCR-ish task (read a birth date/time/place
-    # off a screenshot) best served by a dedicated cheap keyed vision model,
-    # while chat may run on a session provider (Claude CLI) that cannot take
-    # images at all.
-    #   provider: a vision-capable provider name from
-    #     pro.providers.registry.vision_provider_configs() (e.g. "GPT-5.4
-    #     Mini", "Kimi K2.6", "Anthropic API"). Default is a keyed OpenAI
-    #     vision model — NOT Anthropic, whose key is typically absent.
-    #   model: explicit model id override; "" = the provider's registry
-    #     vision_model default.
-    #   effort: reasoning effort for providers that support the knob
-    #     (minimal|low|medium|high). "medium" is plenty for extraction.
-    "vision": {
-        "provider": "GPT-5.4 Mini",
-        "model": "",
-        "effort": "medium"
-    },
-
-    "ui": {
-        "last_active_tab": 0,
-        "restore_last_tab": True,
-        # SPEC-BAR-001: Vibrancy Segmented is the migrated default.
-        "action_bar_v2": True,
-        "action_bar_v2_default_migrated": False,
-        # SPEC-BAR-001 D-5: hide the Human Design button; the Sidereal zodiac
-        # segment takes its tray slot. Typed contract in spec §4.
-        "hide_human_design": False,
-        # SPEC-BAR-001 M4 (Dm4-48/49): the mockup's prefers-reduced-motion
-        # reading — the breathing NOW dot pins at 0.85, the 160/180 ms
-        # transitions KEEP running. Same typed contract as hide_human_design.
-        "reduce_motion": False,
-        # SPEC-MODE-001: Beginner hides alternative sign-naming; Advanced exposes
-        # all 6 zodiac/label combinations. Default Beginner on fresh + upgraded
-        # installs (injected here so _deep_merge propagates it to existing files).
-        "experience_level": "beginner",
-        "panel": {
-            "karakas_tab": 0,
-            "strength_tab": 0,
-            "aspects_mode": "vedic",
-            "aspects_tab": 0
-        }
-    },
-
-    # Flat dict keyed by full dot-path strings (e.g. "chart.view_type").
-    # Value True means the setting is "frozen": runtime changes are not
-    # written back, so the stored value survives across restarts.
-    # NOTE: intentionally flat — do NOT nest by section. Access it directly
-    # via self._settings["locks"][full_dot_path], never via self.get(...).
-    "locks": {},
-
-    "windows": {
-        "main": {"width": 1920, "height": 1080},
-        "remember_geometry": True,
-        "last_position": {"x": None, "y": None}
-    },
-
-    "paths": {
-        "chart_folders": [],
-        "default_folder": "",
-        "screenshot_folder": "",
-        "kala_path": "",
-        # SPEC-PERSIST-001: the format every NEW chart is written in. "toml"
-        # (Open Astrology Chart) or "chtk". This governs writing only —
-        # both formats are read, and nothing already on disk is converted.
-        "default_chart_format": "toml"
-    },
-
-    "defaults": {
-        "aditya_mode": "aditya",
-        "auto_restore_session": True
-    }
-}
-
-from managers.settings_defaults_ext import apply as _apply_ext_defaults
-_apply_ext_defaults(DEFAULT_SETTINGS)
+# Default settings structure, built from the settings registry (SPEC-SET-003):
+# each key's factory value, and the notes on why, live in core/settings_registry/.
+from core.settings_registry.factory import build_default_settings as _build_defaults
+DEFAULT_SETTINGS = _build_defaults()
 
 # Font size presets (ordered from smallest to largest)
 FONT_SIZE_PRESETS = {
@@ -1880,17 +1636,9 @@ class SettingsManager:
         return values
 
     def _legacy_aliases_for(self, canonical: str) -> List[str]:
-        """Legacy env-key aliases for a canonical name (from registry table).
-
-        Imported lazily from pro.providers.registry (the single source of the
-        alias table) to avoid duplicating it and to avoid an import cycle
-        (registry.py lazily imports this module).
-        """
-        try:
-            pass  # Pro import stripped for Lite distribution
-            return list(_ALIASES_BY_CANONICAL.get(canonical, []))
-        except Exception:
-            return []
+        """Legacy env-key aliases: Pro registers its table (env_key_aliases)."""
+        from managers.env_key_aliases import legacy_aliases_for
+        return legacy_aliases_for(canonical)
 
     def set_api_key(self, provider: str, key: str) -> bool:
         """
@@ -2048,6 +1796,10 @@ class SettingsManager:
             self._notify_change("*", None)
 
 
+# AI writes: one choke point on every write path (SPEC-SET-003 §4.5b, fix round 3).
+_ai_write_hook.guard(SettingsManager)
+
+
 # -----------------------------------------------------------------------------
 # Singleton Access
 # -----------------------------------------------------------------------------
@@ -2066,7 +1818,10 @@ def get_settings() -> SettingsManager:
     """
     global _instance
     if _instance is None:
+        from managers import font_area_migration as _fam  # retired house-number size
+        pending = _fam.pending_house_number_size()  # read the file before any save
         _instance = SettingsManager()
+        _fam.apply_house_number_size(_instance, pending)
     return _instance
 
 

@@ -56,6 +56,38 @@ Contributions from third parties remain under AGPL-3.0 and are not
 covered by this reservation unless separately agreed with the
 contributor.
 
+### Trademarks
+
+"Varuna360", "360 Hearts in the Sky", "360heartsinthesky" and the
+Varuna360 cat icons (the blue Core and Lite icon and the red Pro icon)
+are trademarks of Lorris Turpin. The AGPL-3.0 gives rights in the
+code, not in these names and icons: under section 7(e) of the license,
+no right to use them is granted.
+
+You may state truthfully that your software is based on Varuna360.
+If you distribute a modified version, give it a different name and a
+different icon, and do not present it as Varuna360 or as a product of
+360 Hearts in the Sky. An unmodified copy of this repository,
+distributed as it is, may keep the name and the icons.
+
+### The author's astrological texts
+
+The following files hold Lorris Turpin's own astrological writing.
+They are not covered by the AGPL-3.0 grant above; the author keeps all
+rights in the text.
+
+- core/data/ascendant_guide.json (the Ascendant guide)
+- docs/help/manual.html (the user manual)
+
+You may copy and distribute these files unchanged, as part of a copy
+of Varuna360 or of a modified version of it, so that the program keeps
+working. You may not edit, translate or extract the texts, or publish
+them on their own or inside another work (another program, a website,
+a book or a dataset), without the author's written permission. To ask,
+see Contact below.
+
+This applies to these files from version 6.0.0 on.
+
 ## Third-Party Components
 
 ### Swiss Ephemeris
@@ -111,6 +143,18 @@ the Arabic Parts table that Aries ships (Res/Opts/arabic_parts.json).
 - License: AGPL-3.0-or-later, the same license as this project, so no
   separate permission is needed; keeping this notice is what the license asks.
 - Upstream: https://github.com/primum-mobile/aries (https://aries.sh/)
+
+### Nakshatra descriptions
+
+The nakshatra descriptions shown when you double-click a nakshatra
+(core/data/nakshatra_data.json, displayed by
+apps/widgets/nakshatra_info_dialog.py) are the shared work of Ernst
+Wilhelm and Michael Reed, used with permission of both authors. They
+are not covered by the AGPL-3.0 grant above; the authors keep their
+rights in the text.
+
+- Authors: Ernst Wilhelm and Michael Reed
+- Used with permission
 
 ### PySide6 / Qt6
 

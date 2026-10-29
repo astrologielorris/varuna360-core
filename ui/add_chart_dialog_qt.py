@@ -814,7 +814,7 @@ class AddChartDialog(QDialog):
         if not result.get("ok"):
             detail = str(result.get("error") or "unknown error")
             if result.get("provider_unavailable"):
-                detail += "  (Settings > AI Providers)"
+                detail += "  (Settings > AI Settings)"
             self.status_label.setText(f"Could not read that image: {detail}")
             return
 

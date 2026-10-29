@@ -6,6 +6,9 @@ Dignities in Vargas — planetary dignities across all 16 vargas.
 Usage:
     python -m AI_tools.AI_main_function.dignities_in_vargas Lorris.chtk
     python -m AI_tools.AI_main_function.dignities_in_vargas /path/to/chart.chtk --json
+
+The varga style is the setting chart.varga_style (the app's, followed like every
+setting); in advanced mode: --set chart.varga_style=reversed.
 """
 
 import sys
@@ -16,7 +19,7 @@ from pathlib import Path
 
 from core.varga_codes import (
     VARGA_NAMES, _GUI_TO_LIBADITYA_VARGA, to_libaditya_varga_code,
-    VARGA_STYLE_ORDER, VARGA_STYLES,
+    VARGA_STYLE_ORDER,
     to_libaditya_varga_code_styled, get_varga_display_label,
 )
 
@@ -78,20 +81,39 @@ def compute_dignities_table(chart, varga_order=None, varga_style="classical"):
         else:
             name = VARGA_NAMES.get(gui_code, f"D-{gui_code}")
 
+        # td-m6xyo (SPEC-DIG-001): a Debilitated planet's kind, by its natural
+        # relationship to the lord of the sign it occupies in this varga.
+        from core.planet_dignity import ABBR, dignities_of_varga
+        db_kinds = {ABBR[d.planet]: d.kind for d in dignities_of_varga(varga, gui_code == 1)
+                    if d.code == "DB"}
+
         rows.append({
             "amsha": gui_code,
             "label": display_label,
             "name": name,
             "dignities": dignities,
+            "db_kinds": db_kinds,
+            # SPEC-DIG-001 D-10: a styled row (D2p, D10r...) in place of its classical one
+            **({"variant": varga_style} if gui_code in overrides else {}),
         })
     return rows
+
+
+_KIND_MARK = {"friend": "f", "neutral": "n", "enemy": "e"}
+
+
+def _cell(row, index):
+    """The table cell: the code, a Debilitated one with its kind, "DB(f)"."""
+    code = row["dignities"][index]
+    kind = row.get("db_kinds", {}).get(PLANET_HEADERS[index])
+    return f"{code}({_KIND_MARK[kind]})" if code == "DB" and kind in _KIND_MARK else code
 
 
 def _colorize(dignity, use_color=True):
     """Wrap a dignity abbreviation in ANSI color if enabled."""
     if not use_color:
         return dignity
-    color = DIGNITY_COLORS.get(dignity, "")
+    color = DIGNITY_COLORS.get(dignity[:2].rstrip("("), "")
     return f"{color}{dignity}{RESET}"
 
 
@@ -112,26 +134,34 @@ def print_table(rows, chart_name="", use_color=True):
     table.align[""] = "r"
 
     for row in rows:
-        cells = [_colorize(d, use_color) for d in row["dignities"]]
-        table.add_row([row["label"]] + cells)
+        cells = [_colorize(_cell(row, i), use_color) if use_color else _cell(row, i)
+                 for i in range(len(row["dignities"]))]
+        label = f"  {row['label']}" if row.get("variant") else row["label"]   # a variant row
+        table.add_row([label] + cells)
 
     print(table)
     print()
     print("  EX=Exaltation  MT=Moolatrikona  OH=Own House  GF=Great Friend")
     print("  F=Friend  N=Neutral  E=Enemy  GE=Great Enemy  DB=Debilitation")
+    print("  DB(f/n/e) = Debilitated in a friend's / neutral's / enemy's sign (natural relationship)")
     print()
 
 
-def to_json(rows, chart_name=""):
-    """Return JSON representation."""
+def to_json(rows, chart_name="", varga_style=None):
+    """Return JSON representation (``varga_style``: the style the table used)."""
+    out = {"chart": chart_name}
+    if varga_style is not None:
+        out["varga_style"] = varga_style
     return {
-        "chart": chart_name,
+        **out,
         "table": [
             {
                 "varga": row["label"],
                 "amsha": row["amsha"],
                 "name": row["name"],
                 "dignities": dict(zip(PLANET_HEADERS, row["dignities"])),
+                "db_kinds": dict(row.get("db_kinds", {})),
+                **({"variant": row["variant"]} if row.get("variant") else {}),
             }
             for row in rows
         ],
@@ -159,19 +189,35 @@ def resolve_chtk_path(name):
     return None
 
 
+# The settings this command reads (SPEC-SET-003 §4.5): the chart frame (the
+# label set and the Human Design level included) and the experience level.
+USES = ("zodiac.mode", "zodiac.ayanamsa_id", "zodiac.house_system",
+        "zodiac.nakshatra_coords", "chart.show_outer_planets",
+        "zodiac.use_western_names", "ui.hd_experience_level", "ui.experience_level",
+        # td-m6xyo: the varga style shared with the app (SPEC-DIG-001 §4.3)
+        "chart.varga_style")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Dignities in Vargas (16-varga table)")
     parser.add_argument("chart", help="CHTK file name or path")
     parser.add_argument("--json", action="store_true", help="Output as JSON")
-    parser.add_argument("--mode", default="aditya",
-                        choices=["aditya", "tropical_classic", "sidereal"],
-                        help="Zodiac mode (default: aditya)")
     parser.add_argument("--no-color", action="store_true",
                         help="Disable ANSI color output")
-    parser.add_argument("--varga-style", default="classical",
-                        choices=VARGA_STYLE_ORDER,
-                        help="Varga calculation style (default: classical)")
+    # The chart frame follows the app like the Dignities panel's active chart
+    # (argument > running app > saved Settings tab > factory, AIC plan 2).
+    # The Dignities panel reads the app's active chart: the -88 Design chart in
+    # Human Design mode, --human-design / --no-human-design override.
+    from core.capabilities.cli_settings import add_view_flags, cli_chart
+    from core.capabilities.inputs import ChartFrame
+    from core.settings_registry.cli import echo, resolve_settings, use_settings
+    add_view_flags(parser)
+    use_settings(parser, USES)
     args = parser.parse_args()
+    # Settings: the tools' settings (settings.py) > running app > saved
+    # Settings tab > factory (SPEC-SET-003 INV-4; never writes).
+    cfg = resolve_settings(args)
+    frame = ChartFrame.resolve(cfg.view)
 
     chtk_path = resolve_chtk_path(args.chart)
     if not chtk_path:
@@ -179,16 +225,23 @@ def main():
         print(f"Searched: current dir, {CHTK_DIR}", file=sys.stderr)
         sys.exit(1)
 
-    chart = load_chart(chtk_path, mode=args.mode)
+    chart, _inp = cli_chart(chtk_path, args, frame)   # the panel's chart
     chart_name = chtk_path.stem
 
-    rows = compute_dignities_table(chart, varga_style=args.varga_style)
+    # The varga style is the setting chart.varga_style, like every setting
+    # (SPEC-SET-003 D-12/D-13: no settings flag; --set in advanced mode).
+    style = cfg["chart.varga_style"]
+    if style not in VARGA_STYLE_ORDER:
+        style = "classical"
+    rows = compute_dignities_table(chart, varga_style=style)
 
     if args.json:
-        print(json.dumps(to_json(rows, chart_name), indent=2))
+        # The settings echo (SPEC-SET-003 §4.5): settings: {key: {value, source}}.
+        print(json.dumps(echo(to_json(rows, chart_name, style), cfg), indent=2))
     else:
         use_color = not args.no_color and sys.stdout.isatty()
-        print_table(rows, chart_name, use_color=use_color)
+        print_table(rows, f"{chart_name}, {style}" if style != "classical" else chart_name,
+                    use_color=use_color)
 
 
 if __name__ == "__main__":

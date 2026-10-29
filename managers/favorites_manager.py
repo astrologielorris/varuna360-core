@@ -19,6 +19,7 @@ import tempfile
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from core.chart_kind import entry_kind, is_transit_kind
 
 try:
     from utils.debug import debug_print
@@ -759,7 +760,8 @@ def _sync_favorites_profile(profiles_dir, store=None) -> bool:
             'mode': fav.get('mode', 'aditya'),
             'ayanamsa': fav.get('ayanamsa', 1),
             'chtk_path': _resolve_chtk_path(fav.get('chtk_path'), base_dir),
-            'is_transit': False,
+            'kind': entry_kind(fav),
+            'is_transit': is_transit_kind(entry_kind(fav)),
         })
 
     if stale_stars:

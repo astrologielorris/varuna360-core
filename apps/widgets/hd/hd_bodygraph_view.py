@@ -24,12 +24,12 @@ from typing import Callable
 
 from PySide6.QtCore import QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QPainter
-from PySide6.QtWidgets import QGraphicsItem, QGraphicsScene, QGraphicsView
+from PySide6.QtWidgets import QGraphicsItem, QGraphicsScene, QGraphicsView, QToolTip
 
-from ui.qt_theme import hd_palette
+from ui.qt_theme import get_theme_colors, hd_palette
 from . import hd_geometry as G
 from . import hd_painter as P
-from .hd_channel_names import channel_name
+from .hd_channel_names import centre_label, channel_name, gate_label
 
 #: The shared clock. 24 fps is enough for a dash travelling a few pixels a frame and a
 #: halo breathing over eleven seconds, and leaves the budget to the rest of the app.
@@ -181,6 +181,7 @@ class HDBodygraphView(QGraphicsView):
 
         self.state = P.HDGraphState(model={}, palette=hd_palette())
         self._pinned: tuple | None = None
+        self._tip_hit: tuple | None = None     # what the tooltip is naming now
         #: Where the button went down, while it is down; None when it is not.
         self._panning = None
         #: Whether that press has travelled far enough to count as a drag.
@@ -266,7 +267,12 @@ class HDBodygraphView(QGraphicsView):
         # so there is no seam between the graph and the panel around it
         self.setBackgroundBrush(Qt.BrushStyle.NoBrush)
         self.viewport().setAutoFillBackground(False)
-        self.setStyleSheet("background: transparent; border: none;")
+        # the gate tooltip takes this sheet too: a bare "background: transparent" made
+        # it a black box on the light theme, so it carries the page's tooltip rule,
+        # which outranks the universal one (and a sheet mixing bare declarations with
+        # a selector rule is invalid, hence "*")
+        self.setStyleSheet("* { background: transparent; border: none; }"
+                           + tooltip_qss(get_theme_colors()))
         self._invalidate_all()
 
     def fit(self) -> None:
@@ -516,6 +522,20 @@ class HDBodygraphView(QGraphicsView):
         self._apply_focus(hit)
         self.hover_changed.emit(describe(hit) if hit else "")
         self._show_cursor(hit)
+        self._show_tip(hit, event)
+
+    def _show_tip(self, hit, event) -> None:
+        """Name what is under the pointer; re-shown only when the target changes."""
+        if hit == self._tip_hit and hit is not None:
+            return
+        self._tip_hit = hit
+        if hit is None:
+            QToolTip.hideText()
+            return
+        # a turn later, so a click's release (which closes tooltips as it bubbles up
+        # through the parents) cannot take it straight back down
+        point, text = event.globalPosition().toPoint(), describe(hit)
+        QTimer.singleShot(0, lambda: QToolTip.showText(point, text, self.viewport()))
 
     def _show_cursor(self, hit) -> None:
         """Say what the pointer would do here.
@@ -537,6 +557,7 @@ class HDBodygraphView(QGraphicsView):
 
     def leaveEvent(self, event):
         super().leaveEvent(event)
+        self._tip_hit = None
         if self._pinned is None:
             self._clear_focus()
             self.hover_changed.emit("")
@@ -572,6 +593,8 @@ class HDBodygraphView(QGraphicsView):
         hit = self._hit(self.mapToScene(event.position().toPoint()))
         # a second click on the same thing, or a click on empty space, lets go
         self.pin(None if (hit is None or hit == self._pinned) else hit)
+        self._tip_hit = None
+        self._show_tip(hit, event)
 
     def _pan_to(self, event) -> None:
         """Drag the graph under the pointer.
@@ -689,17 +712,32 @@ class HDBodygraphView(QGraphicsView):
         return min(port.width() / box.width(), port.height() / box.height())
 
 
+def tooltip_qss(colors: dict) -> str:
+    """The tooltip rule every hoverable widget on this page carries itself.
+
+    A tooltip is styled from the nearest ancestor that owns a stylesheet, and on
+    Lorris's screen that produced a dark box with dark text on the light theme (a
+    row's own rgba band and ink, painted onto a ToolTip window). Spelling the
+    tooltip out on the carrier, in the same tokens qt-material's global rule uses,
+    makes it read the same whatever the ancestors say.
+    """
+    return (f" QToolTip {{ background-color: {colors['secondary_light']};"
+            f" color: {colors['secondary_text']};"
+            f" border: 1px solid {colors['secondary_dark']};"
+            f" border-radius: 4px; padding: 4px; }}")
+
+
 def describe(hit: tuple | None) -> str:
     """A short human sentence for the status line."""
     if not hit:
         return ""
     kind, value = hit
     if kind == "gate":
-        return f"Gate {value} · {G.centre_of_gate(value)}"
+        return f"{gate_label(value)} · {centre_label(G.centre_of_gate(value))}"
     if kind == "channel":
         a, b = G.gates_of_channel(value)
         return f"Channel {a}-{b} · {channel_name(a, b)}"
     if kind == "track":
         names = ", ".join(G.channels_on_track(value))
         return f"Braid track {value} · carries {names}"
-    return f"{value} centre"
+    return centre_label(value)

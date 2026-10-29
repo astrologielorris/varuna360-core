@@ -7,7 +7,7 @@ SETTING = 'chart.additional_bodies'
 
 def enabled_names():
     from managers.settings_manager import get_settings
-    selected = get_settings().get(SETTING, [])
+    selected = get_settings().get(SETTING)
     if not isinstance(selected, (list, tuple)):
         return ()
     return tuple(body.name for body in BODIES if body.name in selected)

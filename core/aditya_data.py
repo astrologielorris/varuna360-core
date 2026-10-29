@@ -16,6 +16,13 @@ import json
 import re
 from pathlib import Path
 
+# The Western sign names in sign order, from their one source (a second copy
+# here broke the i18n census budget, review 2026-10-13 H9).
+from core.aditya_mode import TROPICAL_NAMES as _WESTERN_SIGN_NAMES
+from core.i18n import content as _content
+from core.i18n import languages as _languages
+from core.i18n import t as _t
+
 # Project root for locating reference files
 PROJECT_ROOT = Path(__file__).parent.parent
 
@@ -349,13 +356,30 @@ def load_aditya_descriptions() -> dict:
     return descriptions
 
 
-def check_planet_dignity(planet_name: str, sign_name: str, deg_in_sign: float) -> str:
+
+def _dignity_sign_key(sign):
+    """The Aditya name the dignity tables are keyed by, for a sign given as
+    its 0-11 index, its Aditya name or its Western name.
+
+    The tables hold one sign position per row; Aries = Dhata = sign #1 in
+    every zodiac system (SPEC-ZOD-001), so a Western-labelled chart
+    (tropical classic, sidereal) maps by position, never by name.
+    """
+    if isinstance(sign, int) and not isinstance(sign, bool):
+        return ADITYA_NAMES[sign % 12]
+    if sign in _WESTERN_SIGN_NAMES:
+        return ADITYA_NAMES[_WESTERN_SIGN_NAMES.index(sign)]
+    return sign
+
+
+def check_planet_dignity(planet_name: str, sign_name, deg_in_sign: float) -> str:
     """
     Check if a planet is in exaltation, mulatrikona, own sign, or debilitation.
 
     Args:
         planet_name: Name of the planet
-        sign_name: Aditya sign name the planet is in
+        sign_name: The sign the planet is in: its 0-11 index (preferred),
+            its Aditya name or its Western name
         deg_in_sign: Degree position within the sign (0-30)
 
     Returns:
@@ -363,6 +387,7 @@ def check_planet_dignity(planet_name: str, sign_name: str, deg_in_sign: float) -
     """
     if planet_name not in ADITYA_DIGNITIES:
         return None
+    sign_name = _dignity_sign_key(sign_name)
 
     dignity = ADITYA_DIGNITIES[planet_name]
 
@@ -415,16 +440,26 @@ def get_dignity_description(dignity_type: str, sign_name: str) -> str:
 _cached_descriptions = None
 
 
-def get_aditya_description(sign_name: str) -> str:
+def get_aditya_description(sign_name: str, lang: str = None) -> str:
     """
     Get the full description for an Aditya sign.
 
     Args:
         sign_name: Aditya code name (e.g., "Dhata", "Aryama")
+        lang: a language code (default English). The GUI passes its
+            description language (ui/app_language.py); CLI tools and exports stay English unless
+            they ask. A translation is the file i18n/content.json lists for
+            "aditya_descriptions" in that language (French: core/data/
+            aditya_descriptions_fr.json, ported from the website by
+            tools/port_aditya_descriptions_fr.py); a missing entry falls back
+            to English.
 
     Returns:
         Full description text or default message
     """
+    translated = _content_json("aditya_descriptions", lang).get(sign_name)
+    if isinstance(translated, str) and translated:
+        return translated
     global _cached_descriptions
     if _cached_descriptions is None:
         _cached_descriptions = load_aditya_descriptions()
@@ -433,6 +468,78 @@ def get_aditya_description(sign_name: str) -> str:
         sign_name,
         f"No description available for {sign_name}"
     )
+
+
+# =============================================================================
+# DESCRIPTION LANGUAGE (SPEC-LOC-002 §3.5: registry + content map)
+# =============================================================================
+# The description texts follow the app language in the GUI only: the GUI layer
+# reads its language (ui/app_language.py) and passes it in, as
+# lang=description_language(ui_lang). Nothing here reads saved settings
+# (SPEC-LOC-002 §3.2, T-19); the getters default to English so CLI tools, AI
+# summaries and exports never change language with a GUI menu choice.
+# Which languages have translated texts is data (i18n/content.json); any other
+# code reads English. Every translated lookup falls back to English when an
+# entry is missing, so a gap never blanks a card.
+
+def description_language(ui_lang: str) -> str:
+    """The language the Aditya descriptions are shown in for the UI language
+    ``ui_lang``: ``ui_lang`` (or its parent) when i18n/content.json lists
+    descriptions for it, else English."""
+    return _content.content_language("aditya_descriptions", ui_lang or _languages.ENGLISH)
+
+
+_JSON_CACHE = {}
+_DATA_DIR = Path(__file__).parent / "data"
+
+
+def _content_json(content_id: str, lang) -> dict:
+    """The translated JSON of a content id in ``lang`` ({} when only English exists)."""
+    if not lang:
+        return {}
+    path = _content.content_path(content_id, lang)
+    return _load_json_dict(path) if path is not None else {}
+
+
+def _load_json_dict(filename) -> dict:
+    """Load core/data/<filename> (or a path) once; missing or malformed resolves to {}."""
+    path = Path(filename) if isinstance(filename, Path) else _DATA_DIR / filename
+    cache_key = path.name if path.parent == _DATA_DIR else str(path)
+    if cache_key in _JSON_CACHE:
+        return _JSON_CACHE[cache_key]
+    data = {}
+    if path.exists():
+        try:
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+            data = loaded if isinstance(loaded, dict) else {}
+        except (json.JSONDecodeError, OSError):
+            data = {}
+    _JSON_CACHE[cache_key] = data
+    return data
+
+
+# UI labels of the description cards (sector dialog + planet dialog). English
+# source table (SPEC-LOC-002 INV-2, registered source "content.aditya." in
+# core/i18n/extract_signatures.py); translations live in i18n/<code>/ui/content.json.
+_UI_TEXT_EN = {
+    "theme": "Theme",
+    "healthy": "Healthy Expression",
+    "afflicted": "Afflicted Expression",
+    "not_available": "Description not available",
+    "sign": "Sign",
+    "about": "About {sign}",
+    "hora_aditya": "Aditya (Sun side)",
+    "hora_naga": "Naga (Moon side)",
+    "annotation_hora": "{planet} at {degree} {sign} falls directly in this Hora.",
+    "annotation_trimsamsa": "{planet} at {degree} {sign} falls directly in this Trimsamsa.",
+}
+
+
+def ui_text(key: str, lang: str, **fmt) -> str:
+    """Label for the description cards in ``lang`` (REQUIRED, English fallback).
+    The GUI passes its UI language (ui/app_language.gui_ui_language); AI, CLI and
+    capability callers pass "en"."""
+    return _t(f"content.aditya.{key}", _UI_TEXT_EN[key], lang=lang or _languages.ENGLISH, **fmt)
 
 
 _HORA_TRIMSAMSA_CACHE = None
@@ -453,55 +560,24 @@ def load_hora_trimsamsa_descriptions() -> dict:
     return _HORA_TRIMSAMSA_CACHE
 
 
-def get_being_description(sign_name: str, ring: str, being_type: str):
+def get_being_description(sign_name: str, ring: str, being_type: str, lang: str = None):
+    """Hora / Trimsamsa being entry {name?} or None (LTS ships the being
+    names only; a card renders theme / healthy / afflicted only when an entry
+    carries them, and shows no placeholder when it does not).
+
+    A translation (the GUI passes its description language, ui/app_language.py) is the file
+    i18n/content.json lists for "hora_trimsamsa_reference" in that language
+    (French: core/data/hora_trimsamsa_reference_fr.json), same shape as the
+    English file; a missing entry falls back to English.
+    """
+    try:
+        translated = _content_json("hora_trimsamsa_reference", lang)[ring + "s"][sign_name][being_type]
+        if isinstance(translated, dict) and translated:
+            return translated
+    except (KeyError, TypeError, AttributeError):
+        pass
     data = load_hora_trimsamsa_descriptions()
     try:
         return data[ring + "s"][sign_name][being_type]
     except (KeyError, TypeError, AttributeError):
         return None
-
-
-_SIGN_EXPRESSIONS_CACHE = None
-
-
-def load_sign_expressions() -> dict:
-    """Load the Aditya healthy/afflicted interpretations (SPEC-AVA-003 v1.3).
-
-    Data ported from the mobile app by tools/port_aditya_expressions.py into
-    core/data/aditya_expressions.json; see docs/ECOSYSTEM.md §3. Cached; a
-    missing or malformed file resolves to {} so a sign click never raises.
-    """
-    path = Path(__file__).parent / "data" / "aditya_expressions.json"
-    global _SIGN_EXPRESSIONS_CACHE
-    if _SIGN_EXPRESSIONS_CACHE is not None:
-        return _SIGN_EXPRESSIONS_CACHE
-    if not path.exists():
-        _SIGN_EXPRESSIONS_CACHE = {}
-        return _SIGN_EXPRESSIONS_CACHE
-    try:
-        loaded = json.loads(path.read_text(encoding="utf-8"))
-        # A valid-but-wrong-shape root (e.g. a JSON list) must not make the
-        # accessor raise later; only a dict is usable.
-        _SIGN_EXPRESSIONS_CACHE = loaded if isinstance(loaded, dict) else {}
-    except (json.JSONDecodeError, OSError):
-        _SIGN_EXPRESSIONS_CACHE = {}
-    return _SIGN_EXPRESSIONS_CACHE
-
-
-def get_sign_expressions(sign_name: str):
-    """Return {"healthy": str, "afflicted": str} for an Aditya, or None.
-
-    None for an unknown sign, a malformed entry, or a missing/empty field (the
-    caller falls back to the "Description not available" placeholder). Never
-    raises at click time, whatever shape the JSON has.
-    """
-    data = load_sign_expressions()
-    entry = data.get(sign_name) if isinstance(data, dict) else None
-    if not isinstance(entry, dict):
-        return None
-    healthy = entry.get("healthy")
-    afflicted = entry.get("afflicted")
-    if not (isinstance(healthy, str) and healthy
-            and isinstance(afflicted, str) and afflicted):
-        return None
-    return {"healthy": healthy, "afflicted": afflicted}

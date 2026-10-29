@@ -13,7 +13,7 @@ degraded would be its own small joke.
 """
 from pathlib import Path
 
-from PySide6.QtCore import QThread, Signal, Qt
+from PySide6.QtCore import QThread, QTimer, Signal, Qt
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import (
     QDialog, QDialogButtonBox, QFileDialog, QHBoxLayout, QLabel, QLineEdit,
@@ -29,13 +29,58 @@ class _SendWorker(QThread):
     """Posts the report off the GUI thread."""
     finished_with = Signal(bool, str)
 
-    def __init__(self, payload, parent=None):
+    def __init__(self, payload, parent=None, attachment=None):
         super().__init__(parent)
         self._payload = payload
+        self._attachment = attachment       # PNG the user approved, or None
 
     def run(self):
-        ok, message = bug_report.send_report(self._payload)
+        result = bug_report.send_report(self._payload)
+        ok, message = result
+        if ok and self._attachment:
+            if bug_report.server_accepts(result, "screenshot"):
+                shot_ok, shot_msg = bug_report.upload_attachment(result, self._attachment)
+                message = "Report and screenshot sent. Thank you." if shot_ok else \
+                    f"Report sent. {shot_msg}"
+            else:
+                message = "Report sent, picture not uploaded."
         self.finished_with.emit(ok, message)
+
+
+_MARKER_WORDS = {
+    "name": ("name", "names"), "place": ("place", "places"),
+    "date": ("date", "dates"), "time": ("time", "times"),
+    "coords": ("set of coordinates", "sets of coordinates"),
+    "email": ("email address", "email addresses"),
+    "phone": ("phone number", "phone numbers"), "url": ("web address", "web addresses"),
+    "secret": ("key or password", "keys or passwords"),
+}
+
+
+def scrub_summary(payload):
+    """'Removed before sending: 3 names, 1 date.' plus a warning when the
+    chart list could not be read (AIR-001 §3.3, fail closed). Plain words."""
+    scrub = (payload or {}).get("scrub") or {}
+    counts = scrub.get("counts") or {}
+    parts = []
+    for key, n in counts.items():
+        one, many = _MARKER_WORDS.get(key, (key, key))
+        parts.append(f"{n} {one if n == 1 else many}")
+    text = ("Removed before sending: " + ", ".join(parts) + ".") if parts else \
+        "Nothing personal was found to remove."
+    if not scrub.get("library", False):
+        text += (" The chart list could not be read, so chart names were not "
+                 "checked: please read the preview carefully.")
+    return text
+
+
+# SPEC-AIR-001 §4.6 (3): My Natal Reading's job reference, an identifying
+# opt-in, unticked, never shown to the AI.
+REFERENCE_TEXT = "Include the reading reference (this links the report to your account)"
+
+
+# Sends still running after their dialog closed, held until they end.
+_RUNNING: set = set()
 
 
 class BugReportDialog(QDialog):
@@ -44,15 +89,25 @@ class BugReportDialog(QDialog):
     `health` is a SessionManager.health dict, or None for a general report.
     """
 
-    def __init__(self, health=None, parent=None):
+    def __init__(self, health=None, parent=None, surface="app", reading_reference=None):
         super().__init__(parent)
         self._health = health
+        self._reading_reference = reading_reference
+        self._surface = surface   # SPEC-AIR-001 §4.6: where the report came from
         self._worker = None
         # The payload the user is actually looking at. Send and Save must use
         # this object, never a fresh build (INV-7).
         self._payload_snapshot = None
         self.setWindowTitle("Report a problem")
         self.setMinimumSize(620, 620)
+        # Typing waits for a pause before the preview is rebuilt (a rebuild
+        # reads the log and scrubs it: review W0 M6). Send stays disabled
+        # until the preview shows the current text, so what is sent is what
+        # was on screen (INV-7).
+        self._debounce = QTimer(self)
+        self._debounce.setSingleShot(True)
+        self._debounce.setInterval(350)
+        self._debounce.timeout.connect(self._refresh_preview)
         self._build_ui()
         self._refresh_preview()
 
@@ -62,11 +117,14 @@ class BugReportDialog(QDialog):
         layout.setContentsMargins(18, 18, 18, 14)
         layout.setSpacing(10)
 
+        # SPEC-AIR-001 §4.5 wording (draft, Lorris to approve).
         intro = QLabel(
-            "This sends a technical report to 360heartsinthesky.com so the "
-            "problem can be fixed.\n\n"
-            "It contains no chart data, no birth details and no names. You "
-            "can see exactly what will be sent below."
+            "This report goes to the Varuna360 developer at "
+            "360heartsinthesky.com, to fix the problem. It is never published.\n\n"
+            "Names, birth dates, times and places are removed automatically "
+            "before sending. Automatic removal can miss something, so read the "
+            "preview below: it is exactly what will be sent. Reports are deleted "
+            "from our server after 180 days."
         )
         intro.setWordWrap(True)
         # G7: own-QSS font-size (setFont is inert under qt-material's universal
@@ -85,7 +143,7 @@ class BugReportDialog(QDialog):
         )
         self.note_edit.setStyleSheet(f"QPlainTextEdit {{ font-size: {scaled_area_px('info_text')}px; }}")  # typed prose (§3.2)
         self.note_edit.setMaximumHeight(max(110, 6 * scaled_area_px('info_text')))
-        self.note_edit.textChanged.connect(self._refresh_preview)
+        self.note_edit.textChanged.connect(self._schedule_preview)
         layout.addWidget(self.note_edit)
 
         email_row = QHBoxLayout()
@@ -95,9 +153,15 @@ class BugReportDialog(QDialog):
         self.email_edit = QLineEdit()
         self.email_edit.setStyleSheet(f"font-size: {tier_px('buttons', 11)}px;")
         self.email_edit.setPlaceholderText("only if you want a reply")
-        self.email_edit.textChanged.connect(self._refresh_preview)
+        self.email_edit.textChanged.connect(self._schedule_preview)
         email_row.addWidget(self.email_edit)
         layout.addLayout(email_row)
+        if self._reading_reference:
+            from PySide6.QtWidgets import QCheckBox
+            self.reference_box = QCheckBox(REFERENCE_TEXT)
+            self.reference_box.setStyleSheet(f"font-size: {scaled_area_px('info_text')}px;")
+            self.reference_box.toggled.connect(self._refresh_preview)
+            layout.addWidget(self.reference_box)
 
         preview_label = QLabel("Exactly what will be sent:")
         # QSS font-size, NOT setFont: qt-material's universal `* {font-size:13px}`
@@ -116,6 +180,14 @@ class BugReportDialog(QDialog):
             "QPlainTextEdit { font-family: monospace; "
             f"font-size: {scaled_area_px('info_text')}px; }}")
         layout.addWidget(self.preview, stretch=1)
+
+        # What the scrubber removed (AIR-001 §3.3): the user sees that it ran,
+        # and is told plainly when the chart list could not be checked.
+        self.scrub_note = QLabel("")
+        self.scrub_note.setWordWrap(True)
+        self.scrub_note.setStyleSheet(
+            f"color: {theme['secondary_text']}; font-size: {scaled_area_px('info_text')}px;")
+        layout.addWidget(self.scrub_note)
 
         self.status = QLabel("")
         self.status.setWordWrap(True)
@@ -169,32 +241,67 @@ class BugReportDialog(QDialog):
         field, and the preview is re-rendered in the same breath, so what is
         on screen and what would be sent stay the same object.
         """
+        debounce = getattr(self, "_debounce", None)
+        if debounce is not None and debounce.isActive():
+            self._flush_preview()          # an edit still waiting to render
         if self._payload_snapshot is None:
             self._rebuild_payload()
         return self._payload_snapshot
 
     def _rebuild_payload(self):
+        extra = {}
+        box = getattr(self, "reference_box", None)
+        if box is not None and box.isChecked():
+            extra["reading_reference"] = self._reading_reference
         self._payload_snapshot = bug_report.build_payload(
             health=self._health,
             user_note=self.note_edit.toPlainText(),
             contact_email=self.email_edit.text(),
+            surface=getattr(self, "_surface", "app"),
+            **extra,
         )
         return self._payload_snapshot
+
+    def _schedule_preview(self):
+        if hasattr(self, "send_button"):
+            self.send_button.setEnabled(False)
+        self._debounce.start()
 
     def _refresh_preview(self):
         # Snapshot first, then render THAT. Rendering a fresh build here and
         # sending another one later is exactly the drift this avoids.
-        self.preview.setPlainText(
-            bug_report.payload_preview(self._rebuild_payload())
-        )
+        try:
+            payload = self._rebuild_payload()
+        except bug_report.ReportTooLarge as exc:
+            self._payload_snapshot = None
+            self.preview.setPlainText("")
+            if hasattr(self, "send_button"):
+                self.send_button.setEnabled(False)
+            self._set_status(f"This report is too long to send ({exc}). Shorten the note.",
+                             ok=False)
+            return
+        self.preview.setPlainText(bug_report.payload_preview(payload))
+        if hasattr(self, "scrub_note"):
+            self.scrub_note.setText(scrub_summary(payload))
+        if hasattr(self, "send_button") and not (getattr(self, "_worker", None) is not None
+                                                and self._worker.isRunning()):
+            self.send_button.setEnabled(True)
 
     # -- actions --------------------------------------------------------
 
+    def _flush_preview(self):
+        """Copy and Save act on the text as typed: render it first."""
+        if self._debounce.isActive():
+            self._debounce.stop()
+            self._refresh_preview()
+
     def _copy(self):
+        self._flush_preview()
         QGuiApplication.clipboard().setText(self.preview.toPlainText())
         self._set_status("Copied to the clipboard.", ok=True)
 
     def _save(self):
+        self._flush_preview()
         default = str(Path.home() / "varuna360-report.json")
         path, _ = QFileDialog.getSaveFileName(
             self, "Save report", default, "JSON (*.json);;All files (*)"
@@ -254,10 +361,54 @@ class BugReportDialog(QDialog):
         wait() here must exceed the request timeout, not undercut it: the
         previous 2 s against a 10 s timeout guaranteed the wait expired first.
         """
-        if self._worker is not None and self._worker.isRunning():
-            try:
-                self._worker.finished_with.disconnect(self._on_sent)
-            except (RuntimeError, TypeError):
-                pass
-            self._worker.wait(int((bug_report.SEND_TIMEOUT_SECONDS + 2) * 1000))
+        self._release_worker()
         super().closeEvent(event)
+
+    def done(self, result):
+        self._release_worker()            # Cancel / Esc never reach closeEvent
+        super().done(result)
+
+    def _release_worker(self):
+        """Close at once (review W2 M1): a send in flight is detached from the
+        dialog and held until it ends, never waited on by the window."""
+        w, self._worker = self._worker, None
+        if w is None or not w.isRunning():
+            return
+        try:
+            w.finished_with.disconnect(self._on_sent)
+        except (RuntimeError, TypeError):
+            pass
+        _RUNNING.add(w)
+        w.finished.connect(lambda w=w: _RUNNING.discard(w))
+        if not w.isRunning():
+            _RUNNING.discard(w)
+
+
+# ------------------------------------------------------------------ Help menu
+
+HELP_ACTION_NAME = "help_report_problem_action"
+# "report" and "report_tip" are the AI windows' words (task_window.TEXT,
+# SPEC-AIR-001 §4.6); "basic_tip" is Lite's, where no AI writes the report.
+HELP_TEXT = {
+    "report": "Report a &problem…",
+    "report_tip": "Something went wrong? The AI can look into it and write a report "
+                  "for the developer",
+    "basic_tip": "Something went wrong? Send a report to the developer",
+}
+
+
+def help_tip() -> str:
+    from core.edition_features import ai_enabled
+    return HELP_TEXT["report_tip" if ai_enabled() else "basic_tip"]
+
+
+def open_help_report(gui):
+    """Help > Report a problem (SPEC-EDN-002 D-18): Pro and up, the report
+    the AI writes (SPEC-AIR-001); Lite, this basic report (no AI file ships
+    in Lite, SPEC-EDN-002 P4)."""
+    from core.edition_features import ai_enabled, ai_features
+    if ai_enabled():
+        return ai_features().open_report(gui)
+    dlg = BugReportDialog(None, gui, surface="app")
+    dlg.show()
+    return dlg

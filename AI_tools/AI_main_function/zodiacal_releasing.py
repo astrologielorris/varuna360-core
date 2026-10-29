@@ -4,7 +4,7 @@
 
 Sits between the pure engine (`core/zodiacal_releasing.py`, no chart deps) and
 the two front ends that must agree bit-for-bit (Rule 24 / INV-5): the CLI
-`pro/AI_tools/cli/show_zodiacal_releasing.py` and the GUI DashaManager (W5b).
+`AI_tools/cli/show_zodiacal_releasing.py` and the GUI DashaManager (W5b).
 Both call `compute_zr(birth_data, ...)`, so the periods can never drift between
 them.
 

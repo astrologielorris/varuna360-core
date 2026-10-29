@@ -36,6 +36,7 @@ from core.aditya_mode import displayed_sign_name
 # spread and the plaque art are shared with the wheel and North Indian views;
 # only WHERE the plaque goes is this view's business.
 from apps.widgets.cot_index_item import CotIndexMixin
+from apps.widgets.south_indian_strength import retinue_strength
 
 from apps.widgets.south_indian_material import JoshGlyphItem
 
@@ -71,7 +72,7 @@ from apps.widgets.south_indian_geometry import (
     COT_INDEX_MIN_GAP as COT_INDEX_MIN_GAP,
     TAG_PLANET as TAG_PLANET,
     TAG_PLANET_TEXT as TAG_PLANET_TEXT,
-    TAG_COMPASS_HOUSE as TAG_COMPASS_HOUSE,
+    TAG_PLANET_LABEL as TAG_PLANET_LABEL,
     TAG_LAGNA as TAG_LAGNA,
     TAG_LAGNA_LABEL as TAG_LAGNA_LABEL,
     TAG_TRANSIT as TAG_TRANSIT,
@@ -97,21 +98,18 @@ from apps.widgets.south_indian_appearance import AppearanceAssets
 from apps.widgets.south_indian_paint_style import LayoutMetrics, ClickSignals
 from apps.widgets.south_indian_cells import draw_chrome, draw_house_numbers, draw_cusps
 from apps.widgets.south_indian_planets import draw_planets, draw_lagna_stripe
+from apps.widgets.planet_strength_glow import glow_scene
+from apps.widgets.paint_on_show import cancel_paint, defer_paint
+from apps.widgets.planet_decoration_refresh import register_planet_pass
+from apps.widgets.planet_shadow import create_planet_shadow
+from apps.widgets.dignity_view_pass import as_centre_mini, view_pass
+from apps.widgets.exchange_chain_centre import register_chain_pass, vector_si_pass as chain_pass
+from core import planet_aura as pa
 
-def _compass_frame_provider():
-    compass_frame = None
-    pass  # Pro import stripped for Lite distribution
-    if compass_frame is None:  # The Core source builder strips the import above.
-        raise ImportError('Compass frame is not available in this edition.')
-    return compass_frame
 
-def _require_compass_frame():
-    frame = _compass_frame_provider()
-    for name in ('compass_house', 'compass_position', 'location_cell',
-                 'planet_right_ascension', 'planet_tropical_longitude',
-                 'true_obliquity', 'yamakoti_armc'):
-        if not callable(getattr(frame, name, None)):
-            raise ImportError('South Indian Compass frame is incomplete: '+name)
+def _is_planet_text(item):
+    return item.data(Qt.ItemDataRole.UserRole) == TAG_PLANET_TEXT
+
 
 from apps.widgets.south_indian_interaction import InteractionController, CameraOps, PointerIntent
 
@@ -149,7 +147,15 @@ def _layer_services(view):
 
 def _retinue_eligibility(view):
     return RetinueEligibility(view.center_box_enabled, view.retinue.drawable,
-                             bool(view.compass_mode and view.projection._chart_jd() is not None))
+                             view.projection.active_frame_name())
+
+def _retinue_cusps(view):
+    """Cusps for the outer square's ASC tag; none under a fixed Ascendant.
+
+    A fixed Ascendant sign has no degree: the grid drops the real ASC label
+    (draw_lagna), so the outer square drops the real ASC tag too."""
+    return view._cusps if view.ascendant_override is None else None
+
 
 def _retinue_input(view):
     eligibility = _retinue_eligibility(view)
@@ -162,53 +168,72 @@ def _retinue_input(view):
                 anchors['Ascendant'] = (point.x(),point.y())
             except (KeyError, TypeError, ValueError, AttributeError):
                 pass  # The Qt-free adapter records the malformed cusp omission below.
-        records, omissions = retinue_records(view._planets, view._cusps, view._varga_code, anchors, display_names(view.PLANET_NAMES), view.show_outer_planets)
+        records, omissions = retinue_records(view._planets, _retinue_cusps(view), view._varga_code, anchors, display_names(view.PLANET_NAMES), view.show_outer_planets)
     labels = tuple(displayed_sign_name(i,view._aditya_mode,view._use_western_names,view.sign_language) for i in range(12))
     return RetinueInput(eligibility, records, omissions, labels,
         view.projection._effective_ascendant_sign_index(), view.appearance.style())
 
 from functools import partial
 from apps.widgets.south_indian_center import CenterContentController, CenterRequest
+from apps.widgets.south_indian_center_pass import center_draw as center_drawing_hook  # SPEC-VAC-001
 
 def _new_center_mini():
-    return SouthIndianVectorView(center_box_enabled=False)
+    return as_centre_mini(SouthIndianVectorView(center_box_enabled=False))  # INV-4: no dignity overlay
 
 from apps.widgets.ascendant_guide import AscendantGuide
 
 def _center_request(view):
     return CenterRequest(view.guide.center_chart(view._chart), view._aditya_mode, view._use_western_names,
-        view.sign_language, view.show_outer_planets, view.show_planet_names,
+        view.sign_language, view.show_outer_planets, view.planet_label,
         view.vector_finish, view.wood_sign_display,
         dict(view.appearance._variation_settings), dict(view.appearance._planet_variation_settings))
 
 
 def _draw_vector_chart(view):
-    view.projection.configure(view._chart, view._cusps, view._planets, view._varga_code, view._aditya_mode, view._use_western_names, view.sign_language, view.ascendant_override, view.compass_mode)
-    snapshot = view.projection.snapshot(display_names(view.PLANET_NAMES), view.show_outer_planets, view.show_planet_names)
+    view.projection.configure(view._chart, view._cusps, view._planets, view._varga_code, view._aditya_mode, view._use_western_names, view.sign_language, view.ascendant_override, view.placement_frame)
+    snapshot = view.projection.snapshot(display_names(view.PLANET_NAMES), view.show_outer_planets, view.planet_label)
     style = view.appearance.style()
     layout = LayoutMetrics({}, {})
     signals = ClickSignals(view.planet_click_signal, view.sign_click_signal)
     faces = view._cot_faces() if view._cot_enabled() else {}
     view.retinue.begin_rebuild()
     view.scene.clear()
-    draw_chrome(view.scene, snapshot, style, layout, signals, view.center_box_enabled, partial(view.center._draw_medallion, view.scene, style, _center_request(view)), faces, view.devicePixelRatioF())
+    draw_chrome(view.scene, snapshot, style, layout, signals, view.center_box_enabled, center_drawing_hook(view, style, _center_request(view)), faces, view.devicePixelRatioF())
     if snapshot.has_chart:
-        if not snapshot.compass_mode:
+        if not snapshot.frame_active:
             draw_house_numbers(view.scene, snapshot, style)
             draw_cusps(view.scene, snapshot, style)
         draw_planets(view.scene, snapshot, style, layout, signals)
         add_unavailable_notice(view.scene, view._planets)
-        if not snapshot.compass_mode:
+        if not snapshot.frame_active:
             draw_lagna_stripe(view.scene, snapshot, style)
     view.retinue.drawable = bool(view._chart)
     view._refresh_retinue()
+    if snapshot.has_chart:            # td-e6jsp / td-647kl / td-m6xyo: on the finished ground
+        planet_pass(view, style)
+    chain_pass(view)                  # td-m79zy: the THREAD key's exchange chains
     birth_sign = view._cusps[1].sign() - 1 if view._cusps else None
     view.guide.update(snapshot, style, birth_sign)
 
 
+def planet_pass(view, style=None):
+    """The planet post-passes on the finished scene: the Ember Aura, then the
+    dignity overlay (also the light redraw's, planet_decoration_refresh.py)."""
+    ref = partial(_aura_reference, style or view.appearance.style())
+    glow_scene(view.scene, view._chart, lambda i: isinstance(i, ClickablePlanetItem),
+               _is_planet_text, ref)
+    view_pass(view, ClickablePlanetItem, ref)   # none on a centre-box mini (INV-4)
+
+
+def _aura_reference(style):
+    """The ONE aura reference half size of this view: its nominal planet sizes."""
+    sizes = style.display.get('planet_sizes', {})
+    return pa.reference_half_size(lambda p: sizes.get(p, style.planet_sizes.get(p, 128)))
+
+
 def _draw_vector_empty(view):
-    view.projection.configure(view._chart, view._cusps, view._planets, view._varga_code, view._aditya_mode, view._use_western_names, view.sign_language, view.ascendant_override, view.compass_mode)
-    snapshot = view.projection.snapshot(display_names(view.PLANET_NAMES), view.show_outer_planets, view.show_planet_names)
+    view.projection.configure(view._chart, view._cusps, view._planets, view._varga_code, view._aditya_mode, view._use_western_names, view.sign_language, view.ascendant_override, view.placement_frame)
+    snapshot = view.projection.snapshot(display_names(view.PLANET_NAMES), view.show_outer_planets, view.planet_label)
     style = view.appearance.style()
     layout = LayoutMetrics({}, {})
     signals = ClickSignals(view.planet_click_signal, view.sign_click_signal)
@@ -218,7 +243,7 @@ def _draw_vector_empty(view):
     view.retinue.begin_rebuild()
     view.scene.setSceneRect(view.natal_bounds)
     view.scene.clear()
-    draw_chrome(view.scene, snapshot, style, layout, signals, view.center_box_enabled, partial(view.center._draw_medallion, view.scene, style, _center_request(view)), faces, view.devicePixelRatioF())
+    draw_chrome(view.scene, snapshot, style, layout, signals, view.center_box_enabled, center_drawing_hook(view, style, _center_request(view)), faces, view.devicePixelRatioF())
     birth_sign = view._cusps[1].sign() - 1 if view._cusps else None
     view.guide.update(snapshot, style, birth_sign)
 
@@ -242,7 +267,7 @@ class SouthIndianVectorView(CotIndexMixin, QGraphicsView):
     def __init__(self, parent=None, center_box_enabled=True):
         super().__init__(parent)
         self.center_box_enabled = center_box_enabled
-        self.projection = RenderProjection(_compass_frame_provider)
+        self.projection = RenderProjection()
         self.appearance = AppearanceAssets(live=center_box_enabled)
         self.interaction = InteractionController()
         self.center = CenterContentController(_new_center_mini)
@@ -261,14 +286,12 @@ class SouthIndianVectorView(CotIndexMixin, QGraphicsView):
         self.guide = AscendantGuide(self.viewport(), self.mapFromScene, self.center, self.draw_full_chart)
         self._has_chart = False
         self.ascendant_override = None
-        self.compass_mode = False
-        self.projection._compass_armc = None
-        self.projection._compass_jd = None
-        self.projection._compass_eps = None
-        self.compass_notice = None
-        self.projection._location_cell = None
+        # An alternate placement frame (core/south_indian_render_data.py);
+        # None = the sign frame. Same lifetime as ascendant_override.
+        self.placement_frame = None
+        self.frame_notice = None
         self.show_outer_planets = True
-        self.show_planet_names = False
+        self.planet_label = "degrees"   # core.planet_label mode (F11)
         self._planets = None
         self.planet_click_signal = PlanetClickSignal()
         self.sign_click_signal = SignClickSignal()
@@ -367,7 +390,7 @@ class SouthIndianVectorView(CotIndexMixin, QGraphicsView):
         if self.retinue_layer.dirty:
             self._refresh_retinue()
         if not self.interaction._fit_zoom_applied:
-            QTimer.singleShot(0, self, self._apply_fit_zoom)
+            QTimer.singleShot(0, self, lambda: self._apply_fit_zoom())
         else:
             self.interaction.reapply(_camera_ops(self))
 
@@ -513,7 +536,7 @@ class SouthIndianVectorView(CotIndexMixin, QGraphicsView):
         center = self.viewportTransform().inverted()[0].map(QPointF(self.viewport().width() / 2, self.viewport().height() / 2))
         self.retinue.updating = True
         try:
-            self.retinue.materialize(_retinue_input(self))
+            self.retinue.materialize(_retinue_input(self), strength=retinue_strength(self))
             self.setViewportMargins(0, self.retinue.notice_margin(_retinue_eligibility(self)), 0, 0)
             self.centerOn(center)
         finally:
@@ -572,21 +595,13 @@ class SouthIndianVectorView(CotIndexMixin, QGraphicsView):
             self._planets = source.planets()
         except Exception:
             pass
-        # SPEC-SIC-004: invalidate the Yamakoti MC on every chart update (a new
-        # jd needs a new Midheaven, PM-4) — recomputed lazily by _placement only
-        # while on. NEVER reset compass_mode here (PM-3): update_from_chart is
-        # also the varga-switch / view-sync / ascendant-broadcast redraw path,
-        # and the flag has the same lifetime as ascendant_override. Recompute
-        # the notice each time so it is set AND cleared (PM-12).
-        self.projection._compass_armc = self.projection._compass_eps = None
-        self.projection._location_cell = None      # SPEC-SIC-005: recomputed lazily (INV-H7)
-        self.compass_notice = None
-        if self.compass_mode:
-            if self.projection._chart_jd() is None:
-                self.compass_notice = "chart has no time, sign frame shown"
-            elif varga_code not in (None, 1):
-                self.compass_notice = (
-                    "Compass shows the D1 frame; varga ignored while on")
+        # A placement frame's per-chart caches are dropped on every chart
+        # update (a new chart needs new values). NEVER drop the frame itself
+        # here: update_from_chart is also the varga-switch / view-sync /
+        # ascendant-broadcast redraw path, and the frame has the same lifetime
+        # as ascendant_override. The notice is recomputed each time so it is
+        # set AND cleared.
+        self.frame_notice = self.projection.reset_frame(varga_code)
 
         # INV-11: a new natal chart can change the mini's zodiac mode and
         # labels, and (dasha-locked) the transit chart itself at the same jd.
@@ -614,40 +629,6 @@ class SouthIndianVectorView(CotIndexMixin, QGraphicsView):
         self.ascendant_override = sign_index
         self.draw_full_chart()
 
-    def set_compass_mode(self, on):
-        """Toggle the SPEC-SIC-004 South Indian Compass (Earth-fixed dial).
-
-        No-op when unchanged. Turning ON refuses (returns False, flag unchanged)
-        when the chart has no jd (T-13) — the caller surfaces "chart has no
-        time". INV-9: the Pro compass-frame import is reached ONLY here (a
-        compass-on path) and in _compass_position; on the Core build (Pro
-        modules absent) this raises a clear message rather than a bare failure
-        (T-12). Returns
-        the resulting compass_mode (bool)."""
-        on = bool(on)
-        if on == self.compass_mode:
-            return self.compass_mode
-        if on:
-            if self.projection._chart_jd() is None:
-                # Refused: flag stays off. The caller (Pro handler / remote)
-                # surfaces the "chart has no time" reason from the False return;
-                # the view does not set compass_notice while off (W1 review N1).
-                return False
-            # INV-9 / T-12: fail fast and clearly if the Pro frame is absent,
-            # BEFORE mutating any state or half-drawing the scene. Probe BOTH
-            # names the compass path needs, so a partial module cannot pass the
-            # guard and then raise mid-draw where it would be swallowed (CW#3).
-            try:
-                _require_compass_frame()
-            except ImportError as exc:
-                raise ImportError(
-                    "Compass frame is not available in this edition.") from exc
-        self.compass_notice = None
-        self.compass_mode = on
-        self.projection._compass_armc = self.projection._compass_eps = None  # recompute lazily
-        self.draw_full_chart()
-        return self.compass_mode
-
     def clear_icon_cache(self):
         return self.appearance.clear_icon_cache()
 
@@ -669,9 +650,12 @@ class SouthIndianVectorView(CotIndexMixin, QGraphicsView):
     # ------------------------------------------------------------------
 
     def draw_full_chart(self):
+        if defer_paint(self, "draw_full_chart"):     # hidden: drawn at its next show
+            return None
         return _draw_vector_chart(self)
 
     def draw_empty_grid(self):
+        cancel_paint(self)
         return _draw_vector_empty(self)
 
     # ------------------------------------------------------------------
@@ -695,14 +679,6 @@ class SouthIndianVectorView(CotIndexMixin, QGraphicsView):
     def load_planet_image(self, planet_name, size=48):
         return self.appearance.load_planet_image(planet_name, size)
 
-    @property
-    def location_cell(self):
-        return self.projection.location_cell
-
-    @property
-    def location_house(self):
-        return self.projection.location_house
-
     # ------------------------------------------------------------------
     # Transit placeholder + export + remaining INV-5 protocol (Wave 2b)
     # ------------------------------------------------------------------
@@ -715,13 +691,11 @@ class SouthIndianVectorView(CotIndexMixin, QGraphicsView):
         self._planets = None
         self._cusps = None
         self._has_chart = False
-        # SPEC-SIC-004: a stale compass notice/MC must not outlive the chart it
-        # described (W1 review CW#1/#2) — invalidate both. compass_mode itself
-        # is kept (same lifetime as the F4 override): the next chart re-enters
-        # the frame the user last chose.
-        self.compass_notice = None
-        self.projection._compass_armc = self.projection._compass_eps = None
-        self.projection._location_cell = None      # SPEC-SIC-005: same lifetime (INV-H7)
+        # A stale frame notice / cache must not outlive the chart it described.
+        # The frame itself is kept (same lifetime as the F4 override): the next
+        # chart re-enters the frame the user last chose.
+        self.projection.reset_frame(None)
+        self.frame_notice = None
         # The memoised spread holds the Chart strongly. Dropping `_chart` alone
         # would leave the whole object graph alive until the NEXT chart loads —
         # which, for a view kept around between charts, is exactly the window a
@@ -855,6 +829,10 @@ class SouthIndianHostWidget(QWidget):
 
     _STYLE_INDEX = {"classic": 0, "vector": 1}
 
+    # The vector child's class; an edition may extend the view by subclassing
+    # the host (core/edition_hooks.py SOUTH_INDIAN_HOST_CLASS).
+    vector_view_class = SouthIndianVectorView
+
     def __init__(self, parent=None, center_box_enabled=True, style=None):
         super().__init__(parent)
         self.center_box_enabled = center_box_enabled
@@ -862,8 +840,8 @@ class SouthIndianHostWidget(QWidget):
         self._stack = QStackedLayout(self)
         self.classic_view = SouthIndianView(
             center_box_enabled=center_box_enabled)
-        self.vector_view = SouthIndianVectorView(
-            center_box_enabled=center_box_enabled)
+        self.vector_view = _new_vector_view(
+            self.vector_view_class, center_box_enabled=center_box_enabled)
         self._stack.addWidget(self.classic_view)   # index 0
         self._stack.addWidget(self.vector_view)    # index 1
 
@@ -1016,14 +994,6 @@ class SouthIndianHostWidget(QWidget):
     def set_ascendant_override(self, sign_index):
         self._fan("set_ascendant_override", sign_index)
 
-    def set_compass_mode(self, on):
-        """SPEC-SIC-004: fan the compass flag to BOTH children (INV-12) so it
-        survives a style switch — the classic child accepts and ignores it, the
-        vector child does the real work. Returns the VECTOR child's resulting
-        state (bool; False if it refused for a jd-less chart)."""
-        self.classic_view.set_compass_mode(on)
-        return self.vector_view.set_compass_mode(on)
-
     def set_time_adjust_mode(self, enabled):
         self._fan("set_time_adjust_mode", enabled)
 
@@ -1072,7 +1042,7 @@ class SouthIndianHostWidget(QWidget):
         return property(getter, setter)
 
     show_outer_planets = _write_both("show_outer_planets")
-    show_planet_names = _write_both("show_planet_names")
+    planet_label = _write_both("planet_label")
     sign_language = _write_both("sign_language")
     zoom_factor = _write_both("zoom_factor")
     display_settings = _write_both("display_settings")
@@ -1097,39 +1067,6 @@ class SouthIndianHostWidget(QWidget):
     @property
     def _has_chart(self):
         return getattr(self.active_view, "_has_chart", False)
-
-    @property
-    def compass_mode(self):
-        """The compass flag — read from the VECTOR child specifically (spec
-        §3.3), NOT the active child: the classic child's accept-and-ignore flag
-        stays False, so reading via active_view would report OFF while the
-        vector child holds the mode across a style switch (PM-8)."""
-        return self.vector_view.compass_mode
-
-    @property
-    def compass_shown(self):
-        """The host's half of 'shown' (spec §3.3): the flag AND the vector child
-        is the active style. The Pro window ANDs its chart_stack visibility and
-        the current page onto this."""
-        return (self.vector_view.compass_mode
-                and self.active_view is self.vector_view)
-
-    @property
-    def compass_notice(self):
-        """The vector child's varga / no-jd status text, or None."""
-        return self.vector_view.compass_notice
-
-    @property
-    def location_cell(self):
-        """SPEC-SIC-005: the chart location's compass cell — read from the
-        VECTOR child specifically (like compass_mode), None while off."""
-        return self.vector_view.location_cell
-
-    @property
-    def location_house(self):
-        """SPEC-SIC-005: 'the house we are in' (the location cell's house),
-        from the vector child; None while off."""
-        return self.vector_view.location_house
 
     def get_background(self):
         return self.active_view.get_background()
@@ -1176,11 +1113,52 @@ class SouthIndianHostWidget(QWidget):
         """Forward to the ACTIVE child (keyboard handlers live there)."""
         self.active_view.setFocus(*args)
 
+def set_placement_frame(view, frame):
+    """Place a vector view's planets through an alternate frame object (see
+    core/south_indian_render_data.py), or the sign frame for None.
+
+    No-op when unchanged. Refuses (returns False, nothing changed) when the
+    frame does not accept the view's current chart. Returns whether a frame
+    is set afterwards."""
+    if frame is view.placement_frame:
+        return frame is not None
+    if frame is not None and not frame.accepts(view.projection):
+        return False
+    view.frame_notice = None
+    view.placement_frame = frame
+    if frame is not None:
+        frame.invalidate()
+    view.draw_full_chart()
+    return frame is not None
+
+
+def _new_vector_view(view_class, **kwargs):
+    """Build the vector child. The Core class is called by name so the static
+    settings census (SPEC-SET-003 T-10) still sees the path; an edition subclass
+    is built with the same arguments."""
+    if view_class is SouthIndianVectorView:
+        return SouthIndianVectorView(**kwargs)
+    return view_class(**kwargs)
+
+
+def _new_host(host_class, **kwargs):
+    """Build the host; same rule as _new_vector_view."""
+    if host_class is SouthIndianHostWidget:
+        return SouthIndianHostWidget(**kwargs)
+    return host_class(**kwargs)
+
+
+def _host_class():
+    """The edition's host class (core/edition_hooks.py), else the Core host."""
+    from core.edition_hooks import SOUTH_INDIAN_HOST_CLASS, resolve
+    return resolve(SOUTH_INDIAN_HOST_CLASS, SouthIndianHostWidget)
+
+
 def create_south_indian_view(parent=None, center_box_enabled=True, style=None,
                              *, sector_dialog_handler=None):
     """Factory (§4.1, D-9): the host widget, or the classic view DIRECTLY
-    when center_box_enabled=False (body-aspect + recursive self-render stay
-    classic-only).
+    when center_box_enabled=False (the recursive self-render stays classic;
+    body-aspect builds its own host, SPEC-BODY-002 Rev 5).
 
     style: optional construction-time theme override ("classic"/"vector",
     validated against SOUTH_INDIAN_STYLES, fallback classic). Activates the
@@ -1188,12 +1166,17 @@ def create_south_indian_view(parent=None, center_box_enabled=True, style=None,
     this so a render never writes the user's settings file."""
     if not center_box_enabled:
         return SouthIndianView(parent=parent, center_box_enabled=False)
-    host = SouthIndianHostWidget(parent=parent,
-                                 center_box_enabled=center_box_enabled,
-                                 style=style)
+    host = _new_host(_host_class(), parent=parent,
+                     center_box_enabled=center_box_enabled, style=style)
     if sector_dialog_handler is None:
         from functools import partial
         from apps.widgets.sector_dialog_presenter import show_chart_sector
         sector_dialog_handler = partial(show_chart_sector, host.vector_view)
     host.retinue_click_signal.clicked.connect(sector_dialog_handler)
     return host
+
+
+# The PLANET / DIGNITY keys' light redraw (planet_decoration_refresh.py)
+register_planet_pass(SouthIndianVectorView, planet_pass, lambda view, planet: None
+                     if view.appearance.style().wood else create_planet_shadow(planet_name=planet))
+register_chain_pass(SouthIndianVectorView, chain_pass)   # the THREAD key's light redraw

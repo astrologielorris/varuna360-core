@@ -1,0 +1,100 @@
+{
+ "_comment": [
+  "Term id aliases (SPEC-LOC-002 §3.2). 'generated' is written by tools/i18n_extract.py from the engine tables; 'manual' is data (spelling variants used by other tables, e.g. core/kuta_data.py)."
+ ],
+ "generated": {
+  "aditya": {
+   "Amzu": "8",
+   "Aryama": "1",
+   "Bhaga": "9",
+   "Dhata": "0",
+   "Indra": "4",
+   "Mitra": "2",
+   "Parjanya": "11",
+   "Pusha": "10",
+   "Tvasta": "6",
+   "Varuna": "3",
+   "Vishnu": "7",
+   "Vivasvan": "5"
+  },
+  "month": {
+   "April": "4",
+   "August": "8",
+   "December": "12",
+   "February": "2",
+   "January": "1",
+   "July": "7",
+   "June": "6",
+   "March": "3",
+   "May": "5",
+   "November": "11",
+   "October": "10",
+   "September": "9"
+  },
+  "nakshatra": {
+   "Anuradha": "16",
+   "Ardra": "5",
+   "Ashlesha": "8",
+   "Ashvini": "0",
+   "Bharani": "1",
+   "Chitra": "13",
+   "Danishtha": "22",
+   "Hasta": "12",
+   "Jyeshtha": "17",
+   "Krittika": "2",
+   "Magha": "9",
+   "Mrigashira": "4",
+   "Mula": "18",
+   "P. Ashadha": "19",
+   "P. Bhadrapada": "24",
+   "P. Phalguni": "10",
+   "Punarvasu": "6",
+   "Pushya": "7",
+   "Revati": "26",
+   "Rohini": "3",
+   "Shatabhisha": "23",
+   "Shravana": "21",
+   "Svati": "14",
+   "U. Ashadha": "20",
+   "U. Bhadrapada": "25",
+   "U. Phalguni": "11",
+   "Vishakha": "15"
+  },
+  "sign": {
+   "Aquarius": "10",
+   "Aries": "0",
+   "Cancer": "3",
+   "Capricorn": "9",
+   "Gemini": "2",
+   "Leo": "4",
+   "Libra": "6",
+   "Pisces": "11",
+   "Sagittarius": "8",
+   "Scorpio": "7",
+   "Taurus": "1",
+   "Virgo": "5"
+  },
+  "weekday": {
+   "Friday": "4",
+   "Monday": "0",
+   "Saturday": "5",
+   "Sunday": "6",
+   "Thursday": "3",
+   "Tuesday": "1",
+   "Wednesday": "2"
+  }
+ },
+ "manual": {
+  "nakshatra": {
+   "Ashwini": "0",
+   "Dhanishta": "22",
+   "Purva Ashadha": "19",
+   "Purva Bhadrapada": "24",
+   "Purva Phalguni": "10",
+   "Swati": "14",
+   "Uttara Ashadha": "20",
+   "Uttara Bhadrapada": "25",
+   "Uttara Phalguni": "11"
+  }
+ }
+}

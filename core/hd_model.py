@@ -21,6 +21,7 @@ Design decisions baked in (pre-mortem 2026-08-29):
 
 Nothing here imports Qt.
 """
+
 from __future__ import annotations
 
 import json
@@ -43,45 +44,139 @@ SCHEMA_VERSION = "hd-model-1"
 VALID_FRAMES = ("standard", "aditya", "sidereal")
 DEFAULT_FRAME = "standard"
 
-_STANDARD_GATE_ONE = 223.25          # Josh's ecliptic anchor (13:15 tropical Scorpio)
-_ADITYA_GATE_ONE = 193.25            # Standard - 30 (Aditya shift)
+#: The Human Design experience level setting that gates the frame.
+HD_EXPERIENCE_KEY = "ui.hd_experience_level"
+#: zodiac mode -> HD frame, used only at the Advanced HD level.
+MODE_TO_FRAME = {
+    "aditya": "aditya",
+    "tropical_classic": "standard",
+    "sidereal": "sidereal",
+}
+FRAME_TO_MODE = {v: k for k, v in MODE_TO_FRAME.items()}
+
+
+def hd_frame_for(mode, hd_experience_level) -> str:
+    """The gate-1 frame the app's Human Design page uses: THE one rule, shared
+    by ``HDManager.frame()`` (GUI, remote) and the ``show_human_design`` CLI.
+
+    Beginner (the default, and any value other than ``"advanced"``) pins the
+    page to Standard whatever the zodiac mode; Advanced follows the zodiac
+    mode (aditya -> aditya, tropical_classic -> standard, sidereal ->
+    sidereal, with the chart ayanamsa). An absent or unknown mode gives
+    Standard. Pure and Qt-free."""
+    if hd_experience_level != "advanced":
+        return DEFAULT_FRAME
+    return MODE_TO_FRAME.get(mode, DEFAULT_FRAME)
+
+
+def design_chart_mode_for(mode, hd_experience_level) -> str:
+    """The zodiac mode the -88 Design astrology chart is built and shown in:
+    the same gate as ``hd_frame_for`` mapped back to a mode. Beginner gives
+    tropical_classic (Standard); Advanced the app's zodiac mode. Shared by
+    ``HDManager.design_chart_mode`` and the capabilities (``view.human_design``)."""
+    return FRAME_TO_MODE.get(
+        hd_frame_for(mode, hd_experience_level), "tropical_classic"
+    )
+
+
+def chart_display_for(mode, use_western_names, design_mode=None):
+    """``(mode, use_western_names)`` the chart drawings label the active chart
+    with. ``design_mode``: the -88 Design chart's mode when Human Design mode
+    is on (``design_chart_mode_for`` / ``HDManager.design_chart_mode``), else
+    None. In Human Design mode the drawings show the Design chart in its own
+    mode and that mode's own names (Western names unless aditya), whatever the
+    app's label set; otherwise the app's mode and label set. THE one rule,
+    shared by ``ChartGUI._apply_current_varga`` (the drawings), the remote's
+    ``read_chart`` and ``CalculationInput.chart_display`` (get_chart, CLIs)."""
+    if design_mode is not None:
+        return design_mode, design_mode != "aditya"
+    return mode, bool(use_western_names)
+
+
+_STANDARD_GATE_ONE = 223.25  # Josh's ecliptic anchor (13:15 tropical Scorpio)
+_ADITYA_GATE_ONE = 193.25  # Standard - 30 (Aditya shift)
 
 #: hd13 engine key -> contract planet key, in HD row order. Chiron is appended
 #: separately as the 14th body (activates no gate).
-_PLANET_ORDER = (
-    ("Sun", "sun"), ("Earth", "earth"), ("Moon", "moon"),
-    ("Rahu", "north_node"), ("Ketu", "south_node"),
-    ("Mercury", "mercury"), ("Venus", "venus"), ("Mars", "mars"),
-    ("Jupiter", "jupiter"), ("Saturn", "saturn"),
-    ("Uranus", "uranus"), ("Neptune", "neptune"), ("Pluto", "pluto"),
+PLANET_ORDER = (
+    ("Sun", "sun"),
+    ("Earth", "earth"),
+    ("Moon", "moon"),
+    ("Rahu", "north_node"),
+    ("Ketu", "south_node"),
+    ("Mercury", "mercury"),
+    ("Venus", "venus"),
+    ("Mars", "mars"),
+    ("Jupiter", "jupiter"),
+    ("Saturn", "saturn"),
+    ("Uranus", "uranus"),
+    ("Neptune", "neptune"),
+    ("Pluto", "pluto"),
 )
+_PLANET_ORDER = PLANET_ORDER  # pre-Find-Chart private name, kept
 
 #: geometry <-> engine centre key (only the G centre differs: engine "ji").
 _ENGINE_TO_GEOM = {"ji": "g"}
 _GEOM_TO_ENGINE = {"g": "ji"}
 #: canonical centre order for the exposed dict (geometry vocabulary).
-CENTER_ORDER = ("head", "ajna", "throat", "g", "will",
-                "spleen", "solar", "sacral", "root")
+CENTER_ORDER = (
+    "head",
+    "ajna",
+    "throat",
+    "g",
+    "will",
+    "spleen",
+    "solar",
+    "sacral",
+    "root",
+)
 
 #: the four motor centres (geometry keys). Solar = Solar Plexus.
 MOTORS = frozenset({"sacral", "solar", "will", "root"})
 
-_STRATEGY = {
+STRATEGY = {
     "Manifestor": "Inform before acting",
     "Generator": "Wait to respond",
     "Manifesting Generator": "Respond, then inform",
     "Projector": "Wait for the invitation",
     "Reflector": "Wait a lunar cycle",
 }
-_DEFINITION_NAME = {0: "No Definition", 1: "Single", 2: "Split",
-                    3: "Triple", 4: "Quadruple"}
+_STRATEGY = STRATEGY  # pre-Find-Chart private name, kept
+#: The five types, in STRATEGY order.
+HD_TYPES = tuple(STRATEGY)
+DEFINITION_NAME = {
+    0: "No Definition",
+    1: "Single",
+    2: "Split",
+    3: "Triple",
+    4: "Quadruple",
+}
+_DEFINITION_NAME = DEFINITION_NAME  # pre-Find-Chart private name, kept
+DEFINITIONS = tuple(DEFINITION_NAME.values())
+#: Every value ``_authority`` returns, in its first-match order.
+AUTHORITIES = (
+    "Emotional",
+    "Sacral",
+    "Splenic",
+    "Ego Manifested",
+    "Ego Projected",
+    "Self-Projected",
+    "Mental",
+    "Lunar",
+)
 
 # Profile line archetype names (HDMODEL contract v1.1, additive). Keyed by the
 # HD line number 1-6 the Sun falls on. profile_name pairs the Personality Sun
 # line name with the Design Sun line name, in the same order as ``profile``
 # ("4/2" -> "Opportunist · Hermit"), so a view can render "4/2 (Opportunist · Hermit)".
-_PROFILE_LINE_NAME = {1: "Investigator", 2: "Hermit", 3: "Martyr",
-                      4: "Opportunist", 5: "Heretic", 6: "Role Model"}
+_PROFILE_LINE_NAME = {
+    1: "Investigator",
+    2: "Hermit",
+    3: "Martyr",
+    4: "Opportunist",
+    5: "Heretic",
+    6: "Role Model",
+}
 
 # --- Incarnation cross naming (HDMODEL contract v1.2, additive) -------------
 # The cross is fully determined by (Personality Sun gate, geometry angle); the
@@ -89,16 +184,31 @@ _PROFILE_LINE_NAME = {1: "Investigator", 2: "Hermit", 3: "Martyr",
 # core/data/hd_crosses.json (see its own _source/_normalized provenance). Full
 # label is "<Angle> Cross of <theme>", short is "<CODE> of <theme>".
 _ANGLE_OF_PROFILE = {
-    (1, 3): "right", (1, 4): "right", (2, 4): "right", (2, 5): "right",
-    (3, 5): "right", (3, 6): "right", (4, 6): "right",
+    (1, 3): "right",
+    (1, 4): "right",
+    (2, 4): "right",
+    (2, 5): "right",
+    (3, 5): "right",
+    (3, 6): "right",
+    (4, 6): "right",
     (4, 1): "juxtaposition",
-    (5, 1): "left", (5, 2): "left", (6, 2): "left", (6, 3): "left",
+    (5, 1): "left",
+    (5, 2): "left",
+    (6, 2): "left",
+    (6, 3): "left",
 }
-_ANGLE_LABEL = {"right": ("Right Angle Cross of", "RAX of"),
-                "left": ("Left Angle Cross of", "LAX of"),
-                "juxtaposition": ("Juxtaposition Cross of", "JXT of")}
-_ANGLE_TABLE_KEY = {"right": "right_angle", "left": "left_angle",
-                    "juxtaposition": "juxtaposition"}
+#: The twelve profiles, as ``build_hd_model`` writes them ("4/6").
+PROFILES = tuple(f"{p}/{d}" for p, d in _ANGLE_OF_PROFILE)
+_ANGLE_LABEL = {
+    "right": ("Right Angle Cross of", "RAX of"),
+    "left": ("Left Angle Cross of", "LAX of"),
+    "juxtaposition": ("Juxtaposition Cross of", "JXT of"),
+}
+_ANGLE_TABLE_KEY = {
+    "right": "right_angle",
+    "left": "left_angle",
+    "juxtaposition": "juxtaposition",
+}
 
 _CROSSES_CACHE = None
 
@@ -134,11 +244,47 @@ def _incarnation_cross(p_line, d_line, psun, pearth, dsun, dearth):
         table = _load_crosses().get(_ANGLE_TABLE_KEY[angle], {})
         theme = table.get(str(psun))
     if angle is None or not theme:
-        return {"label": fallback, "short": fallback, "angle": angle,
-                "named": False, "gates": gates}
+        return {
+            "label": fallback,
+            "short": fallback,
+            "angle": angle,
+            "named": False,
+            "gates": gates,
+        }
+    label, short = _cross_labels(angle, theme)
+    return {
+        "label": label,
+        "short": short,
+        "angle": angle,
+        "named": True,
+        "gates": gates,
+    }
+
+
+def _cross_labels(angle, theme):
+    """``(label, short)`` of a named cross: "Right Angle Cross of the Sphinx",
+    "RAX of the Sphinx"."""
     full_pre, short_pre = _ANGLE_LABEL[angle]
-    return {"label": f"{full_pre} {theme}", "short": f"{short_pre} {theme}",
-            "angle": angle, "named": True, "gates": gates}
+    return f"{full_pre} {theme}", f"{short_pre} {theme}"
+
+
+def incarnation_cross_short_labels() -> dict:
+    """Every named ``incarnation_cross["label"]`` -> its ``short``, right,
+    left then juxtaposition, each in Personality Sun gate order, once each (a
+    right angle cross spans four gates, a left angle cross two). Empty when
+    the table is missing; ``build_hd_model`` then falls back to gate strings."""
+    table = _load_crosses()
+    return dict(
+        _cross_labels(angle, theme)
+        for angle in _ANGLE_LABEL
+        for theme in table.get(_ANGLE_TABLE_KEY[angle], {}).values()
+    )
+
+
+def incarnation_crosses() -> tuple:
+    """Every named ``incarnation_cross["label"]``, in
+    ``incarnation_cross_short_labels`` order."""
+    return tuple(incarnation_cross_short_labels())
 
 
 def _geom(center: str) -> str:
@@ -150,6 +296,7 @@ class HDModelError(ValueError):
 
 
 # --------------------------------------------------------------------------- frames
+
 
 def _apply_frame(context: EphContext, frame: str) -> EphContext:
     """Return ``context`` adjusted for ``frame``. Only the gate mapping changes;
@@ -173,15 +320,18 @@ def _apply_frame(context: EphContext, frame: str) -> EphContext:
 
 # --------------------------------------------------------------------------- helpers
 
-def hd_context_from_birth(jd, lat, lon, utcoffset=0.0, alt=0.0,
-                          name="", ayanamsa=98) -> EphContext:
+
+def hd_context_from_birth(
+    jd, lat, lon, utcoffset=0.0, alt=0.0, name="", ayanamsa=98
+) -> EphContext:
     """Build the base ``EphContext`` for a birth moment. Used by the CLI and by
     tests; the GUI builds an equivalent context from the loaded chart (WI-6)."""
     return EphContext(
         name=name,
         timeJD=JulianDay(jd, utcoffset=utcoffset),
-        location=Location(lat=lat, long=lon, alt=alt, placename=name,
-                          utcoffset=utcoffset),
+        location=Location(
+            lat=lat, long=lon, alt=alt, placename=name, utcoffset=utcoffset
+        ),
         ayanamsa=ayanamsa,
     )
 
@@ -204,13 +354,29 @@ def _iso_utc(time_jd: JulianDay) -> str:
 
 def _row(planet_obj, planet_key, available, activates):
     if not available:
-        return {"planet": planet_key, "available": False, "activates": activates,
-                "gate": None, "line": None, "color": None, "tone": None,
-                "base": None, "elapsed_pct": None}
+        return {
+            "planet": planet_key,
+            "available": False,
+            "activates": activates,
+            "gate": None,
+            "line": None,
+            "color": None,
+            "tone": None,
+            "base": None,
+            "elapsed_pct": None,
+        }
     hd = planet_obj.hd()
-    return {"planet": planet_key, "available": True, "activates": activates,
-            "gate": hd.gate_number(), "line": hd.line(), "color": hd.color(),
-            "tone": hd.tone(), "base": hd.base(), "elapsed_pct": hd.gate_elapsed()}
+    return {
+        "planet": planet_key,
+        "available": True,
+        "activates": activates,
+        "gate": hd.gate_number(),
+        "line": hd.line(),
+        "color": hd.color(),
+        "tone": hd.tone(),
+        "base": hd.base(),
+        "elapsed_pct": hd.gate_elapsed(),
+    }
 
 
 def _side_rows(planets):
@@ -218,12 +384,13 @@ def _side_rows(planets):
     Chiron is ``available=False`` outside its ephemeris window (never a missing
     key) and always ``activates=False``."""
     hd13 = planets.hd13()
-    rows = [_row(hd13[eng], key, available=True, activates=True)
-            for eng, key in _PLANET_ORDER]
+    rows = [
+        _row(hd13[eng], key, available=True, activates=True)
+        for eng, key in _PLANET_ORDER
+    ]
     chiron_available = "Chiron" in planets.planets()
     chiron_obj = planets.chiron() if chiron_available else None
-    rows.append(_row(chiron_obj, "chiron",
-                     available=chiron_available, activates=False))
+    rows.append(_row(chiron_obj, "chiron", available=chiron_available, activates=False))
     return rows
 
 
@@ -320,6 +487,7 @@ def _authority(hd_type, centers, adj, defined, channel_defined, m2t) -> str:
 
 # --------------------------------------------------------------------------- traits
 
+
 def hd_traits(active_gates) -> dict:
     """Derive centres / type / strategy / authority / definition from a set of
     activating gate numbers (personality + design, Chiron excluded). Pure and
@@ -327,8 +495,10 @@ def hd_traits(active_gates) -> dict:
     the geometry vocabulary (``g``, not ``ji``)."""
     active = set(active_gates)
     eng_centers = hddef.defined_centers(active)
-    centers = {name: bool(eng_centers[_GEOM_TO_ENGINE.get(name, name)])
-               for name in CENTER_ORDER}
+    centers = {
+        name: bool(eng_centers[_GEOM_TO_ENGINE.get(name, name)])
+        for name in CENTER_ORDER
+    }
     adj, defined = _center_adjacency(active)
 
     def channel_defined(a: int, b: int) -> bool:
@@ -336,8 +506,8 @@ def hd_traits(active_gates) -> dict:
         return lo in active and hi in active
 
     m2t = centers["throat"] and any(
-        _connected(adj, motor, "throat", defined)
-        for motor in MOTORS if centers[motor])
+        _connected(adj, motor, "throat", defined) for motor in MOTORS if centers[motor]
+    )
 
     hd_type = _hd_type(centers, m2t)
     authority = _authority(hd_type, centers, adj, defined, channel_defined, m2t)
@@ -354,11 +524,11 @@ def hd_traits(active_gates) -> dict:
 
 # --------------------------------------------------------------------------- main
 
+
 def build_hd_model(context: EphContext, frame: str = DEFAULT_FRAME) -> dict:
     """Build the HDModel dict (contract v1.0) for ``context`` in ``frame``."""
     if frame not in VALID_FRAMES:
-        raise HDModelError(
-            f"unknown frame {frame!r}; expected one of {VALID_FRAMES}")
+        raise HDModelError(f"unknown frame {frame!r}; expected one of {VALID_FRAMES}")
 
     ctx = _apply_frame(context, frame)
     bg = Bodygraph(context=ctx)
@@ -416,10 +586,13 @@ def build_hd_model(context: EphContext, frame: str = DEFAULT_FRAME) -> dict:
         "strategy": traits["strategy"],
         "authority": traits["authority"],
         "profile": f"{p_sun_line}/{d_sun_line}",
-        "profile_name": (f"{_PROFILE_LINE_NAME.get(p_sun_line, p_sun_line)}"
-                         f" · {_PROFILE_LINE_NAME.get(d_sun_line, d_sun_line)}"),
+        "profile_name": (
+            f"{_PROFILE_LINE_NAME.get(p_sun_line, p_sun_line)}"
+            f" · {_PROFILE_LINE_NAME.get(d_sun_line, d_sun_line)}"
+        ),
         "definition": traits["definition"],
         "incarnation_cross": _incarnation_cross(
-            p_sun_line, d_sun_line, psun, pearth, dsun, dearth),
+            p_sun_line, d_sun_line, psun, pearth, dsun, dearth
+        ),
         "errors": [],
     }

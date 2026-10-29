@@ -27,6 +27,25 @@ HOUSE_SYSTEM_CODES = {
 }
 
 
+#: The app's display name of each house system (the Settings tab combo).
+HOUSE_SYSTEM_LABELS = {
+    "campanus":       "Campanus",
+    "placidus":       "Placidus",
+    "koch":           "Koch",
+    "equal":          "Equal",
+    "whole_sign":     "Whole Sign",
+    "porphyry":       "Porphyry",
+    "regiomontanus":  "Regiomontanus",
+}
+
+
+def house_system_label(settings_value):
+    """The app's display name for a settings house system key ("whole_sign" ->
+    "Whole Sign"). Unknown or missing values name Campanus, the system
+    ``get_house_system_code`` falls back to."""
+    return HOUSE_SYSTEM_LABELS.get(settings_value, HOUSE_SYSTEM_LABELS["campanus"])
+
+
 def get_house_system_code(settings_value):
     """Convert a settings house_system human key to a Swiss Ephemeris code.
 

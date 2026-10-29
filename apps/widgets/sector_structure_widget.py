@@ -8,7 +8,8 @@ from ui.qt_theme import (
     get_theme_colors, is_light_theme, scaled_area_px,
 )
 from ui.popup_fonts import tier_px, popup_group_px
-from core.aditya_data import get_being_description, get_sign_expressions
+from core.aditya_data import get_being_description, ui_text
+from ui.app_language import gui_description_language, gui_ui_language
 
 
 HORA_SECTIONS = [
@@ -61,7 +62,7 @@ def _theme_palette():
 class _CollapsibleSection(QFrame):
 
     def __init__(self, title, content_text, palette, is_active=False,
-                 planet_annotation=None, parent=None):
+                 planet_annotation=None, parent=None, placeholder=True):
         super().__init__(parent)
         self.setFrameShape(QFrame.Shape.NoFrame)
 
@@ -109,9 +110,11 @@ class _CollapsibleSection(QFrame):
                 f"font-size: {scaled_area_px('info_text')}px; font-style: italic;")
             content_layout.addWidget(ann_label)
 
-        if content_text:
-            for key, label_text in [("theme", "Theme"), ("healthy", "Healthy Expression"),
-                                     ("afflicted", "Afflicted Expression")]:
+        has_text = any((content_text or {}).get(key)
+                       for key in ("theme", "healthy", "afflicted"))
+        if has_text:
+            for key in ("theme", "healthy", "afflicted"):
+                label_text = ui_text(key, gui_ui_language())
                 value = content_text.get(key, "")
                 if not value:
                     continue
@@ -127,12 +130,16 @@ class _CollapsibleSection(QFrame):
                     f"color: {p['text']}; padding-left: 8px; "
                     f"font-size: {scaled_area_px('info_text')}px;")
                 content_layout.addWidget(text_label)
-        else:
-            placeholder = QLabel("Description not available")
-            placeholder.setStyleSheet(
+        elif placeholder:
+            placeholder_label = QLabel(ui_text("not_available", gui_ui_language()))
+            placeholder_label.setStyleSheet(
                 f"color: {p['text_tertiary']}; font-style: italic; "
                 f"font-size: {scaled_area_px('info_text')}px;")
-            content_layout.addWidget(placeholder)
+            content_layout.addWidget(placeholder_label)
+        # A being card without description text (placeholder=False) has
+        # nothing to open unless it carries the planet annotation: no arrow,
+        # no click, no empty body.
+        self._static = not (has_text or placeholder or (planet_annotation and is_active))
 
         self._content.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
         layout.addWidget(self._content)
@@ -147,14 +154,20 @@ class _CollapsibleSection(QFrame):
         else:
             self._set_expanded(False)
 
-        header_widget.mousePressEvent = lambda e: self._toggle()
+        if self._static:
+            self._arrow.setText("")
+            header_widget.setCursor(Qt.CursorShape.ArrowCursor)
+        else:
+            header_widget.mousePressEvent = lambda e: self._toggle()
 
     def _toggle(self):
         self._set_expanded(not self._content.isVisible())
 
     def _set_expanded(self, expanded):
+        if getattr(self, "_static", False):
+            expanded = False
         self._content.setVisible(expanded)
-        self._arrow.setText("▼" if expanded else "▶")
+        self._arrow.setText(("▼" if expanded else "▶") if not getattr(self, "_static", False) else "")
         self.updateGeometry()
 
 
@@ -173,39 +186,6 @@ class SectorStructureWidget(QWidget):
         layout.setContentsMargins(4, 4, 4, 4)
         layout.setSpacing(4)
 
-        if planet_name:
-            intro = QLabel(
-                " "
-                " "
-                " "
-                ""
-            )
-            intro.setWordWrap(True)
-            intro.setStyleSheet(
-                f"color: {p['text_secondary']}; padding: 4px; "
-                f"font-size: {scaled_area_px('info_text')}px;")
-            layout.addWidget(intro)
-
-        # Sign section (SPEC-AVA-003 v1.3, D-30): the sign's healthy / afflicted
-        # interpretation, above Hora. Expanded + gold-marked when the sign icon
-        # was clicked (active_sign), collapsed when a hora / trimsamsa was.
-        # Content = the two expressions only (D-27); the same _CollapsibleSection
-        # the being cards use, so all three card kinds read the same. Missing
-        # data resolves to the "Description not available" placeholder.
-        sign_header = QLabel("Sign")
-        sign_header.setStyleSheet(
-            f"color: {p['text']}; font-weight: bold; "
-            f"font-size: {popup_group_px(11)}px; "
-            f"border-bottom: 1px solid {p['border']}; padding: 4px 0 2px 0;"
-        )
-        layout.addWidget(sign_header)
-
-        sign_section = _CollapsibleSection(
-            sign_name, get_sign_expressions(sign_name), palette=p,
-            is_active=active_sign, parent=self,
-        )
-        layout.addWidget(sign_section)
-
         hora_header = QLabel("Hora")
         hora_header.setStyleSheet(
             f"color: {p['text']}; font-weight: bold; "
@@ -215,20 +195,20 @@ class SectorStructureWidget(QWidget):
         layout.addWidget(hora_header)
 
         for ring, being_type, display_label in HORA_SECTIONS:
-            desc = get_being_description(sign_name, ring, being_type)
+            display_label = ui_text("hora_" + being_type, gui_ui_language())
+            desc = get_being_description(sign_name, ring, being_type, lang=gui_description_language())
             is_active = (active_hora_key == being_type)
             annotation = None
             if is_active and planet_name and degree_text:
-                annotation = (
-                    f"{planet_name} at {degree_text} {sign_name} falls directly "
-                    f"in this "
-                )
+                annotation = ui_text("annotation_hora", gui_ui_language(), planet=planet_name,
+                                     degree=degree_text, sign=sign_name)
             name_suffix = ""
             if desc and desc.get("name"):
                 name_suffix = f": {desc['name']}"
             section = _CollapsibleSection(
                 f"{display_label}{name_suffix}", desc, palette=p,
                 is_active=is_active, planet_annotation=annotation, parent=self,
+                placeholder=False,
             )
             layout.addWidget(section)
 
@@ -241,20 +221,19 @@ class SectorStructureWidget(QWidget):
         layout.addWidget(trim_header)
 
         for ring, being_type, display_label in TRIMSAMSA_SECTIONS:
-            desc = get_being_description(sign_name, ring, being_type)
+            desc = get_being_description(sign_name, ring, being_type, lang=gui_description_language())
             is_active = (active_trimsamsa_key == being_type)
             annotation = None
             if is_active and planet_name and degree_text:
-                annotation = (
-                    f"{planet_name} at {degree_text} {sign_name} falls directly "
-                    f"in this "
-                )
+                annotation = ui_text("annotation_trimsamsa", gui_ui_language(), planet=planet_name,
+                                     degree=degree_text, sign=sign_name)
             name_suffix = ""
             if desc and desc.get("name"):
                 name_suffix = f": {desc['name']}"
             section = _CollapsibleSection(
                 f"{display_label}{name_suffix}", desc, palette=p,
                 is_active=is_active, planet_annotation=annotation, parent=self,
+                placeholder=False,
             )
             layout.addWidget(section)
 

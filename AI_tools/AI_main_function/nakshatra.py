@@ -18,7 +18,9 @@ import sys
 
 # Add project root to path (AI_tools/AI_main_function/ -> repo root is 3 levels up;
 # this module was relocated from the paid edition to Core, SPEC-NAK-LITE-001).
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+sys.path.insert(
+    0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+)
 
 from core.vimshottari_dasha import (
     get_nakshatra_for_longitude,
@@ -42,6 +44,22 @@ LORD = 0
 # =============================================================================
 # Section 1: Single-Point Nakshatra Lookup
 # =============================================================================
+
+
+def nakshatra_degrees_and_pada(ashvini_long, nak_index, nak_size=NAKSIZE):
+    """(degrees within the nakshatra, pada 1-4) from the distance from
+    Ashvini and the nakshatra index. Find Chart's equatorial nakshatras use it
+    on libaditya's ``Nakshatra.ashvini_longitude()``."""
+    # Degrees within this nakshatra
+    deg_in_nak = ashvini_long - (nak_index * nak_size)
+    if deg_in_nak < 0:
+        deg_in_nak += nak_size
+
+    # Pada (1-4): each nakshatra has 4 equal quarters
+    pada_size = nak_size / 4
+    pada = min(int(deg_in_nak / pada_size) + 1, 4)
+    return deg_in_nak, pada
+
 
 def get_planet_nakshatra(tropical_long, jd, ayanamsa=100):
     """
@@ -68,14 +86,7 @@ def get_planet_nakshatra(tropical_long, jd, ayanamsa=100):
     lord_idx = nak_index % 9
     lord = DASHAS[lord_idx][LORD]
 
-    # Degrees within this nakshatra
-    deg_in_nak = sid_long - (nak_index * nak_size)
-    if deg_in_nak < 0:
-        deg_in_nak += nak_size
-
-    # Pada (1-4): each nakshatra has 4 equal quarters
-    pada_size = nak_size / 4
-    pada = min(int(deg_in_nak / pada_size) + 1, 4)
+    deg_in_nak, pada = nakshatra_degrees_and_pada(sid_long, nak_index, nak_size)
 
     return {
         "name": name,
@@ -91,6 +102,7 @@ def get_planet_nakshatra(tropical_long, jd, ayanamsa=100):
 # =============================================================================
 # Section 2: Batch Lookups (All Planets + Houses)
 # =============================================================================
+
 
 def as_tropical_chart(chart):
     """Return a chart whose longitudes are TROPICAL, rebuilding if sidereal-built.
@@ -112,20 +124,28 @@ def as_tropical_chart(chart):
     is not an int) raises ``ValueError`` rather than being silently mis-framed.
     """
     from libaditya import swe as _swe
+
     sysflg = chart.context.sysflg  # AttributeError for a non-Chart (loud, by design)
     if not isinstance(sysflg, int):
         raise ValueError(
             "as_tropical_chart: cannot determine chart frame "
             f"(context.sysflg={sysflg!r}); expected a libaditya Chart built via "
-            "core.chart_factory.build_chart_from_params")
+            "core.chart_factory.build_chart_from_params"
+        )
     if not (sysflg & _swe.FLG_SIDEREAL):
         return chart
     from core.chart_factory import build_chart_from_params
+
     ctx = chart.context
     return build_chart_from_params(
-        jd=ctx.timeJD.jd, lat=ctx.location.lat, lon=ctx.location.long,
-        mode="tropical_classic", name=ctx.name,
-        utcoffset=ctx.location.utcoffset, ayanamsa=0, hsys=ctx.hsys,
+        jd=ctx.timeJD.jd,
+        lat=ctx.location.lat,
+        lon=ctx.location.long,
+        mode="tropical_classic",
+        name=ctx.name,
+        utcoffset=ctx.location.utcoffset,
+        ayanamsa=0,
+        hsys=ctx.hsys,
     )
 
 
@@ -143,7 +163,9 @@ def get_all_nakshatras(chart, jd_ut, ayanamsa=100):
     """
     from core.chart_helpers import get_planet_decimal_degrees, has_planet
 
-    chart = as_tropical_chart(chart)  # td-lgiq: frame guard, no caller can double-subtract
+    chart = as_tropical_chart(
+        chart
+    )  # td-lgiq: frame guard, no caller can double-subtract
     result = {}
 
     if has_planet(chart, "Ascendant"):
@@ -190,6 +212,7 @@ def get_house_cusp_nakshatras(chart, jd_ut, ayanamsa=100):
 # Section 3: Dasha Numbering
 # =============================================================================
 
+
 def compute_dasha_numbers(planet_nakshatras):
     """
     Assign dasha sequence numbers (1-9) starting from Moon's lord.
@@ -234,6 +257,7 @@ def get_dasha_sequence(moon_lord_idx):
 # Section 4: Formatting Helpers
 # =============================================================================
 
+
 def _format_long(deg):
     """Format degrees as XXX° MM'."""
     d = int(deg)
@@ -245,6 +269,7 @@ def _format_long(deg):
 # Section 5: Console Table Formatter
 # =============================================================================
 
+
 def format_nakshatra_table(planet_naks, house_naks, birth_data, settings):
     """
     Format nakshatra data as a human-readable console table.
@@ -253,7 +278,8 @@ def format_nakshatra_table(planet_naks, house_naks, birth_data, settings):
         planet_naks: dict from compute_dasha_numbers() (planets + Lagna)
         house_naks: list from get_house_cusp_nakshatras()
         birth_data: dict from load_birth_data_for_dasha()
-        settings: dict with ayanamsa
+        settings: dict with ayanamsa and house_system (the settings key the
+            cusps were computed with; default campanus)
 
     Returns:
         str: Multi-line formatted text
@@ -263,10 +289,10 @@ def format_nakshatra_table(planet_naks, house_naks, birth_data, settings):
     ayanamsa_name = _get_ayanamsa_display_name(ayanamsa)
 
     # Header
-    name = birth_data.get('name', 'Unknown')
-    birth_date = birth_data.get('birth_date', '')
-    birth_time = birth_data.get('birth_time', '')
-    birth_place = birth_data.get('birth_place', '')
+    name = birth_data.get("name", "Unknown")
+    birth_date = birth_data.get("birth_date", "")
+    birth_time = birth_data.get("birth_time", "")
+    birth_place = birth_data.get("birth_place", "")
 
     lines.append(f"Nakshatra Positions \u2014 {name}")
     lines.append("\u2550" * 66)
@@ -289,7 +315,9 @@ def format_nakshatra_table(planet_naks, house_naks, birth_data, settings):
 
     lines.append("  PLANETS")
     lines.append("  " + "\u2500" * 62)
-    lines.append(f"  {'D#':>2}  {'Planet':<9} {'Nakshatra':<20} {'Pada':>4}  {'Lord':<9} {'Long°'}")
+    lines.append(
+        f"  {'D#':>2}  {'Planet':<9} {'Nakshatra':<20} {'Pada':>4}  {'Lord':<9} {'Long°'}"
+    )
     lines.append("  " + "\u2500" * 62)
 
     for body, data in planet_entries:
@@ -322,7 +350,11 @@ def format_nakshatra_table(planet_naks, house_naks, birth_data, settings):
     # --- HOUSE CUSPS section ---
     if house_naks:
         lines.append("")
-        lines.append("  HOUSE CUSPS (Campanus)")
+        from core.house_systems import house_system_label
+
+        lines.append(
+            f"  HOUSE CUSPS ({house_system_label(settings.get('house_system', 'campanus'))})"
+        )
         lines.append("  " + "\u2500" * 62)
         lines.append(f"  {'House':<7} {'Cusp':>9}    {'Nakshatra':<20} {'Lord'}")
         lines.append("  " + "\u2500" * 62)
@@ -343,6 +375,7 @@ def format_nakshatra_table(planet_naks, house_naks, birth_data, settings):
 # =============================================================================
 # Section 6: JSON Formatter
 # =============================================================================
+
 
 def format_nakshatra_json(planet_naks, house_naks, birth_data, settings):
     """
@@ -379,22 +412,24 @@ def format_nakshatra_json(planet_naks, house_naks, birth_data, settings):
     # Houses
     houses_out = []
     for label, cusp_deg, data in house_naks:
-        houses_out.append({
-            "house": label,
-            "cusp_degrees": round(cusp_deg, 4),
-            "nakshatra": data["name"],
-            "nakshatra_index": data["index"],
-            "lord": data["lord"],
-            "pada": data["pada"],
-            "sidereal_longitude": round(data["sidereal_long"], 4),
-        })
+        houses_out.append(
+            {
+                "house": label,
+                "cusp_degrees": round(cusp_deg, 4),
+                "nakshatra": data["name"],
+                "nakshatra_index": data["index"],
+                "lord": data["lord"],
+                "pada": data["pada"],
+                "sidereal_longitude": round(data["sidereal_long"], 4),
+            }
+        )
 
     result = {
         "chart": {
-            "name": birth_data.get('name', 'Unknown'),
-            "birth_date": birth_data.get('birth_date', ''),
-            "birth_time": birth_data.get('birth_time', ''),
-            "birth_place": birth_data.get('birth_place', ''),
+            "name": birth_data.get("name", "Unknown"),
+            "birth_date": birth_data.get("birth_date", ""),
+            "birth_time": birth_data.get("birth_time", ""),
+            "birth_place": birth_data.get("birth_place", ""),
         },
         "settings": {
             "ayanamsa_id": ayanamsa,

@@ -1,12 +1,16 @@
 """Stateless natal planet and ascendant painters."""
 from apps.widgets.additional_body_glyphs import make_planet_item
 import math
+from operator import itemgetter
 from PySide6.QtCore import Qt, QRectF
 from PySide6.QtGui import QBrush, QColor, QFont, QFontMetricsF, QPainterPath, QPen
 from PySide6.QtWidgets import QGraphicsPathItem, QGraphicsTextItem, QGraphicsLineItem
 from ui.qt_theme import GOLD, get_theme_colors, desat_hex, scaled_tier_size
+from apps.widgets.south_indian_planet_labels import degree_font_size, footer_top, planet_label_rows
+from apps.widgets.south_indian_planet_order import planet_x
+from apps.widgets.south_indian_art_box import art_bottom
 from visualizations.wheel_constants import ELEMENT_COLORS, get_element_for_sign, element_text_color
-from core.aditya_mode import displayed_sign_name, get_planet_display_name
+from core.aditya_mode import displayed_sign_name
 from apps.widgets.south_indian_geometry import *
 from apps.widgets.south_indian_items import SignCardItem, HoverZoneItem, SignIconItem, ClickablePlanetItem
 from apps.widgets.south_indian_material import WoodBoardItem, WoodFaceItem, rounded, JoshGlyphItem, glyph_svg_passes
@@ -33,34 +37,31 @@ def draw_planets_in_sign(scene, snapshot, style, layout, signals, sign_idx, plan
     text_color.setAlphaF(0.85)
     deg_settings = style.display.get('planet_degrees', {})
     deg_weight = QFont.Weight.Bold if deg_settings.get('font_weight', 'normal') == 'bold' else QFont.Weight.Normal
-    text_font = QFont('Inter', scaled_tier_size(deg_settings.get('font_size', 14), 'chart_labels'), deg_weight)
-    fm = QFontMetricsF(text_font)
+    text_font = QFont('Inter', degree_font_size(deg_settings.get('font_size', 14), spacing, deg_weight, snapshot.captions.wide), deg_weight)
+    captions = []
     for i, (planet_name, planet, place_deg) in enumerate(planets_in_sign):
-        if num_planets == 1:
-            third = available_width / 3
-            x_pos = rect.left() + pad + lone_planet_zone(place_deg) * third + third / 2
-        else:
-            x_pos = rect.left() + pad + i * spacing + spacing / 2
+        x_pos = planet_x(rect, sign_idx, i, num_planets, place_deg)  # bottom row runs right to left
         base_size = planet_sizes.get(planet_name, style.planet_sizes.get(planet_name, 128))
         planet_size = crowded_planet_size(base_size, num_planets)
         house_item, h_bounds, item_h, planet_size = prepare_house(snapshot, layout, sign_idx, planet, planet_size, y_pos, text_color, deg_settings, deg_weight)
         icon_top, icon_bottom = draw_planet_icon(scene, style, signals, planet_name, planet, x_pos, y_pos, planet_size)
-        draw_planet_labels(scene, snapshot, style, planet_name, place_deg, x_pos, icon_bottom, fm, text_font, text_color)
+        captions.append((planet_name, x_pos, icon_bottom))
         if house_item is not None:
             house_item.setPos(x_pos - h_bounds.width() / 2, icon_top - 2 - item_h)
             house_item.setZValue(80)
-            house_item.setData(Qt.ItemDataRole.UserRole, TAG_COMPASS_HOUSE)
-            house_item.setToolTip(planet.sky_label)
+            house_item.setData(Qt.ItemDataRole.UserRole, TAG_PLANET_LABEL)
+            house_item.setToolTip(planet.label_tip)
             scene.addItem(house_item)
+    draw_planet_labels(scene, style, snapshot.captions.texts, captions, rect, text_font, text_color)
 
 def prepare_house(snapshot, layout, sign_idx, planet, planet_size, y_pos, text_color, deg_settings, deg_weight):
     h_bounds, item_h = (None, 0)
-    house = planet.house if snapshot.compass_mode else None
+    label = planet.label if snapshot.frame_active else None
     house_item = None
-    if house is not None:
-        emphasised = house == snapshot.location_house
+    if label is not None:
+        label, emphasised = label
         h_font = QFont('Inter', scaled_tier_size(deg_settings.get('font_size', 14) + (4 if emphasised else 0), 'chart_labels'), QFont.Weight.Bold if emphasised else deg_weight)
-        house_item = QGraphicsTextItem(str(house))
+        house_item = QGraphicsTextItem(label)
         house_item.setFont(h_font)
         h_color = QColor(text_color)
         h_color.setAlphaF(1.0 if emphasised else text_color.alphaF())
@@ -88,27 +89,23 @@ def draw_planet_icon(scene, style, signals, planet_name, planet, x_pos, y_pos, p
             planet_item.setGraphicsEffect(shadow)
             del shadow
         scene.addItem(planet_item)
-        icon_bottom = y_pos + pixmap.height() / 2
         icon_top = y_pos - pixmap.height() / 2
+        icon_bottom = icon_top + art_bottom(pixmap)
     return icon_top, icon_bottom
 
-def draw_planet_labels(scene, snapshot, style, planet_name, place_deg, x_pos, icon_bottom, fm, text_font, text_color):
-    abbrev = planet_name[:2]
-    if snapshot.show_planet_names:
-        degrees_text = get_planet_display_name(style.language, planet_name)
-    else:
-        deg, mins = (int(place_deg), int(place_deg % 1 * 60))
-        degrees_text = f"{deg}°{mins:02d}'"
-    abbrev_y = icon_bottom + 4
-    degrees_y = abbrev_y + fm.height() + 2
-    for text, ty in ((abbrev, abbrev_y), (degrees_text, degrees_y)):
-        label = QGraphicsTextItem(text)
-        label.setFont(text_font)
-        label.setDefaultTextColor(text_color)
-        label.setPos(x_pos - label.boundingRect().width() / 2, ty)
-        label.setZValue(80)
-        label.setData(Qt.ItemDataRole.UserRole, TAG_PLANET_TEXT)
-        scene.addItem(label)
+def draw_planet_labels(scene, style, texts, captions, rect, text_font, text_color):
+    """One caption row per card, under the lowest glyph ART: the icon boxes differ per
+    planet (Moon 186, Venus 120) while the drawings inside them do not."""
+    fm, row = QFontMetricsF(text_font), max(captions, key=itemgetter(2))[2]
+    for planet_name, x_pos, _bottom in captions:
+        for text, ty in planet_label_rows(planet_name[:2], texts.get(planet_name, ''), row, fm.height(), footer_top(rect, style.house_number_font)):
+            label = QGraphicsTextItem(text)
+            label.setFont(text_font)
+            label.setDefaultTextColor(text_color)
+            label.setPos(x_pos - label.boundingRect().width() / 2, ty)
+            label.setZValue(80)
+            label.setData(Qt.ItemDataRole.UserRole, TAG_PLANET_TEXT)
+            scene.addItem(label)
 
 
 def draw_lagna_stripe(scene, snapshot, style):

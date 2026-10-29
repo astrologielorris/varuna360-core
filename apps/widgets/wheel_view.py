@@ -18,6 +18,7 @@ Ported from visualizations/wheel_chart.py (Tkinter) to Qt.
 from apps.widgets.additional_bodies import display_names, visible_items, add_unavailable_notice
 from apps.widgets.planet_icon_loader import load_planet_icon
 from apps.widgets.additional_body_glyphs import make_planet_item
+from apps.widgets.chart_area_size import chart_area_size
 import math
 from pathlib import Path
 
@@ -56,7 +57,8 @@ from .zodiac_renderer import (
 )
 
 # Import theme
-from ui.qt_theme import get_theme_colors, scaled_area_font, desat_image, sat_key, desat_hex
+from ui.qt_theme import (get_theme_colors, is_light_theme, scaled_area_font, desat_image, sat_key, desat_hex,
+                         scaled_tier_size, get_area_font_size, AREA_DEFAULTS)
 
 # Import geometry helpers (reuse from existing wheel)
 from visualizations.wheel_geometry import (
@@ -67,13 +69,23 @@ from visualizations.wheel_geometry import (
 
 # Import constants (reuse from existing wheel)
 from visualizations.wheel_constants import WHEEL_RADII, ADITYA_NAMES, DISPLAY_PLANETS
-from core.aditya_mode import get_planet_display_name, displayed_sign_name
+from core.aditya_mode import displayed_sign_name
+from core.planet_label import PlanetCaptions, normalized
 from core.retinue_constants import HORA_COLORS, TRIMSAMSA_COLORS
 
 # SPEC-COT-001 §4.10 — the in-chart card index. The setting, the memoised
 # spread and the plaque art are shared with the South Indian and North Indian
 # views; the sector split itself lives in zodiac_renderer.draw_sign_names.
 from apps.widgets.cot_index_item import CotIndexMixin
+from apps.widgets.jewel_lamp_wheel import wheel_strength_pass
+from apps.widgets.planet_strength_glow import glow_scene, strength_colour
+from apps.widgets.dignity_view_pass import view_pass
+from apps.widgets.paint_on_show import cancel_paint, defer_paint
+from apps.widgets.planet_decoration_refresh import register_planet_pass
+from apps.widgets.exchange_chain_items import register_chain_pass, wheel_pass as chain_pass
+from apps.widgets.planet_shadow import create_planet_shadow
+from core import planet_aura as pa
+from apps.widgets.wheel_sign_strength import wheel_signs
 
 #: UserRole tag on the wheel's card items, so a test or a later selective
 #: redraw can find them without pattern-matching on the rank text.
@@ -411,7 +423,8 @@ class WheelView(CotIndexMixin, QGraphicsView):
         self.ayanamsa_offset = 0.0
         self.use_western_names = False
         self.sign_language = "en"
-        self.show_planet_names = False
+        self.planet_label = "degrees"   # core.planet_label mode (F11)
+        self._captions = None           # this draw's PlanetCaptions (_planet_caption)
         self.rotation_offset = 0.0
 
         # Show outer planets toggle
@@ -1187,11 +1200,14 @@ class WheelView(CotIndexMixin, QGraphicsView):
 
     def draw_wheel(self):
         """Main drawing method - draws all wheel components."""
+        if defer_paint(self, "draw_wheel"):       # hidden: drawn at its next show
+            return
         # td-u53i: ANY full draw renders the decorations from the current
         # flags, so it absorbs a pending deferred decoration redraw — clear
         # the mark up front or a later showEvent would draw a second time
         # for nothing (e.g. M3 content flush + decoration dirt on one reveal).
         self._retinue_dirty = False
+        self._captions = None       # the F11 captions are read afresh each draw
         self._retinue_sectors = {}
         self._house_number_items = {}
         self._zodiac_sector_items = {}
@@ -1238,7 +1254,7 @@ class WheelView(CotIndexMixin, QGraphicsView):
         # Layer 9a: Cusp glow lines (behind planets, behind sign icons)
         self._draw_cusp_glow_lines()
 
-        # Layer 10: Planets
+        # Layer 10: Planets (the Ember Aura waits for the last ground layer)
         if self._chart:
             self._draw_planets()
 
@@ -1247,9 +1263,11 @@ class WheelView(CotIndexMixin, QGraphicsView):
             self._draw_house_cusps()
 
         # Layer 12: Retinue rings — Hora + Trimsamsa (F5)
+        strength = None
         if self.show_retinue_rings:
-            self._draw_hora_ring()
-            self._draw_trimsamsa_ring()
+            strength = wheel_strength_pass(self)  # SPEC-RST-001 (V1 / V2 Jewel Lamp), this chart
+            self._draw_hora_ring(strength)
+            self._draw_trimsamsa_ring(strength)
             # Suppress the F6 trimsamsha degree ruler (r_outer+300..+325) when ANY
             # outer overlay rim is active, not just transit: a custom overlay (the
             # Compatibility Person-B rim, eclipse/dual/comparison/predictive)
@@ -1273,6 +1291,11 @@ class WheelView(CotIndexMixin, QGraphicsView):
         # Layer 16: Element distribution pie chart (bottom-right of wheel)
         if self._chart and self.show_element_pies:
             self._draw_element_pie()
+
+        wheel_signs(self, strength)  # SPEC-RST-001 sign colour + sign ribbon (td-w6xja)
+        if self._chart:               # td-e6jsp / td-647kl / td-m6xyo: on the finished ground
+            planet_pass(self)
+        chain_pass(self)              # td-m79zy: the THREAD key's exchange chains
 
         # Size the scene rect to the actual drawn content, symmetric around the
         # wheel center so the wheel stays centered and the rect both shrinks and
@@ -1343,18 +1366,21 @@ class WheelView(CotIndexMixin, QGraphicsView):
         cell's text colour on the standard finish
         (south_indian_sign_glyph.accompaniment_item).
         """
-        from managers.settings_manager import get_settings
-        mode = get_settings().get('display.sign_display', 'zodiac')
-        if mode == 'names':
+        from ui.sign_numbers import TEXT_ONLY, effective_sign_display
+        mode = effective_sign_display('wheel')
+        if mode in TEXT_ONLY:  # names / numbers: text ring only
             return
         symbol_radius = (self.r_outer + self.r_middle) / 2 + 20
-        if mode in ('josh', 'josh_only'):
+        from ui.sign_display_modes import glyph_family
+        family = glyph_family(mode)
+        if family:
             from apps.widgets.aditya_glyph_render import draw_aditya_glyphs
             from apps.widgets.chart_glyph_theme import theme_glyph_ink
             ink = theme_glyph_ink()
             draw_aditya_glyphs(self.scene, self.cx, self.cy,
                                symbol_radius, size=192,
-                               rotation_offset=self.rotation_offset, ink_hex=ink)
+                               rotation_offset=self.rotation_offset, ink_hex=ink,
+                               family=family)
             return
         draw_zodiac_icons(self.scene, self.cx, self.cy,
                           symbol_radius, icon_size=192,
@@ -1416,8 +1442,10 @@ class WheelView(CotIndexMixin, QGraphicsView):
         sector's arc. The PAIR stays centred on the sector, so the ring of names
         does not visibly drift when the setting is toggled.
         """
-        from managers.settings_manager import get_settings
-        show_names = get_settings().get('display.sign_display', 'zodiac') != 'josh_only'
+        from ui.sign_display_modes import hides_sign_names
+        from ui.sign_numbers import NUMBERS, effective_sign_display
+        mode = effective_sign_display('wheel')
+        show_names = not hides_sign_names(mode)
         name_radius = (self.r_middle + self.r_inner) / 2 + 26
         _mode = self._aditya_mode
         faces = self._cot_faces() if self._cot_enabled() else None
@@ -1429,7 +1457,8 @@ class WheelView(CotIndexMixin, QGraphicsView):
                         cot_dpr=self.devicePixelRatioF() or 1.0,
                         cot_tag=TAG_COT_CARD,
                         scale_sign_labels=True,
-                        show_names=show_names)  # G2c §11.8: wheel follows chart_labels preset
+                        show_names=show_names,  # G2c §11.8: wheel follows chart_labels preset
+                        as_numbers=mode == NUMBERS)
 
     def _draw_center(self):
         """Draw the center circle."""
@@ -1450,14 +1479,10 @@ class WheelView(CotIndexMixin, QGraphicsView):
                        else cusp.real_in_sign_longitude()
                 cusp_angles.append((cusp.sign() - 1) * 30 + risl)
 
-        # td-cyap: house-number size is a live setting (was hardcoded 23). The
-        # Wheel renders the configured value 1:1. Canonical path shared with the
-        # SI view and the ChartDisplaySection control.
-        from managers.settings_manager import get_settings, HOUSE_NUMBER_FONT_MAX
-        _stored = get_settings().get_chart_display_section('house_number')['font_size']
-        # sol F5: clamp at the read-site, not only in the spinbox — a stored /
-        # legacy value above the cap must never paint (it would collide).
-        hn_size = min(HOUSE_NUMBER_FONT_MAX, _stored)
+        # House-number size: Font Sizes > House Numbers (display.fonts.house_numbers,
+        # bounds 7..48; factory 23 = the former size). The area ratio only: these
+        # numbers never took Display Scale (SPEC-FONT-001 §11.9).
+        hn_size = get_area_font_size('house_numbers')
         items = draw_house_numbers(self.scene, self.cx, self.cy,
                            self.r_center * 0.65, font_size=hn_size,
                            rotation_offset=self.rotation_offset,
@@ -1499,7 +1524,8 @@ class WheelView(CotIndexMixin, QGraphicsView):
         return (planet.sign() - 1) * 30 + planet.real_in_sign_longitude()
 
     def _draw_planets(self):
-        """Draw all planets with collision avoidance."""
+        """Draw all planets with collision avoidance; each planet's icon, label and
+        pointer are tagged for the post-pass (``planet_pass``)."""
         if not self._planets:
             return
         planets_to_draw = list(DISPLAY_PLANETS)
@@ -1528,7 +1554,6 @@ class WheelView(CotIndexMixin, QGraphicsView):
         add_unavailable_notice(self.scene, self._planets)
         # Calculate positions with collision avoidance
         planet_positions = self._calculate_planet_positions(all_planets)
-
         # Get indicator line settings
         line_settings = self.display_settings.get("indicator_line", {})
         glow_radius = line_settings.get("glow_radius", 40)
@@ -1553,6 +1578,7 @@ class WheelView(CotIndexMixin, QGraphicsView):
                 )
                 line_d1.setZValue(3.8)
                 self.scene.addItem(line_d1)
+                pointer = line_d1
 
                 # Segment 2: Hora ring (D2 color — Sun=Fire or Moon=Water)
                 hora_ex, hora_ey = polar_to_cartesian(self.cx, self.cy, hora_outer, visual_angle)
@@ -1586,6 +1612,8 @@ class WheelView(CotIndexMixin, QGraphicsView):
                     line_width=line_width
                 )
                 self.scene.addItem(line)
+                pointer = line
+            mark_part(pointer, POINTER)   # the planet's own pointer: drawn with it, not its ground
 
             # Load pixmap with size from display settings
             planet_sizes = self.display_settings.get("planet_sizes", {})
@@ -1599,9 +1627,16 @@ class WheelView(CotIndexMixin, QGraphicsView):
                 icon = make_planet_item(PlanetItem, planet["name"], pixmap, x, y, planet["name"], click_dict,
                                  self.planet_click_signal)
                 self.scene.addItem(icon)
+                mark_part(icon, ICON)
 
             # Draw degree label below planet (y offset scaled: 20→51)
-            self._draw_planet_label(x, y + 51, planet, label_offset)
+            mark_part(self._draw_planet_label(x, y + 51, planet, label_offset), TEXT)
+
+    def _aura_reference(self):
+        """The wheel's ONE reference half size (the Ember Aura's and the dignity
+        overlay's, td-647kl)."""
+        sizes = self.display_settings.get("planet_sizes", {})
+        return pa.reference_half_size(lambda p: sizes.get(p, 120))
 
     def _calculate_planet_positions(self, planets: list) -> list:
         """
@@ -1621,16 +1656,22 @@ class WheelView(CotIndexMixin, QGraphicsView):
             self.cx, self.cy, self.rotation_offset,
         )
 
+    def _planet_caption(self, name, planet_obj, deg_in_sign):
+        """The text under a planet glyph (core.planet_label). One caption
+        helper per draw (draw_wheel drops it), shared by the natal planets and
+        the rings. A ring planet without a chart object (custom rim data) has
+        no gate or nakshatra."""
+        captions = self._captions
+        if captions is None or (captions.mode, captions.language) != (
+                normalized(self.planet_label), self.sign_language):
+            captions = self._captions = PlanetCaptions(self.planet_label, self.sign_language)
+        return captions.text(name, planet_obj, deg_in_sign)
+
     def _draw_planet_label(self, x: float, y: float, planet: dict, label_offset: float):
-        """Draw degree label below a planet using display settings."""
-        if self.show_planet_names:
-            label_text = get_planet_display_name(
-                self.sign_language, planet["name"])
-        else:
-            deg_in_sign = planet["deg_in_sign"]
-            degrees = int(deg_in_sign)
-            minutes = int((deg_in_sign - degrees) * 60)
-            label_text = f"{degrees}°{minutes:02d}'"
+        """Draw the F11 caption (degree, name, gate, nakshatra) below a planet
+        using display settings."""
+        label_text = self._planet_caption(planet["name"], planet.get("planet_obj"),
+                                          planet["deg_in_sign"])
 
         # Get display settings for planet degrees
         deg_settings = self.display_settings.get("planet_degrees", {})
@@ -1641,7 +1682,9 @@ class WheelView(CotIndexMixin, QGraphicsView):
         offset_y = deg_settings.get("offset_y", 0)
 
         label = QGraphicsTextItem(label_text)
-        font = QFont("Inter", font_size)
+        # Font Sizes > Planet Degrees as the area RATIO only: this label never
+        # took Display Scale (SPEC-FONT-001 §11.9, parity at any scale).
+        font = QFont("Inter", max(1, round(font_size * get_area_font_size('planet_degrees') / AREA_DEFAULTS['planet_degrees'])))
         if font_weight == "bold":
             font.setBold(True)
         label.setFont(font)
@@ -1652,6 +1695,7 @@ class WheelView(CotIndexMixin, QGraphicsView):
                     y - label.boundingRect().height() / 2 + offset_y)
         label.setZValue(9)
         self.scene.addItem(label)
+        return label
 
     def _draw_cusp_glow_lines(self):
         """Draw glowing radial lines for house cusps on the outer rings only.
@@ -1747,7 +1791,7 @@ class WheelView(CotIndexMixin, QGraphicsView):
 
             lx, ly = polar_to_cartesian(self.cx, self.cy, label_radius, visual_angle)
             label = QGraphicsTextItem(label_text)
-            label.setFont(scaled_area_font('chart_labels', family='Inter'))
+            label.setFont(scaled_area_font('cusp_degrees', family='Inter'))
             label.setDefaultTextColor(QColor(desat_hex("#FFD700") if is_angle else "#AAAAAA"))
             label.setPos(lx - label.boundingRect().width() / 2,
                         ly - label.boundingRect().height() / 2)
@@ -1820,7 +1864,7 @@ class WheelView(CotIndexMixin, QGraphicsView):
             label_text = f"C{house_num} {deg_in_sign}°"
 
             label = QGraphicsTextItem(label_text)
-            label.setFont(scaled_area_font('chart_labels', family='Inter'))
+            label.setFont(scaled_area_font('cusp_degrees', family='Inter'))
 
             # Angular houses (1,4,7,10) in gold, others in silver
             if house_num in [1, 4, 7, 10]:
@@ -1909,7 +1953,7 @@ class WheelView(CotIndexMixin, QGraphicsView):
             return name
         return name[:max_len - 1] + "."
 
-    def _draw_hora_ring(self):
+    def _draw_hora_ring(self, strength=None):
         """
         Draw the Hora outer ring — 24 sectors (12 signs × 2 halves).
 
@@ -1955,6 +1999,9 @@ class WheelView(CotIndexMixin, QGraphicsView):
 
                 bg_color = SUN_BG if is_sun else MOON_BG
                 text_color = SUN_TEXT if is_sun else MOON_TEXT
+                lord, raw_bg = ("Sun", HORA_COLORS["sun_bg"]) if is_sun else ("Moon", HORA_COLORS["moon_bg"])
+                if strength is not None:
+                    bg_color, text_color = strength.colours(lord, "hora", raw_bg, bg_color, text_color)
 
                 if is_sun:
                     label = aditya_name
@@ -1975,6 +2022,9 @@ class WheelView(CotIndexMixin, QGraphicsView):
                 sector.setToolTip(tip)
                 self.scene.addItem(sector)
                 self._retinue_sectors[key] = sector
+                if strength is not None:
+                    strength.decorate(sector, lord, "hora", raw_bg, SUN_TEXT if is_sun else MOON_TEXT,
+                                      self.cx, self.cy, hora_inner, hora_outer, start_angle, 15)
 
                 # Icon and name SIDE BY SIDE along the arc (same radius, different angles)
                 mid_r = (hora_inner + hora_outer) / 2  # Both at ring midpoint
@@ -2010,7 +2060,7 @@ class WheelView(CotIndexMixin, QGraphicsView):
             divider.setZValue(3.8)
             self.scene.addItem(divider)
 
-    def _draw_trimsamsa_ring(self):
+    def _draw_trimsamsa_ring(self, strength=None):
         """
         Draw the Trimsamsa outer ring — 60 sectors (12 signs × 5 divisions).
 
@@ -2050,6 +2100,9 @@ class WheelView(CotIndexMixin, QGraphicsView):
 
                 bg_color = ELEMENT_BG.get(element, "#333333")
                 text_color = ELEMENT_TEXT.get(element, "#FFFFFF")
+                raw_bg, raw_text = TRIMSAMSA_COLORS.get(element, {}).get("bg", "#333333"), text_color
+                if strength is not None:
+                    bg_color, text_color = strength.colours(planet_lord, "trim", raw_bg, bg_color, text_color)
                 font_size = 15 if span >= 7 else 13
 
                 # Sector
@@ -2064,6 +2117,9 @@ class WheelView(CotIndexMixin, QGraphicsView):
                 sector.setToolTip(f"{being_name} ({being_label}) — {element}")
                 self.scene.addItem(sector)
                 self._retinue_sectors[key] = sector
+                if strength is not None:
+                    strength.decorate(sector, planet_lord, "trim", raw_bg, raw_text,
+                                      self.cx, self.cy, trim_inner, trim_outer, start_angle, span)
 
                 # Label (radial text at sector center)
                 mid_angle = start_angle + span / 2
@@ -2157,6 +2213,35 @@ class WheelView(CotIndexMixin, QGraphicsView):
         "Ether": "#7E57C2",   # Violet (matches trimsamsa ring)
     }
 
+    # The Hora and Trimsamsa pies keep their element keys (colours, data) but
+    # show what the division means: Sun/Moon for Hora, the being type for
+    # Trimsamsa. Hovering a slice or legend row gives the longer meaning.
+    # Provenance: these meanings are Lorris Turpin's own interpretation, in his
+    # voice; allowed on LTS (td-6qjcy).
+    _HORA_PIE_LABELS = {"Fire": "Sun", "Water": "Moon"}
+    _HORA_PIE_TOOLTIPS = {
+        "Fire": "Sun Hora (Aditya side): activation, taking action, "
+                "doing something, putting energy out into the world.",
+        "Water": "Moon Hora (Naga side): releasing, letting go, "
+                 "receiving and letting things settle.",
+    }
+    _TRIMSAMSA_PIE_LABELS = {
+        "Fire": "Gandharva", "Air": "Rakshasa", "Ether": "Rishi",
+        "Earth": "Yaksha", "Water": "Apsara",
+    }
+    _TRIMSAMSA_PIE_TOOLTIPS = {
+        "Fire": "Gandharva (Mars): very active, eager to do things, "
+                "action in a creative way, creative fire.",
+        "Air": "Rakshasa (Saturn): pushing through and fighting in order to "
+               "create something, or fighting enemies.",
+        "Ether": "Rishi (Jupiter): teaching, balancing, maturity, bringing "
+                 "things together into a coherent whole.",
+        "Earth": "Yaksha (Mercury): artisans, resourceful in practical, "
+                 "earthy ways.",
+        "Water": "Apsara (Venus): seduction, pleasing others, bringing people "
+                 "together, diplomacy, art.",
+    }
+
     def _pie_position_right(self, rings_active=False):
         """Bottom-right diagonal position for pie chart."""
         # Derive the pie offset from the outermost drawn band (SPEC-TRN-004 4.7)
@@ -2194,7 +2279,7 @@ class WheelView(CotIndexMixin, QGraphicsView):
         return self.cx - diag_xy, self.cy + diag_xy
 
     def _draw_pie_chart(self, data, pie_cx, pie_cy, pie_r, title_text, colors,
-                        legend_side="right"):
+                        legend_side="right", labels=None, tooltips=None):
         """
         Generic pie chart renderer used by D1, Hora, and Trimsamsa pies.
 
@@ -2205,12 +2290,16 @@ class WheelView(CotIndexMixin, QGraphicsView):
             title_text: legend title ("Elements", "Hora", "Trimsamsa")
             colors: dict mapping element name → hex color
             legend_side: "right" or "left" — always place away from wheel center
+            labels: optional dict element → display name (default: element)
+            tooltips: optional dict element → hover text for slice and legend row
         """
         from PySide6.QtWidgets import QGraphicsRectItem
 
         total = data.get("total_weight", 0)
         if total == 0:
             return
+        labels = labels or {}
+        tooltips = tooltips or {}
 
         dominant = data.get("dominant_elements", [])
         current_angle = 90.0  # Start at 12 o'clock
@@ -2231,6 +2320,8 @@ class WheelView(CotIndexMixin, QGraphicsView):
             slice_item.setBrush(QBrush(QColor(colors.get(element, "#555"))))
             slice_item.setPen(QPen(QColor("#1a1a1e"), 2))
             slice_item.setZValue(20)
+            if element in tooltips:
+                slice_item.setToolTip(tooltips[element])
             self.scene.addItem(slice_item)
 
             if percent >= 10:
@@ -2262,7 +2353,8 @@ class WheelView(CotIndexMixin, QGraphicsView):
                 continue
             planet_abbrevs = [p[:2] if len(p) > 3 else p for p in planets_list]
             planets_str = ", ".join(planet_abbrevs)
-            legend_entries.append((element, percent, planets_str))
+            legend_entries.append(
+                (labels.get(element, element), percent, planets_str, element))
 
         # For left-side legend, measure the widest text to right-align against the pie
         if legend_side == "left":
@@ -2270,7 +2362,7 @@ class WheelView(CotIndexMixin, QGraphicsView):
             fm = QFontMetricsF(legend_font)
             max_text_w = max(
                 (fm.horizontalAdvance(f"{el} {pct:.0f}%  {ps}") + 24
-                 for el, pct, ps in legend_entries),
+                 for el, pct, ps, _key in legend_entries),
                 default=200
             )
             fm_title = QFontMetricsF(legend_font_title)
@@ -2296,18 +2388,21 @@ class WheelView(CotIndexMixin, QGraphicsView):
         self.scene.addItem(title)
         legend_y += line_h + 4
 
-        for element, percent, planets_str in legend_entries:
+        for label_text, percent, planets_str, element in legend_entries:
             swatch = QGraphicsRectItem(legend_x, legend_y + 4, 18, 18)
             swatch.setBrush(QBrush(QColor(colors.get(element, "#555"))))
             swatch.setPen(QPen(swatch_border_color, 1))
             swatch.setZValue(20)
             self.scene.addItem(swatch)
 
-            text = QGraphicsTextItem(f"{element} {percent:.0f}%  {planets_str}")
+            text = QGraphicsTextItem(f"{label_text} {percent:.0f}%  {planets_str}")
             text.setFont(legend_font)
             text.setDefaultTextColor(legend_text_color)
             text.setPos(legend_x + 24, legend_y)
             text.setZValue(20)
+            if element in tooltips:
+                swatch.setToolTip(tooltips[element])
+                text.setToolTip(tooltips[element])
             self.scene.addItem(text)
 
             legend_y += line_h
@@ -2368,7 +2463,9 @@ class WheelView(CotIndexMixin, QGraphicsView):
             self._chart, luminary_weight=1.5,
             tropical_mode=tropical_mode, ayanamsa_offset=aya)
         pie_cx, pie_cy = self._pie_position_right(rings_active=True)
-        self._draw_pie_chart(data, pie_cx, pie_cy, 140, "Hora", self._PIE_COLORS)
+        self._draw_pie_chart(
+            data, pie_cx, pie_cy, 140, "Hora", self._PIE_COLORS,
+            labels=self._HORA_PIE_LABELS, tooltips=self._HORA_PIE_TOOLTIPS)
 
     def _draw_trimsamsa_pie(self):
         """Trimsamsa element pie chart — bottom-LEFT (when F5 ON)."""
@@ -2380,7 +2477,8 @@ class WheelView(CotIndexMixin, QGraphicsView):
         pie_cx, pie_cy = self._pie_position_left(rings_active=True)
         self._draw_pie_chart(
             data, pie_cx, pie_cy, 140, "Trimsamsa", self._TRIMSAMSA_PIE_COLORS,
-            legend_side="left")
+            legend_side="left", labels=self._TRIMSAMSA_PIE_LABELS,
+            tooltips=self._TRIMSAMSA_PIE_TOOLTIPS)
 
     def _on_house_hover_enter(self, house_num: int):
         self._clear_retinue_hover(clear_house_numbers=False)
@@ -2504,11 +2602,13 @@ class WheelView(CotIndexMixin, QGraphicsView):
             else:
                 from PySide6.QtWidgets import QGraphicsDropShadowEffect
                 from apps.widgets.planet_shadow import create_planet_shadow
-                ref = create_planet_shadow(planet_name=item.planet_name)
+                # td-e6jsp: a planet wearing its strength aura keeps the aura's colour
+                ref_color = strength_colour(item)
+                ref = None if ref_color is not None else create_planet_shadow(planet_name=item.planet_name)
                 if ref:
                     ref_color = QColor(ref.color())
                     del ref
-                else:
+                elif ref_color is None:
                     ref_color = QColor(200, 200, 200)
                 new_effect = QGraphicsDropShadowEffect()
                 new_effect.setBlurRadius(36)
@@ -2580,6 +2680,8 @@ class WheelView(CotIndexMixin, QGraphicsView):
         # Position each icon at center of its sector
         icon_radius = (outer_inner_r + outer_outer_r) / 2
         icon_size = 140  # Slightly smaller than main zodiac icons
+        from ui.sign_numbers import numbers_on
+        as_numbers = numbers_on('wheel')
 
         for i in range(12):
             # Center of sector (15° into the 30° sector)
@@ -2594,6 +2696,11 @@ class WheelView(CotIndexMixin, QGraphicsView):
             # In Aditya mode: icon_offset=0, show Tropical (i)
             # In Classic mode: icon_offset=1, show Aditya (i+1)%12
             icon_index = (i + icon_offset) % 12
+            if as_numbers:
+                # Signs as numbers: the sign this sector's icon stands for.
+                from apps.widgets.wheel_rim_numbers import add_rim_number
+                add_rim_number(self.scene, icon_index, x, y, icon_size)
+                continue
             pixmap = self.load_zodiac_icon(icon_index, size=icon_size)
             if pixmap:
                 item = TropicalZodiacSymbolItem(pixmap, x, y, icon_index)
@@ -2609,7 +2716,8 @@ class WheelView(CotIndexMixin, QGraphicsView):
         positions = {}
         for pn, p in visible_items(self._transit_planets, self._TRANSIT_PLANET_NAMES):
             if pn in display_names(self._TRANSIT_PLANET_NAMES):
-                positions[pn] = {"decimal_degrees": float(self._planet_effective_degrees(p))}
+                positions[pn] = {"decimal_degrees": float(self._planet_effective_degrees(p)),
+                                 "planet_obj": p}   # the ring's own F11 caption
         if self._transit_cusps:
             try:
                 asc = self._transit_cusps[1]
@@ -2638,7 +2746,8 @@ class WheelView(CotIndexMixin, QGraphicsView):
             positions = {}
             for pn, p in visible_items(self._outer_rim_planets, self._OUTER_RIM_PLANET_NAMES):
                 if pn in display_names(self._OUTER_RIM_PLANET_NAMES):
-                    positions[pn] = {"decimal_degrees": float(self._planet_effective_degrees(p))}
+                    positions[pn] = {"decimal_degrees": float(self._planet_effective_degrees(p)),
+                                     "planet_obj": p}   # the ring's own F11 caption
             if self._outer_rim_cusps:
                 try:
                     asc = self._outer_rim_cusps[1]
@@ -2696,8 +2805,9 @@ class WheelView(CotIndexMixin, QGraphicsView):
         # names. asc_degrees is already in the chart's zodiac frame, so the sign
         # ordinal maps directly through the display-name source of truth.
         asc_sign_index = int(asc_degrees / 30) % 12
-        asc_sign_name = displayed_sign_name(
-            asc_sign_index, self._aditya_mode,
+        from ui.sign_numbers import sign_label  # Signs as numbers (SPEC-NIC-001 §3.7)
+        asc_sign_name = sign_label(
+            'wheel', asc_sign_index, self._aditya_mode,
             self.use_western_names, self.sign_language,
         )
 
@@ -2908,18 +3018,12 @@ class WheelView(CotIndexMixin, QGraphicsView):
             label_x = self.cx + label_radius * math.cos(angle_to_planet)
             label_y = self.cy - label_radius * math.sin(angle_to_planet)
 
-            # Format degree label or planet name
-            if self.show_planet_names:
-                label_text = get_planet_display_name(
-                    self.sign_language, planet["name"])
-            else:
-                deg_in_sign = planet["degrees"] % 30
-                degrees = int(deg_in_sign)
-                minutes = int((deg_in_sign - degrees) * 60)
-                label_text = f"{degrees}°{minutes:02d}'"
+            # The F11 caption: degree, planet name, gate or nakshatra
+            label_text = self._planet_caption(
+                planet["name"], planet["data"].get("planet_obj"), planet["degrees"] % 30)
 
             label = QGraphicsTextItem(label_text)
-            label.setFont(scaled_area_font('chart_labels', family='Inter'))
+            label.setFont(QFont('Inter', chart_area_size(16, 'planet_degrees')))  # 16 = former chart_labels size
             label.setDefaultTextColor(QColor(label_color))
             label.setPos(label_x - label.boundingRect().width() / 2,
                         label_y - label.boundingRect().height() / 2)
@@ -3049,6 +3153,7 @@ class WheelView(CotIndexMixin, QGraphicsView):
 
     def clear_chart(self):
         """Clear the wheel display."""
+        cancel_paint(self)
         self._has_chart = False
         self._chart = None
         self._planets = None
@@ -3076,6 +3181,10 @@ class WheelView(CotIndexMixin, QGraphicsView):
         self._highlighted_house = None
         self._highlighted_sector = None
         self._original_shadows = {}
+        # A clear is a full draw of the empty wheel: it absorbs a pending
+        # deferred decoration redraw (td-u53i), as draw_wheel does, so a
+        # later showEvent does not swap the empty wheel for a chartless one.
+        self._retinue_dirty = False
         self.scene.clear()
         # Draw empty wheel
         self._draw_background()
@@ -3084,3 +3193,31 @@ class WheelView(CotIndexMixin, QGraphicsView):
         self._draw_zodiac_symbols()
         self._draw_sign_names()
         self._draw_center()
+
+
+PART_ROLE = Qt.ItemDataRole.UserRole + 9    # a planet's icon, label or pointer, for planet_pass
+ICON, TEXT, POINTER = 'icon', 'text', 'pointer'
+
+
+def mark_part(item, part):
+    item.setData(PART_ROLE, part)
+    return item
+
+
+def part_is(part):
+    return lambda item: item.data(PART_ROLE) == part
+
+
+def planet_pass(view):
+    """The wheel's planet post-passes on its finished scene: the Ember Aura
+    (td-647kl: every aura from the ONE reference half size, the pointers left out
+    of the ground) and the dignity overlay (td-m6xyo). Also the light redraw's
+    (apps/widgets/planet_decoration_refresh.py)."""
+    glow_scene(view.scene, view._chart, part_is(ICON), part_is(TEXT), view._aura_reference,
+               part_is(POINTER))
+    view_pass(view, PlanetItem, view._aura_reference, wheel=True)
+
+
+# The PLANET / DIGNITY keys' light redraw (planet_decoration_refresh.py)
+register_planet_pass(WheelView, planet_pass, lambda view, planet: create_planet_shadow(planet_name=planet))
+register_chain_pass(WheelView, chain_pass)   # the THREAD key's light redraw

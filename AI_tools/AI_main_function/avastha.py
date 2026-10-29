@@ -28,7 +28,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 from AI_tools.analysis.AI_aspects import calculate_all_aspects, PLANETS, ASPECTING_PLANETS
 from core.chart_helpers import (
-    get_planet_sign_name, get_planet_in_sign_longitude, has_planet,
+    get_planet_sign_index, get_planet_sign_name, get_planet_in_sign_longitude,
+    has_planet,
 )
 
 try:
@@ -289,9 +290,13 @@ def get_drishti_yuti_data(chart):
     for planet in ASPECTING_PLANETS:
         if not has_planet(chart, planet) or planet not in ADITYA_DIGNITIES:
             continue
-        sign_name = get_planet_sign_name(chart, planet, default="")
+        # By sign index: the chart's sign names are Western in tropical
+        # classic and sidereal, the dignity tables are keyed by position.
+        sign_idx = get_planet_sign_index(chart, planet, default=-1)
+        if sign_idx < 0:
+            continue
         deg_in_sign = get_planet_in_sign_longitude(chart, planet)
-        dignity = check_planet_dignity(planet, sign_name, deg_in_sign)
+        dignity = check_planet_dignity(planet, sign_idx, deg_in_sign)
         if dignity and dignity in DIGNITY_VR:
             dignity_data[planet] = {
                 "type": dignity,

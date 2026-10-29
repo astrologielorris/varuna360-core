@@ -1,0 +1,62 @@
+{
+ "Jupiter": {
+  "name": "Júpiter",
+  "ok": "6c7d7e03",
+  "src": "6c7d7e03"
+ },
+ "Ketu": {
+  "name": "Ketu",
+  "ok": "487130aa",
+  "src": "487130aa"
+ },
+ "Mars": {
+  "name": "Marte",
+  "ok": "d52ac519",
+  "src": "d52ac519"
+ },
+ "Mercury": {
+  "name": "Mercúrio",
+  "ok": "2ce2c63b",
+  "src": "2ce2c63b"
+ },
+ "Moon": {
+  "name": "Lua",
+  "ok": "43dee8d6",
+  "src": "43dee8d6"
+ },
+ "Neptune": {
+  "name": "Neptuno",
+  "ok": "5872e1f2",
+  "src": "5872e1f2"
+ },
+ "Pluto": {
+  "name": "Plutão",
+  "ok": "4ba51aed",
+  "src": "4ba51aed"
+ },
+ "Rahu": {
+  "name": "Rahu",
+  "ok": "841edd3e",
+  "src": "841edd3e"
+ },
+ "Saturn": {
+  "name": "Saturno",
+  "ok": "9eee4f5c",
+  "src": "9eee4f5c"
+ },
+ "Sun": {
+  "name": "Sol",
+  "ok": "69f98817",
+  "src": "69f98817"
+ },
+ "Uranus": {
+  "name": "Urano",
+  "ok": "34045031",
+  "src": "34045031"
+ },
+ "Venus": {
+  "name": "Vénus",
+  "ok": "a4848158",
+  "src": "a4848158"
+ }
+}

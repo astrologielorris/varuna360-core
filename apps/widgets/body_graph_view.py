@@ -25,6 +25,8 @@ a transparent ClickablePlanetItem overlay (BoundingRectShape hit area).
 """
 from PySide6.QtWidgets import QGraphicsView, QGraphicsScene
 from PySide6.QtCore import Qt, QRectF, QTimer
+
+from apps.widgets.paint_on_show import cancel_paint, defer_paint
 from PySide6.QtGui import (
     QPen, QBrush, QColor, QPainter, QPixmap, QImage, QFont, QPainterPath,
 )
@@ -147,13 +149,22 @@ class BodyGraphView(QGraphicsView):
         if gender is not None:
             self._gender = gender
 
-        self.scene.clear()
         if chart is None:
+            cancel_paint(self)
+            self.scene.clear()
             return
+        self._draw_all()
 
+    def _draw_all(self):
+        """The full draw of the stored chart."""
+        if defer_paint(self, "_draw_all"):          # hidden: drawn at its next show
+            return
+        self.scene.clear()
+        if self._current_chart is None:
+            return
         self._draw_background()
         self._draw_zone_overlays()
-        self._draw_planet_labels(chart)
+        self._draw_planet_labels(self._current_chart)
 
     def ensure_visible(self):
         """Fit the whole 1920x1920 body into the viewport (six-eyes M2).
@@ -682,15 +693,10 @@ class BodyGraphView(QGraphicsView):
         path = PROJECT_ROOT / "img" / "planets" / f"{filename}.webp"
         pixmap = None
         if path.exists():
-            img = QImage(str(path))
-            if not img.isNull():
-                img = img.scaled(
-                    size, size,
-                    Qt.AspectRatioMode.KeepAspectRatio,
-                    Qt.TransformationMode.SmoothTransformation,
-                )
-                img = desat_image(img)
-                pixmap = QPixmap.fromImage(img)
+            from apps.widgets.icon_prefetch import scaled_image
+            img = scaled_image(path, size)   # decoded off the GUI thread when prefetched
+            if img is not None:
+                pixmap = QPixmap.fromImage(desat_image(img))
         self._icon_cache[key] = pixmap
         return pixmap
 

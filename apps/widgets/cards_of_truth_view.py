@@ -209,7 +209,7 @@ _SELECT_KEY = {
 # The two timing families (SPEC-COT-007 D-1, INV-7)
 # ------------------------------------------------------------------ #
 
-#
+#: The two timing families. They are PEERS, not two depths
 #: of one ladder: a quadration cycle and a progression are two different things,
 #: not two levels of the same ladder.
 #: Taken from the ladder where it defines them, so the two modules cannot end up
@@ -554,12 +554,11 @@ _GESTURE_HELP = (
         ("Anchored on the birthday, not on the solar return.",),
         ("The seal on the left shows the Year Card. The three lines beside "
          "it check whether this card turns up in any of three spreads: your "
-         " "
-         "",),
-        (" "
-         " "
-         "",),
-        (" "
+         "natal spread (the 14 birth cards), the 7 year block, "
+         "and this year's deck.",),
+        ("Landing on the Ecliptic is the strongest match. Landing on the birth "
+         "card or the running 52 year period card is the next strongest.",),
+        ("The natal spread the ledger checks is your BIRTH spread, not "
          "the quadrated age deck on screen. They are different spreads.",),
     )),
     ("Learning more", (
@@ -599,14 +598,14 @@ except Exception:                                     # noqa: BLE001
     _LEDGER_EMPTY = ("The Year Card does not turn up in any of these spreads. "
                      "That is the ordinary case, not a gap.")
 
-#
+#: The three rows, in the order §3.7 prints them, with the names for the
 #: three spreads. The keys are the scan's keys; the fallback labels are used
 #: only when the engine's own table is out of reach.
 _LEDGER_ROWS = tuple(
     (key, _SPREAD_LABELS.get(key, fallback)) for key, fallback in (
-        ("life", "in your life spread"),
-        ("progression", ""),
-        ("year", ""),
+        ("life", "natal spread"),
+        ("progression", "7 year block"),
+        ("year", "this year's deck"),
     ))
 
 

@@ -28,6 +28,7 @@ from ui.qt_theme import (
     scaled_area_px,
     desat_hex,
 )
+from ui.accent_ink import on_accent_ink  # SPEC-THM-001 §13
 from ui.popup_fonts import tier_px, in_dialog_button_style
 
 import urllib.parse
@@ -100,29 +101,26 @@ def _get_all_dasha_entries(gui, panel_side):
     # Dasha navigation state now lives on DashaManager.dasha_state
     # (SPEC-DSH-002); read it via the accessors, guarding a missing manager.
     dm = getattr(gui, 'dasha_manager', None)
-    if panel_side == 'left':
-        dasha_data = dm.rows("left") if dm else None
-        # Label reflects current ayanamsa setting (Vedanga, Dhruva, Lahiri, etc.)
-        from core.ayanamsa_data import get_ayanamsa_name
-        ayan_id = dm.ayanamsa("left") if dm else 100
-        dasha_label = get_ayanamsa_name(ayan_id) or "Dasha"
-        is_nisarga = False
-    else:
-        right_mode = dm.right_mode if dm else 'nisarga'
-        is_nisarga = right_mode == "nisarga"
-        # SPEC-ZR-001: Zodiacal Releasing reads its rows from the list widget
-        # like Nisarga (there is no cached mahadasha tree), labelled "Releasing".
-        if right_mode == "zr":
-            return _get_zr_entries(gui), "Releasing"
-        if is_nisarga:
-            dasha_data = None
-            dasha_label = "Planetary Ages"
-        else:
-            dasha_data = dm.rows("right") if dm else None
-            dasha_label = "Vimshottari"
-
-    if is_nisarga:
-        return _get_nisarga_entries(gui), dasha_label
+    if dm is None:
+        return [], "Dasha"
+    # SPEC-DSH-004: both sides alike, dispatched on the side's mode.
+    mode = dm.mode(panel_side)
+    if mode == "nisarga":
+        return _get_nisarga_entries(gui, panel_side), "Planetary Ages"
+    if mode != "vimshottari":
+        # Every other mode (Zodiacal Releasing, any later one) shows one
+        # level at a time in the side's list widget, with the shared entry keys
+        # (jd, lord, level): read the list. Label = the registry's short label.
+        from managers.dasha.modes import mode_spec
+        spec = mode_spec(mode)
+        return _get_zr_entries(gui, panel_side), spec.short_label or spec.label
+    dasha_data = dm.rows(panel_side)
+    # Label reflects the side's ayanamsa (Vedanga, Dhruva, Lahiri, etc.)
+    from core.ayanamsa_data import get_ayanamsa_name
+    dasha_label = get_ayanamsa_name(dm.ayanamsa(panel_side)) or "Dasha"
+    other = "left" if panel_side == "right" else "right"
+    if dm.mode(other) == "vimshottari" and dm.ayanamsa(other) == dm.ayanamsa(panel_side):
+        dasha_label = f"{dasha_label} ({panel_side})"   # two identical submenus otherwise
 
     # --- Vedanga / Vimshottari: get antardasha from cached data ---
     if not dasha_data:
@@ -210,11 +208,10 @@ def _get_all_dasha_entries(gui, panel_side):
     return entries, dasha_label
 
 
-def _get_nisarga_entries(gui):
-    """Get Nisarga (Planetary Ages + Maturation) entries from the list widget."""
+def _get_nisarga_entries(gui, side):
+    """Get Nisarga (Planetary Ages + Maturation) entries from `side`'s list."""
     import re
-    _rp = getattr(gui, 'vimshottari_panel', None)
-    list_widget = _rp.list_widget if _rp is not None else None
+    list_widget = _side_list(gui, side)
     if not list_widget:
         return []
 
@@ -254,16 +251,23 @@ def _get_nisarga_entries(gui):
     return entries
 
 
-def _get_zr_entries(gui):
-    """SPEC-ZR-001: Zodiacal Releasing entries from the displayed list widget.
+def _side_list(gui, side):
+    """`side`'s dasha list widget, or None before the panel is built."""
+    dm = getattr(gui, 'dasha_manager', None)
+    p = dm.panel(side) if dm is not None else None
+    return p.list_widget if p is not None else None
+
+
+def _get_zr_entries(gui, side):
+    """SPEC-ZR-001: Zodiacal Releasing entries from
+    `side`'s displayed list widget.
 
     Reads the currently listed level (one level shows at a time). Each row
     carries lord, sign_label, local start date and is_current in its UserRole.
     Rows tile, so there is no separate end date; is_maturation is always False
     so the caller renders one flat "Releasing" submenu.
     """
-    _rp = getattr(gui, 'vimshottari_panel', None)
-    list_widget = _rp.list_widget if _rp is not None else None
+    list_widget = _side_list(gui, side)
     if not list_widget:
         return []
 
@@ -308,8 +312,8 @@ def _style_overlay_chip(gui):
         return
     # F2 / MAJOR 2 + MINOR 6 / INV-4: the v2 bar's chip is fully painted — the
     # OverlayChip body self-themes via bar_tokens() at paint time, its container
-    # is a plain transparent QWidget, and the × clear is a HIDDEN programmatic
-    # proxy (the well's painted chevron is the visible clear affordance). It
+    # is a plain transparent QWidget, and the × clear is a painted round
+    # CloseGlyphButton (SPEC-DUAL-001 §4.1: the chevron is retired). It
     # needs NO stylesheet (QSS is reserved for the overflow menu), so skip the
     # QSS path entirely for it and keep it only for the LEGACY bar's visible ×.
     if getattr(gui, '_overlay_chip_painted', False):
@@ -373,7 +377,11 @@ def update_overlay_chip(gui, mgr):
                     tier = ctl.tier
                 except Exception:
                     tier = 0
-            view.set_collapsed(tier >= 1)
+            # SPEC-DUAL-001 §4.1 (S11): name only in pair mode too.
+            bar = getattr(gui, "chart_title_widget", None)
+            pair = getattr(bar, "pair", None)
+            in_pair = bool(pair is not None and pair.is_pair())
+            view.set_collapsed(tier >= 1 or in_pair)
         # Do not reveal the chip in compact mode: the TRANSIT button is hidden
         # there, so a visible chip would be a dead control (reachable when an
         # overlay is started while already compact, e.g. via the right-click entry).
@@ -382,8 +390,8 @@ def update_overlay_chip(gui, mgr):
             gui.transit_btn.setText("⟐ Overlay")
             gui.transit_btn.setToolTip(
                 f"Overlay: {name}. Click to turn the rim off, or click the "
-                f"chevron on the chip (or right-click here) to go back to live "
-                f"sky.")
+                f"round clear button on the chip (or right-click here) to go "
+                f"back to live sky.")
     else:
         gui.overlay_chip.setVisible(False)
         if view is not None:
@@ -684,7 +692,7 @@ class ChartSearchDialog(QDialog):
             }}
             QListWidget::item:selected {{
                 background-color: {_theme['primary']};
-                color: {_theme['primary_text']};
+                color: {on_accent_ink(_theme['primary'], _theme['primary_text'])};
             }}
             QScrollBar:vertical {{
                 background-color: {_theme['secondary']};
@@ -1000,12 +1008,12 @@ def create_chart_title_widget(gui):
         }}
         QPushButton:hover {{
             background-color: {theme["primary"]};
-            color: {theme["primary_text"]};
+            color: {on_accent_ink(theme["primary"], theme["primary_text"])};
             border: 1px solid {theme["primary_light"]};
         }}
         QPushButton:pressed {{
             background-color: {theme["primary_dark"]};
-            color: {theme["primary_text"]};
+            color: {on_accent_ink(theme["primary_dark"], theme["primary_text"])};
         }}
     """
 
@@ -1022,12 +1030,12 @@ def create_chart_title_widget(gui):
         }}
         QPushButton:hover {{
             background-color: {theme["primary"]};
-            color: {theme["primary_text"]};
+            color: {on_accent_ink(theme["primary"], theme["primary_text"])};
             border: 1px solid {theme["primary_light"]};
         }}
         QPushButton:checked {{
             background-color: {theme["primary"]};
-            color: {theme["primary_text"]};
+            color: {on_accent_ink(theme["primary"], theme["primary_text"])};
             border: 2px solid {theme["primary_light"]};
         }}
     """
@@ -1211,7 +1219,7 @@ def create_chart_title_widget(gui):
         }}
         QPushButton:hover {{
             background-color: {theme["primary"]};
-            color: {theme["primary_text"]};
+            color: {on_accent_ink(theme["primary"], theme["primary_text"])};
         }}
     """
 
@@ -1228,7 +1236,7 @@ def create_chart_title_widget(gui):
         }}
         QPushButton:hover {{
             background-color: {theme["primary"]};
-            color: {theme["primary_text"]};
+            color: {on_accent_ink(theme["primary"], theme["primary_text"])};
         }}
     """
     gui.now_btn = QPushButton("Now")
@@ -1412,7 +1420,7 @@ def set_chart_title_compact(gui, compact):
             border-radius: 5px; padding: 2px 6px;
             max-height: 22px;
         }}
-        QPushButton:hover {{ background-color: {theme["primary"]}; color: {theme["primary_text"]}; }}
+        QPushButton:hover {{ background-color: {theme["primary"]}; color: {on_accent_ink(theme["primary"], theme["primary_text"])}; }}
     """
     _compact_active = f"""
         QPushButton {{
@@ -1622,12 +1630,12 @@ def refresh_chart_title_theme(gui):
         }}
         QPushButton:hover {{
             background-color: {theme["primary"]};
-            color: {theme["primary_text"]};
+            color: {on_accent_ink(theme["primary"], theme["primary_text"])};
             border: 1px solid {theme["primary_light"]};
         }}
         QPushButton:pressed {{
             background-color: {theme["primary_dark"]};
-            color: {theme["primary_text"]};
+            color: {on_accent_ink(theme["primary_dark"], theme["primary_text"])};
         }}
     """
 
@@ -1635,7 +1643,7 @@ def refresh_chart_title_theme(gui):
     checkable_style = btn_style + f"""
         QPushButton:checked {{
             background-color: {theme["primary"]};
-            color: {theme["primary_text"]};
+            color: {on_accent_ink(theme["primary"], theme["primary_text"])};
             border: 2px solid {theme["primary_light"]};
         }}
     """

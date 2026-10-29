@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="512" height="512">
+  <title>Aries</title>
+  <g fill="none" stroke="#E57373" stroke-width="7" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M50 80 V46 C50 28 42 18 30 18 C16 18 12 34 18 42 C22 48 28 48 32 46"/>
+    <path d="M50 46 C50 28 58 18 70 18 C84 18 88 34 82 42 C78 48 72 48 68 46"/>
+  </g>
+</svg>

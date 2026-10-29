@@ -109,18 +109,6 @@ VALID_ORDERS = tuple(planet_order.keys())
 #: choosing between (SPEC-COT-001 D-15).
 ORDER_LABELS = {"solar_system": "Solar System", "vedic": "Week Day"}
 
-#: The names the GUI shows, mapped back to the engine keys. Someone reading
-#: "Week Day" on screen must be able to type it at the CLI (Rule 24), but the
-#: canonical value stays ``vedic``.
-ORDER_ALIASES = {"week_day": "vedic", "weekday": "vedic",
-                 "solar-system": "solar_system"}
-
-
-def normalise_order(value: str) -> str:
-    """An engine order key from either the engine name or the GUI name."""
-    return ORDER_ALIASES.get(value, value)
-
-
 #: 0-based sign index -> ruling planet, from the engine's own ``const.lords``
 #: (which is 1-based). Aries/Dhata is index 0 in EVERY zodiac system this app
 #: offers — division #1 does not shift — so this table is frame-independent and
@@ -527,7 +515,7 @@ PROGRESSION_COUNT = 52
 #: It IS Solar Value order, 0-indexed: ``AH``=0 .. ``KS``=51, so Solar Value is
 #: ``index + 1``. Verified against the engine rather than assumed. The ``KD``
 #: (38) -> ``AS`` (39) wrap is what proves it: a suit-grouped ordering would
-#
+#: put the next diamond there, and a walk from ``9D`` through
 #: ``TD JD QD KD AS`` crosses exactly that boundary.
 #:
 #: Taken from the engine's own ``Deck``, NOT from ``cards_constants.cards``.
@@ -541,7 +529,8 @@ PROGRESSION_COUNT = 52
 #: confined to ``progression_base_card`` and is pinned by eight reference anchors
 #: including the ``KD -> AS`` wrap, which is the only place an off-by-one in the
 #: ORDER (rather than the offset) could hide.
-_DECK_CODES = tuple(_DECK)
+DECK_CODES: tuple[str, ...] = tuple(_DECK)
+_DECK_CODES = DECK_CODES  # pre-Find-Chart private name, kept
 
 
 def solar_value(code: str) -> int:
@@ -806,31 +795,31 @@ BASE_SEAT = 0
 ECLIPTIC_SEAT = 10
 
 #: Ranks, strongest first. Numbers rather than names because they sort.
-RANK_ECLIPTIC = 1     # ""
+RANK_ECLIPTIC = 1     # the ecliptic seat
 RANK_BASE = 2         # the birth card, or the running 52-year period card
-RANK_OTHER = 3        # ""
+RANK_OTHER = 3        # any other seat
 
 #: Sorts a spread with no match last without pretending it has a rank.
 _RANK_NONE = 99
 
-#
+#: The names of the three spreads, as the ledger prints them.
 #:
 #: INV-13 — the word "coincidence" is not a reader-facing term and appears nowhere on
 #: screen. It is a programmer's word for an empty result. The function is called
 #: :func:`coincidences` because that is what the spec names the call; every
 #: string a person reads comes from here.
 SPREAD_LABELS = {
-    "life": "in your life spread",
-    "progression": "",
-    "year": "",
+    "life": "natal spread",
+    "progression": "7 year block",
+    "year": "this year's deck",
 }
 
 #: The one line under the ledger, per spread rank. INV-3/INV-7 — significance,
 #: never valence. Not one of these says whether the year is good.
 RANK_COPY = {
-    RANK_ECLIPTIC: "",
+    RANK_ECLIPTIC: "On the Ecliptic: the strongest match of the year.",
     RANK_BASE: "An important year.",
-    RANK_OTHER: "",
+    RANK_OTHER: "This year puts weight on what {position} stands for.",
 }
 
 #: Printed when nothing matches. INV-4 — an empty result is NORMAL. The King of
@@ -907,7 +896,7 @@ def coincidences(year_code, spreads, order: str = DEFAULT_ORDER, age=None) -> li
     Returns:
         One dict per spread, strongest first::
 
-            {"key": "year", "label": "",
+            {"key": "year", "label": "this year's deck",
              "seats": [8], "positions": ["Rahu"],
              "rank": 3, "matched": True, "copy": "..."}
 
@@ -915,11 +904,9 @@ def coincidences(year_code, spreads, order: str = DEFAULT_ORDER, age=None) -> li
         up. **INV-4 — that is normal**, not an error and not a blank state that
         apologises.
 
-        **INV-5 — this is a LIST across spreads, never a boolean.** Ernst's
-        strongest demonstration is Angelina Jolie's age 7, where ``6D`` is the
-        Year Card, the Venus card and the running 52-day period at once:
-        *"Six of Diamonds, Six of Diamonds, Six of Diamonds down to three
-        levels"*. Depth is the finding; a boolean throws it away.
+        **INV-5 — this is a LIST across spreads, never a boolean.** One card can be
+        the Year Card, a planet card and the running period card at once.
+        Depth is the finding; a boolean throws it away.
 
         **INV-3 — no entry carries a good/bad flag**, and none ever may. The
         match says the year matters; the card and its occupants say how
@@ -928,7 +915,7 @@ def coincidences(year_code, spreads, order: str = DEFAULT_ORDER, age=None) -> li
     if not year_code:
         return []
 
-    positions = planet_order[normalise_order(order)]
+    positions = planet_order[order]
     out = []
     for key, codes in spreads.items():
         seats = [i for i, code in enumerate(codes) if code == year_code]

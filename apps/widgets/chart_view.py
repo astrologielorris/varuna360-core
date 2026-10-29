@@ -15,13 +15,22 @@ from apps.widgets.planet_icon_loader import load_planet_icon
 from apps.widgets.additional_body_glyphs import make_planet_item
 from apps.widgets.planet_icon_style import appearance_signature
 from apps.widgets.classic_south_sign import add_classic_sign_art, JoshGlyphItem
+from apps.widgets.planet_strength_glow import glow_preview_planet, glow_scene
+from apps.widgets.dignity_view_pass import as_centre_mini, view_pass
+from apps.widgets.paint_on_show import cancel_paint, defer_paint
+from apps.widgets.planet_decoration_refresh import register_planet_pass
+from apps.widgets.exchange_chain_hover import classic_centre_sync, classic_si_pass
+from apps.widgets.exchange_chain_items import register_chain_pass
+from apps.widgets.planet_shadow import create_planet_shadow
+from core import planet_aura as pa
 import sys
 import json
+from functools import partial
 from pathlib import Path
 
 from PySide6.QtWidgets import (
     QGraphicsView, QGraphicsScene, QGraphicsPixmapItem,
-    QGraphicsTextItem, QGraphicsRectItem, QGraphicsDropShadowEffect
+    QGraphicsTextItem, QGraphicsRectItem, QGraphicsDropShadowEffect, QGraphicsSimpleTextItem
 )
 from PySide6.QtCore import Qt, Signal, QObject
 from PySide6.QtGui import (
@@ -53,12 +62,15 @@ from ui.qt_theme import (
     desat_image,
     sat_key,
     desat_hex,
-    scaled_tier_size,
+    scaled_tier_size, get_area_font_size, AREA_DEFAULTS,
 )
 
 # Import settings manager for chart display customization
 from managers.settings_manager import get_settings
-from core.aditya_mode import displayed_sign_name, get_planet_display_name
+from core.aditya_mode import displayed_sign_name
+from core.planet_label import PlanetCaptions, caption_key
+from ui.sign_numbers import effective_sign_display, sign_label
+from apps.widgets.chart_area_size import chart_area_size
 from state.user_data import get_settings_path as _get_settings_path
 
 # Canonical element palette (td-s6u7 dedupe): one source of truth for the
@@ -109,6 +121,43 @@ def _load_background_presets():
     return {}
 
 BACKGROUND_PRESETS = _load_background_presets()
+
+BIG_DEGREES_FACTOR = 1.5   # Planet Degrees factor from which the abbreviation is dropped
+
+
+def _draw_classic_planet_labels(view, planet_name, degrees_text, x_pos, icon_bottom,
+                                abbrev_offset_y, degrees_offset_y, abbrev_color,
+                                degrees_color):
+    """The text under one planet glyph in the classic South Indian view.
+
+    The degree follows Font Sizes > Planet Degrees (display.fonts.planet_degrees).
+    Enlarged, it grows UPWARD from its default bottom edge so the house number
+    and cusp degrees at the foot of the cell keep their room; from a factor of
+    1.5 the two-letter abbreviation is dropped (the glyph already names the
+    planet). At the default size nothing moves (factor 1.0, zero lift).
+    """
+    display = view.display_settings
+    abbrev_y = icon_bottom + abbrev_offset_y
+    # The user's enlargement only (no Display Scale): factory areas never move.
+    factor = get_area_font_size('planet_degrees') / AREA_DEFAULTS['planet_degrees']
+    if factor < BIG_DEGREES_FACTOR:
+        view._draw_styled_text(planet_name[:2], x_pos, abbrev_y,
+                               display.get("planet_abbrev_style", {}),
+                               QColor(abbrev_color), z_value=80, center_x=True)
+    degrees_style = display.get("planet_degrees_style", {})
+    size = chart_area_size(degrees_style.get('font_size', 16), 'planet_degrees')
+    lift = (QFontMetrics(QFont(FONT_CHART, size)).height()
+            - QFontMetrics(QFont(FONT_CHART, round(size / factor))).height()) if factor > 1.0 else 0
+    view._draw_styled_text(degrees_text, x_pos, icon_bottom + degrees_offset_y - lift,
+                           degrees_style, QColor(degrees_color), z_value=80,
+                           center_x=True, area='planet_degrees')
+
+
+def _is_classic_planet_text(item):
+    """The abbreviation and degree under a planet (``_draw_styled_text`` at z 80
+    puts the text at z 81)."""
+    return isinstance(item, QGraphicsSimpleTextItem) and item.zValue() == 81
+
 
 class HoverSignal(QObject):
     """Signal emitter for hover zone events (QGraphicsItem can't emit signals directly)"""
@@ -448,7 +497,7 @@ class SouthIndianView(QGraphicsView):
         # Only affects label display, not calculations
         self.use_western_names = False
         self.sign_language = "en"
-        self.show_planet_names = False
+        self.planet_label = "degrees"   # core.planet_label mode (F11)
 
         # Outer planets toggle (Uranus, Neptune, Pluto)
         self.show_outer_planets = True  # Default ON - matches previous behavior
@@ -1089,6 +1138,7 @@ class SouthIndianView(QGraphicsView):
 
     def draw_empty_grid(self):
         """Draw 4x4 grid with diagonal in center"""
+        cancel_paint(self)
         # Trust Qt's scene.clear() to handle all cleanup automatically
         # Manual cleanup of parent-child relationships interferes with Qt's internal state
         self.scene.clear()
@@ -1103,8 +1153,7 @@ class SouthIndianView(QGraphicsView):
 
         # Grid lines (optional - backgrounds usually have them)
         if self.show_grid:
-            pen = QPen(self.grid_color)
-            pen.setWidth(2)
+            pen = QPen(self.grid_color, 2)
 
             # Draw vertical lines
             for i in range(5):
@@ -1172,26 +1221,14 @@ class SouthIndianView(QGraphicsView):
             print(f"Warning: Icon not found for {western_name}")
             return None
 
-        # Step 1: Load with QImage (best for I/O)
-        qimage = QImage(str(icon_path))
-        if qimage.isNull():
+        # Scaled to the LOGICAL size, desaturated after the scale, no
+        # setDevicePixelRatio (fitInView handles display scaling); the decode
+        # is shared by every view (sign_icon_loader).
+        from apps.widgets.sign_icon_loader import scaled_sign_pixmap
+        pixmap = scaled_sign_pixmap(icon_path, size)
+        if pixmap is None:
             print(f"Warning: Failed to load image: {icon_path}")
             return None
-
-        # Step 2: Scale to LOGICAL size (no HiDPI - fitInView handles scaling)
-        # Use larger size for quality - fitInView will scale down smoothly
-        qimage = qimage.scaled(
-            size, size,
-            Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.SmoothTransformation
-        )
-
-        # Step 2b: Desaturate AFTER scale (SPEC-SAT-001 WI-4; no-op at 100)
-        qimage = desat_image(qimage)
-
-        # Step 3: Convert to QPixmap - NO setDevicePixelRatio!
-        # fitInView + SmoothPixmapTransform will handle display scaling
-        pixmap = QPixmap.fromImage(qimage)
 
         self.zodiac_icons[cache_key] = pixmap
         return pixmap
@@ -1214,10 +1251,10 @@ class SouthIndianView(QGraphicsView):
         Sign names switch between Aditya (Dhata, Aryama...) and Western (Aries, Taurus...)
         based on self.use_western_names flag. Western names localized via displayed_sign_name() based on sign_language setting.
         """
-        # Choose name list based on mode + toggle state
-        sign_name = displayed_sign_name(zodiac_idx, self.aditya_mode,
-                                        self.use_western_names,
-                                        self.sign_language)
+        # Choose name list based on mode + toggle state; the sign NUMBER when
+        # Settings > Signs as numbers ticks South Indian.
+        sign_name = sign_label('south_indian', zodiac_idx, self.aditya_mode,
+                               self.use_western_names, self.sign_language)
 
         # Keep aditya_name for offset lookups (offsets are calibrated for Aditya names)
         aditya_name = self.ADITYA_NAMES[zodiac_idx]
@@ -1338,7 +1375,8 @@ class SouthIndianView(QGraphicsView):
         sign_icon_settings = self.display_settings.get("sign_icon", {})
         icon_offset_x = sign_icon_settings.get("offset_x", 20)
         icon_offset_y = sign_icon_settings.get("offset_y", 20)
-        sign_display = get_settings().get('display.sign_display', 'zodiac')
+        sign_display = effective_sign_display('south_indian')
+        from ui.sign_display_modes import hides_sign_names
 
         for (row, col), zodiac_idx in self.ZODIAC_POSITIONS.items():
             # Cell boundaries
@@ -1358,7 +1396,7 @@ class SouthIndianView(QGraphicsView):
                 self._create_element_shadow_effect)
 
             # Add Aditya name at top-left
-            if sign_display != 'josh_only':
+            if not hides_sign_names(sign_display):
                 self.add_zodiac_label(row, col, zodiac_idx)
 
             # === Draw house number in bottom-left corner (if enabled) ===
@@ -1481,6 +1519,8 @@ class SouthIndianView(QGraphicsView):
 
     def draw_full_chart(self):
         """Draw complete chart with icons and planets"""
+        if defer_paint(self, "draw_full_chart"):       # hidden: drawn at its next show
+            return
         self.draw_chart_with_icons()
 
         if not self._chart:
@@ -1532,16 +1572,21 @@ class SouthIndianView(QGraphicsView):
         # Draw ascendant stripe indicator
         self._draw_ascendant_stripe()
 
-        planets_by_sign = self._group_planets_by_sign()
-
-        for zodiac_idx, planets_in_sign in planets_by_sign.items():
-            self._draw_planets_in_sign(zodiac_idx, planets_in_sign)
+        self._draw_all_planets(self._group_planets_by_sign())
 
         # Force viewport refresh to ensure chart displays immediately
         self.scene.update()
         self.viewport().update()
 
         self._apply_center_precedence()
+
+    def _draw_all_planets(self, planets_by_sign):
+        """Every sign's planets, then (td-e6jsp) the Ember Aura in place of the
+        manual glow while PLANET and a strength key are lit."""
+        for zodiac_idx, planets_in_sign in planets_by_sign.items():
+            self._draw_planets_in_sign(zodiac_idx, planets_in_sign)
+        classic_planet_pass(self)       # td-e6jsp / td-m6xyo: on the finished ground
+        classic_si_pass(self)           # td-s7qzl: the THREAD key's exchange chains
 
     def set_ascendant_effect_settings(self, settings: dict):
         """Set ascendant effect settings for element-themed glow.
@@ -2377,14 +2422,6 @@ class SouthIndianView(QGraphicsView):
         if self._chart:
             self.draw_full_chart()
 
-    def set_compass_mode(self, on):
-        """SPEC-SIC-004: accept and ignore. The Earth-fixed compass is a
-        vector-view feature; the classic image-backed South Indian view has no
-        compass frame. This one-line method keeps the host fan-out (INV-12)
-        symmetric so the flag is not lost when the style is switched to classic
-        and back. Returns False (never shown here)."""
-        return False
-
     def _get_effective_ascendant_sign_index(self) -> int:
         """Get the Ascendant sign index (0-11). Supports F4 override."""
         if self.ascendant_override is not None:
@@ -2483,8 +2520,10 @@ class SouthIndianView(QGraphicsView):
         x = x1 + global_offset_x + base_offset_x + per_sign_offset_x  # from left edge
         y = y2 - global_offset_y + base_offset_y + per_sign_offset_y  # from bottom edge (negative base_y = higher)
 
-        # Draw with styling
-        self._draw_styled_text(text, x, y, house_settings, self.text_color, z_value=5)
+        # Draw with styling. Size: the factory 23 scaled by Font Sizes > House
+        # Numbers (display.fonts.house_numbers); the stored per-view size is retired.
+        self._draw_styled_text(text, x, y, dict(house_settings, font_size=23), self.text_color,
+                               z_value=5, area='house_numbers')
 
     def _draw_house_cusps(self, x1, y1, x2, y2, zodiac_index):
         """Draw Campanus house cusps in bottom-right corner of cell.
@@ -2552,7 +2591,7 @@ class SouthIndianView(QGraphicsView):
             font = QFont(FONT_CHART)
         else:
             font = QFont(font_family)
-        font.setPixelSize(scaled_tier_size(font_size, 'chart_labels'))  # G2b: follow chart_labels
+        font.setPixelSize(chart_area_size(font_size, 'cusp_degrees'))  # Font Sizes > Cusp Degrees
 
         font_weight_str = style_settings.get('font_weight', 'normal')
         if font_weight_str == 'bold':
@@ -2570,7 +2609,8 @@ class SouthIndianView(QGraphicsView):
         self.scene.addItem(text_item)
 
     def _draw_styled_text(self, text: str, x: float, y: float, style_settings: dict,
-                          default_color: QColor = None, z_value: int = 5, center_x: bool = False):
+                          default_color: QColor = None, z_value: int = 5, center_x: bool = False,
+                          area: str = 'chart_labels'):
         """
         Draw text with optional styling (font, outline, background).
 
@@ -2584,6 +2624,7 @@ class SouthIndianView(QGraphicsView):
             default_color: Default text color if not styled
             z_value: Z-order for layering
             center_x: If True, x is treated as center point, text is centered horizontally
+            area: the Font Sizes area that scales font_size (SPEC-FONT-001)
         """
         from PySide6.QtWidgets import QGraphicsSimpleTextItem, QGraphicsPathItem
 
@@ -2600,11 +2641,11 @@ class SouthIndianView(QGraphicsView):
         bg_padding = style_settings.get('background_padding', 4)
         bg_radius = style_settings.get('background_radius', 0)
 
-        # Create font (G2b: follow chart_labels + scale)
+        # Create font (G2b: follow the font area + scale)
         if font_family == 'default':
-            font = QFont(FONT_CHART, scaled_tier_size(font_size, 'chart_labels'))
+            font = QFont(FONT_CHART, chart_area_size(font_size, area))
         else:
-            font = QFont(font_family, scaled_tier_size(font_size, 'chart_labels'))
+            font = QFont(font_family, chart_area_size(font_size, area))
 
         if font_weight == 'bold':
             font.setWeight(QFont.Weight.Bold)
@@ -2834,6 +2875,7 @@ class SouthIndianView(QGraphicsView):
 
         available_width = self.cell_size - (2 * padding)
         spacing = available_width / max(num_planets, 1)
+        captions = PlanetCaptions(self.planet_label, self.sign_language)
 
         for i, (planet_name, planet) in enumerate(planets_in_sign):
             if num_planets == 1:
@@ -2870,24 +2912,11 @@ class SouthIndianView(QGraphicsView):
 
                 self.scene.addItem(planet_item)
 
-            # Planet abbreviation text (e.g., "Su", "Mo")
-            abbrev = planet_name[:2]
-            abbrev_style = self.display_settings.get("planet_abbrev_style", {})
-            abbrev_y = y_pos + planet_size / 2 + abbrev_offset_y
-            self._draw_styled_text(abbrev, x_pos, abbrev_y, abbrev_style,
-                                   QColor(abbrev_color), z_value=80, center_x=True)
-
-            # Planet degrees text (e.g., "15°30'") or planet name
-            if self.show_planet_names:
-                degrees_text = get_planet_display_name(
-                    self.sign_language, planet_name)
-            else:
-                deg, mins = self._planet_deg_min(planet)
-                degrees_text = f"{deg}°{mins:02d}'"
-            degrees_style = self.display_settings.get("planet_degrees_style", {})
-            degrees_y = y_pos + planet_size / 2 + degrees_offset_y
-            self._draw_styled_text(degrees_text, x_pos, degrees_y, degrees_style,
-                                   QColor(degrees_color), z_value=80, center_x=True)
+            # Abbreviation ("Su") and the F11 caption ("15°30'", name, gate, nakshatra)
+            risl = planet.amsha_raw_in_sign_longitude() if varga else planet.real_in_sign_longitude()
+            _draw_classic_planet_labels(
+                self, planet_name, captions.text(planet_name, planet, risl), x_pos, y_pos + planet_size / 2,
+                abbrev_offset_y, degrees_offset_y, abbrev_color, degrees_color)
 
         # Clear local variables to prevent lingering Qt object references
         planet_item = None
@@ -2946,21 +2975,20 @@ class SouthIndianView(QGraphicsView):
         scale = 1.5
 
         # Sign name at top-left (matching original: x1+8, y1+12)
-        sign_name = displayed_sign_name(zodiac_idx, self.aditya_mode,
-                                        self.use_western_names,
-                                        self.sign_language)
+        sign_name = sign_label('south_indian', zodiac_idx, self.aditya_mode,
+                               self.use_western_names, self.sign_language)
         name_text = QGraphicsTextItem(sign_name)
         name_text.setDefaultTextColor(self.grid_color)
         name_text.setFont(QFont(FONT_CHART, scaled_tier_size(int(14 * scale), 'chart_labels'), QFont.Weight.Bold))
         name_text.setPos(center_x1 + 10, center_y1 + 10)
         name_text.setZValue(51)
         name_text.setData(Qt.ItemDataRole.UserRole, "center_preview")  # Tag for removal
-        self.scene.addItem(name_text)
+        if effective_sign_display('south_indian') not in ('josh_only', 'vector_only'): self.scene.addItem(name_text)  # glyph-only: no name
 
         # Sign art at top-right, 512px for the 2048 scene. Same seam as the cells,
         # so display.sign_display (zodiac / josh / names) is honoured here too.
         icon_item = add_classic_sign_art(
-            self.scene, get_settings().get('display.sign_display', 'zodiac'),
+            self.scene, effective_sign_display('south_indian'),
             zodiac_idx, self.get_selected_variation(zodiac_idx), self.sign_click_signal,
             center_x2, center_y1, 10, 10,
             self.display_settings.get("text_colors", {}).get("sign_label", "#DAA520"),
@@ -3034,6 +3062,7 @@ class SouthIndianView(QGraphicsView):
                         if shadow_effect:
                             planet_item.setGraphicsEffect(shadow_effect)
                             del shadow_effect
+                        glow_preview_planet(planet_item, planet_name, self._chart, planet_size / 2, self.scene)  # td-e6jsp
 
                         self.scene.addItem(planet_item)
 
@@ -3051,7 +3080,7 @@ class SouthIndianView(QGraphicsView):
                     degree_text = QGraphicsTextItem(f"{deg}° {mins}'")
                     # SPEC-THM-001 G01b: live theme color (was QColor(TEXT_SECONDARY))
                     degree_text.setDefaultTextColor(QColor(get_theme_colors()["secondary_text"]))
-                    degree_text.setFont(QFont(FONT_CHART, scaled_tier_size(int(10 * scale), 'chart_labels')))
+                    degree_text.setFont(QFont(FONT_CHART, chart_area_size(int(10 * scale), 'planet_degrees')))
                     deg_width = degree_text.boundingRect().width()
                     degree_text.setPos(x_pos - deg_width / 2, y_pos + planet_size / 2 + 28)
                     degree_text.setZValue(51)
@@ -3151,10 +3180,10 @@ class SouthIndianView(QGraphicsView):
         if not self.center_box_enabled:
             return
 
-        self._hide_center_preview()
+        self._hide_center_preview()     # also resets current_hover_sign
         self._hide_center_si_mini()
         self._hide_mini_north_indian()
-        self.current_hover_sign = None
+        classic_centre_sync(self)       # td-946ni: no chain while the centre is taken
 
         if self.time_adjust_mode or not self._chart:
             return
@@ -3223,7 +3252,7 @@ class SouthIndianView(QGraphicsView):
         signature = (enabled_names(), appearance_signature(),
                      id(self._chart), varga_code, lagna_zodiac_idx,
                      bool(self.use_western_names), self.aditya_mode,
-                     get_settings().get('display.sign_display', 'zodiac'))
+                     effective_sign_display('north_indian'))
         picture = self._center_ni_cache.get(signature)
         if picture is None:
             if self._mini_north_indian_view is None:
@@ -3302,9 +3331,8 @@ class SouthIndianView(QGraphicsView):
             self._mini_transit_si_view = SouthIndianView(
                 center_box_enabled=False
             )
-            self._mini_transit_si_view.setAttribute(
-                Qt.WidgetAttribute.WA_DontShowOnScreen
-            )
+            # off screen, and no dignity overlay (SPEC-DIG-001 INV-4)
+            as_centre_mini(self._mini_transit_si_view)
 
         # The mini is flipped to a contrasting stone so it cannot be misread
         # as the natal chart around it. This is part of the cache key: a
@@ -3323,9 +3351,9 @@ class SouthIndianView(QGraphicsView):
                      bool(self.use_western_names),
                      getattr(self, "sign_language", "en"),
                      bool(getattr(self, "show_outer_planets", True)),
-                     bool(getattr(self, "show_planet_names", False)),
+                     caption_key(getattr(self, "planet_label", "degrees")),
                      # td-iaqm.5 CP7d: sign_display selects the mini's sign ring, read at draw.
-                     get_settings().get('display.sign_display', 'zodiac'))
+                     effective_sign_display('south_indian'))
         picture = self._center_si_cache.get(signature)
         if picture is None:
             miniview = self._mini_transit_si_view
@@ -3336,8 +3364,7 @@ class SouthIndianView(QGraphicsView):
             miniview.sign_language = getattr(self, "sign_language", "en")
             miniview.show_outer_planets = getattr(
                 self, "show_outer_planets", True)
-            miniview.show_planet_names = getattr(
-                self, "show_planet_names", False)
+            miniview.planet_label = getattr(self, "planet_label", "degrees")
             miniview.variation_settings = dict(self.variation_settings)
             miniview.planet_variation_settings = dict(
                 self.planet_variation_settings)
@@ -3395,3 +3422,24 @@ class SouthIndianView(QGraphicsView):
         ]
         for item in items_to_remove:
             self.scene.removeItem(item)
+
+
+def classic_planet_pass(view):
+    """The planet post-passes on the finished scene: the Ember Aura, then the
+    dignity overlay (also the light redraw's, planet_decoration_refresh.py)."""
+    ref = partial(_classic_aura_reference, view)
+    glow_scene(view.scene, view._chart, lambda i: isinstance(i, ClickablePlanetItem),
+               _is_classic_planet_text, ref)
+    view_pass(view, ClickablePlanetItem, ref)   # none on a centre-box mini (INV-4)
+
+
+def _classic_aura_reference(view):
+    """The ONE aura reference half size of a classic SI view (td-647kl)."""
+    sizes = view.display_settings.get("planet_sizes", view.PLANET_SIZES)
+    return pa.reference_half_size(lambda p: sizes.get(p, view.PLANET_SIZES.get(p, 128)))
+
+
+# The PLANET / DIGNITY keys' light redraw (planet_decoration_refresh.py)
+register_planet_pass(SouthIndianView, classic_planet_pass,
+                     lambda view, planet: create_planet_shadow(planet_name=planet))
+register_chain_pass(SouthIndianView, classic_si_pass)   # the THREAD key's light redraw

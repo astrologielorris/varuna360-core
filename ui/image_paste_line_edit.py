@@ -32,6 +32,7 @@ from PySide6.QtGui import QKeySequence, QGuiApplication, QAction
 from PySide6.QtWidgets import QLineEdit, QPushButton
 
 from ui.qt_theme import get_theme_colors, dim_text, scaled_area_px
+from ui.accent_ink import on_accent_ink  # SPEC-THM-001 §13
 # One implementation of "is there an image on this clipboard" for every paste
 # entry point in the app.
 from ui.image_paste import extract_image as _extract_image
@@ -227,7 +228,7 @@ class AiToggleButton(QPushButton):
             }}
             QPushButton:checked {{
                 background-color: {theme["primary"]};
-                color: {theme["primary_text"]};
+                color: {on_accent_ink(theme["primary"], theme["primary_text"])};
                 border-color: {theme["primary"]};
             }}
         """

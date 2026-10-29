@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QLineEdit,
 )
-from PySide6.QtCore import Signal, Slot, Qt
+from PySide6.QtCore import Signal, Slot, Qt, QTimer
 
 # Theme imports
 from ui.qt_theme import (
@@ -41,6 +41,7 @@ from ui.qt_theme import (
     scaled_area_px,
     dim_text,
 )
+from ui.accent_ink import on_accent_ink  # SPEC-THM-001 §13
 from ui.themed_style import ThemedStyleMixin
 
 def _default_db_path():
@@ -124,12 +125,15 @@ class EditMapSubTab(ThemedStyleMixin, QWidget):
         self._last_routed = None
         self._delivered_final_gen = -1
 
-        # SPEC-MAP-001 §4.5: start the 788 ms TimezoneFinder construction NOW,
-        # in the background, so it is finished long before the user's first
-        # click instead of being paid inside it.
+        # SPEC-MAP-001 §4.5: start the 788 ms TimezoneFinder construction in
+        # the background, so it is finished long before the user's first
+        # click instead of being paid inside it. Started from the event loop,
+        # not here: this panel is built at boot, and the pure-Python build
+        # holds the GIL against the rest of the window's construction (2026-10-23
+        # boot profile). A click before it ends still waits on the same build.
         try:
             from core.tz_finder import start_warmup
-            start_warmup()
+            QTimer.singleShot(3000, start_warmup)
         except Exception:
             pass
 
@@ -1411,7 +1415,7 @@ class EditMapSubTab(ThemedStyleMixin, QWidget):
         return f"""
             QPushButton {{
                 background-color: {theme['primary']};
-                color: {theme['primary_text']};
+                color: {on_accent_ink(theme['primary'], theme['primary_text'])};
                 border: none;
                 border-radius: 6px;
                 padding: 10px 24px;
@@ -1483,7 +1487,7 @@ class EditMapSubTab(ThemedStyleMixin, QWidget):
         return f"""
             QPushButton {{
                 background-color: {accent['base']};
-                color: {theme['primary_text']};
+                color: {on_accent_ink(accent['base'], theme['primary_text'])};
                 padding: 10px 20px;
                 border: none;
                 border-radius: 4px;
@@ -1514,11 +1518,11 @@ class EditMapSubTab(ThemedStyleMixin, QWidget):
             }}
             QPushButton:hover {{
                 background-color: {theme['primary_light']};
-                color: {theme['primary_text']};
+                color: {on_accent_ink(theme['primary_light'], theme['primary_text'])};
             }}
             QPushButton:checked {{
                 background-color: {theme['primary']};
-                color: {theme['primary_text']};
+                color: {on_accent_ink(theme['primary'], theme['primary_text'])};
                 font-weight: bold;
             }}
         """
@@ -1546,7 +1550,7 @@ class EditMapSubTab(ThemedStyleMixin, QWidget):
         return f"""
             QPushButton {{
                 background-color: {theme['primary']};
-                color: {theme['primary_text']};
+                color: {on_accent_ink(theme['primary'], theme['primary_text'])};
                 border: none;
                 border-radius: 4px;
                 padding: 8px 20px;

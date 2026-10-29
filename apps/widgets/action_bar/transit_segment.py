@@ -28,16 +28,9 @@ class TransitSegmentButton(SegmentButton):
 
     # --- payload recognition (verbatim contract) --------------------------
     def _payload_kind(self, mime):
-        from apps.widgets.chart_drop_common import classify_chart_drop
-        from apps.widgets.chart_memory_button import CHART_ENTRY_MIME
-        if mime.hasFormat(CHART_ENTRY_MIME):
-            return "memory"
-        files, folders = classify_chart_drop(mime)
-        if files:
-            return "files"
-        if folders:
-            return "folder"
-        return None
+        # SPEC-DUAL-001 INV-7: the one shared classifier.
+        from apps.widgets.chart_drop_common import chart_payload_kind
+        return chart_payload_kind(mime)
 
     # --- drag events -------------------------------------------------------
     def dragEnterEvent(self, event):

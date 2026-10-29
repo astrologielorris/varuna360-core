@@ -240,6 +240,9 @@ class BirthDataManager:
         # application so the -1 auto-flag resolution below can use it.
         # Still exactly ONE TimezoneFinder use per chart (td-5w3c.1).
         iana_timezone = BirthDataManager._detect_timezone(latitude, longitude)
+        # CHTK line 13 not an offset ('?', 'lmt'): warn, never a silent UTC+0
+        from core.chtk_text import chtk_tz_parse_warnings
+        tz_warnings.extend(chtk_tz_parse_warnings(raw, iana_timezone))
 
         # Apply DST/War Time as the TOTAL offset [INVARIANT m14]. Use the float
         # dst_offset_hours when present-and-non-None (preserves non-1h DST like
@@ -433,27 +436,13 @@ class BirthDataManager:
 
         tz_str = str(tz_str).strip()
 
-        # Handle hybrid format bug: "+Europe/Lisbon:00:00" or "-Europe/Lisbon:00:00"
-        if '/' in tz_str:
-            original_sign = '-' if tz_str.startswith('-') else '+'
-            parts = tz_str.split('/')
-            if len(parts) > 1:
-                last_part = parts[-1]
-                if ':' in last_part:
-                    colon_parts = last_part.split(':', 1)
-                    if len(colon_parts) > 1:
-                        tz_str = original_sign + colon_parts[1]
-                else:
-                    # Pure IANA name (e.g. "Europe/Paris") in a CHTK timezone field.
-                    # Cannot resolve accurately without the birth date (southern
-                    # hemisphere DST would give wrong offset for a fixed probe date).
-                    # Return 0.0; the caller should use _detect_timezone + ZoneInfo
-                    # with the actual birth datetime for accurate resolution.
-                    return 0.0
-
-        # Strip comment markers if present
-        if '>' in tz_str:
-            tz_str = tz_str.split('>')[0].strip()
+        # Hybrid '+Europe/Lisbon:00:00' -> '+00:00'; pure IANA name -> None
+        # (0.0 here; _build_canonical resolves it with the birth date); drop
+        # '>' comments; '-5 30' reads like '-5:30'; unsigned H:MM gets '+'.
+        from core.chtk_text import prepare_offset_for_regex
+        tz_str = prepare_offset_for_regex(tz_str)
+        if tz_str is None:
+            return 0.0
 
         # Parse ±HH:MM:SS format
         match = re.match(r'([+-])(\d{1,2}):?(\d{2})?:?(\d{2})?', tz_str)
@@ -491,14 +480,20 @@ class BirthDataManager:
         Returns:
             IANA timezone string (e.g., "Europe/Lisbon")
         """
+        # One TimezoneFinder per process (core.tz_finder, SPEC-MAP-001 INV-7).
+        # Building one costs ~0.8-2 s of shapefile loading; this method used to
+        # build a fresh one on EVERY chart load, so indexing or batch-loading N
+        # charts paid it N times. The shared instance gives the same answers;
+        # queries are serialised by core.tz_finder's query lock.
         try:
-            from timezonefinder import TimezoneFinder
-            tf = TimezoneFinder()
-            tz = tf.timezone_at(lat=latitude, lng=longitude)
+            from core import tz_finder
+            tf = tz_finder.get_timezone_finder()
+            if tf is None:
+                print("[BirthDataManager] timezonefinder not installed, using UTC")
+                return "UTC"
+            with tz_finder._query_lock:
+                tz = tf.timezone_at(lat=latitude, lng=longitude)
             return tz if tz else "UTC"
-        except ImportError:
-            print("[BirthDataManager] timezonefinder not installed, using UTC")
-            return "UTC"
         except Exception as e:
             print(f"[BirthDataManager] Timezone detection failed: {e}")
             return "UTC"

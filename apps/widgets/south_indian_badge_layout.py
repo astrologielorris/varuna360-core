@@ -11,7 +11,7 @@ def draw_sign_badge_layout(scene, snapshot, style, layout, signals, sign_index,
     pad = CONTENT_PADDING
     icon_item, icon_w, icon_h, icon_x, icon_y = icon_draw(
         scene, style, signals, sign_index, rect)
-    if style.sign_display == 'josh_only':
+    if style.sign_display in ('josh_only', 'vector_only'):
         layout.badge_band[sign_index] = (
             rect.left() + pad, icon_x - 8, icon_y, icon_h)
         return

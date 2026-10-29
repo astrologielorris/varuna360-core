@@ -13,8 +13,8 @@ def teaching_data():
 def build_guide(snapshot, birth_sign=None):
     if not snapshot.has_chart:
         return {'notice': 'Load a chart to explore its ascendant frames.'}
-    if snapshot.compass_mode:
-        return {'notice': 'Reading guides are available in the Aditya chart. Compass uses a different frame.'}
+    if snapshot.frame_active:
+        return {'notice': snapshot.frame_guide_notice}
     return frame_guide(snapshot, birth_sign)
 
 
@@ -23,7 +23,7 @@ def frame_guide(snapshot, birth_sign):
     names = [displayed_sign_name(i, snapshot.aditya_mode, snapshot.use_western_names,
                                  snapshot.sign_language) for i in range(12)]
     occupants = tuple(p.name for p in snapshot.planets if p.cell == asc)
-    supported = snapshot.aditya_mode == 'aditya' and snapshot.varga_code in (None, 1)
+    supported = not snapshot.use_western_names and snapshot.varga_code in (None, 1)
     data = teaching_data()
     teaching = data['adityas'].get(str(asc), {}) if supported else {}
     return dict(sign=asc, name=names[asc], aditya=ADITYA_NAMES[asc],

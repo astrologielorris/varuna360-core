@@ -15,7 +15,9 @@ from PySide6.QtCore import Qt
 
 # Import centralized theme - use theme colors for checked state
 from ui.qt_theme import get_theme_colors, scaled_px, scaled_area_px
-from core.varga_codes import varga_display_label
+from ui.accent_ink import on_accent_ink
+from core.varga_codes import COLUMN_VARGAS, column_label, gui_varga_code_label, styled_gui_varga
+from core.varga_codes import varga_display_label  # noqa: F401  (re-exported: the column's labels)
 
 
 def create_varga_column(gui, is_varga_implemented, get_varga_name):
@@ -65,9 +67,12 @@ def create_varga_column(gui, is_varga_implemented, get_varga_name):
     gui.varga_button_group = QButtonGroup(gui)
     gui.varga_button_group.setExclusive(True)
 
-    # Common Vargas to show as buttons (including special variants)
-    # 1010 = D-10R (Dasamsa Reverse), 2424 = D-24R (Siddhamsa Reverse)
-    varga_numbers = [1, 2, 3, 4, 7, 9, 10, 1010, 12, 16, 20, 24, 2424, 27, 30, 40, 45, 60]
+    # td-m6xyo (SPEC-DIG-001 §4.3): 16 buttons; the varga style relabels them in
+    # place (2p 3p 4p under Parivritti, 10R 24R under Reversed: the separate
+    # 10R / 24R buttons are folded into 10 and 24) and they draw the styled varga.
+    from managers.varga_style import current_style
+    style = current_style()
+    varga_numbers = list(COLUMN_VARGAS)
 
     gui.varga_buttons = {}
 
@@ -111,16 +116,16 @@ def create_varga_column(gui, is_varga_implemented, get_varga_name):
 
     for varga_num in varga_numbers:
         if is_varga_implemented(varga_num):
-            # "10R" for 1010, "24R" for 2424 — spelled once, in
-            # core.varga_codes, so the column and the center-box label
-            # cannot disagree (SPEC-VGC-001).
-            label = varga_display_label(varga_num)
+            # "10R" / "2p" spelled once, in core.varga_codes, so the column,
+            # the chips and the center-box label cannot disagree (SPEC-VGC-001).
+            label = column_label(varga_num, style)
+            code = styled_gui_varga(varga_num, style)
 
             btn = QPushButton(label)
             btn.setCheckable(True)
             btn.setChecked(varga_num == 1)
             btn.setStyleSheet(button_style)
-            btn.setToolTip(f"D-{varga_num} ({get_varga_name(varga_num)})")
+            btn.setToolTip(f"{gui_varga_code_label(code)} ({get_varga_name(code)})")
             btn.clicked.connect(lambda checked, v=varga_num: gui._switch_varga(v))
 
             gui.varga_button_group.addButton(btn, varga_num)
@@ -180,7 +185,7 @@ def center_toggle_style(theme):
         }}
         QPushButton:checked {{
             background-color: {theme["primary"]};
-            color: {theme["secondary_dark"]};
+            color: {on_accent_ink(theme["primary"], theme["secondary_dark"])};
             border: 2px solid {theme["primary_light"]};
         }}
         QPushButton:disabled {{

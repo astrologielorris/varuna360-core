@@ -13,7 +13,7 @@ Contract (binding):
   suppressed next to a lit segment), .zodunit :325-334 (zodtray fill, inset
   hairline + inset 0 1px 2.5px black@.28 recess), .modsplit :351-355
   (gradient hairline), .title :376-408 (well fill, inset hairline, recess,
-  hover brighten, gold stripe 3x14 gold_hi->gold + glow, chevron), .sep :221.
+  hover brighten, gold stripe 3x14 gold_hi->gold + glow), .sep :221.
   Techniques: report 06 (gradient recess = 2-3px QLinearGradient clipped to
   the rounded path; glow = one larger rect behind at low alpha, no real blur).
 - Vibrancy: v1 is the flattened gradient (D-3) — bar_a -> bar_b vertical,
@@ -96,10 +96,8 @@ from .motion import lerp_premul
 
 # Geometry the mockup states as raw CSS lengths rather than as `calc(... *
 # var(--fs))`, i.e. values that do NOT scale with the font-scale ladder. The
-# goldens confirm each one at fs 1.25 and 1.5 (e.g. title_chev stays w=11).
-_CHEV_PX = 11.0          # .title .chev  <svg width="11" height="11">  :377
-_CHEV_VIEWBOX = 12.0     # #i-chev viewBox="0 0 12 12"                 :521
-_CHEV_STROKE = 1.4       # #i-chev stroke-width                        :521
+# goldens confirm each one at fs 1.25 and 1.5. (The title chevron is retired,
+# SPEC-DUAL-001 §4.1: the COMPARE switch took its slot.)
 _RECESS_OFFSET = 1.0     # inset 0 >1px< 2.5px  (.zodunit :332/.title :386)
 _RECESS_BLUR = 2.5       # inset 0 1px >2.5px<
 _STRIPE_RADIUS = 2.0     # .title .stripe border-radius:2px            :391
@@ -661,19 +659,20 @@ def paint_hairline_sep(p: QPainter, rect: QRectF, tokens: dict,
 
 def paint_title_well(p: QPainter, rect: QRectF, tokens: dict, m: BarMetrics,
                      dpr: float, hovered: float = 0.0,
-                     chev_t: float | None = None) -> None:
-    """The recessed document well + gold stripe + chevron (.title :376-408).
+                     stripe: str = "gold") -> None:
+    """The recessed document well + its identity stripe (.title :376-408).
 
     Idle: `well` fill, `inset 0 0 0 .5px well-line`, `inset 0 1px 2.5px
     black@.28`. Hover (:387-390) swaps all three: `well-h`, `hair`, black@.22.
     The stripe is a child element, so it and its glow paint OVER the rim.
-    Children (name, meta, close) are real widgets laid out by TitleWell; the
-    chevron is chrome and lives in the gap the layout reserves before close.
+    Children (name, meta, switch, close) are real widgets laid out by TitleWell.
+
+    ``stripe``: "gold" (chart A / the single chart), "steel" (chart B) or
+    "hollow" (an empty chart B: a 1 px inset ring, steel at 45 %). The
+    chevron is retired (SPEC-DUAL-001 §4.1): the COMPARE switch owns its slot.
 
     M4 (Dm4-41): ``hovered`` is the well clock's position 0..1 (bool callers
-    still work — True == 1.0, and endpoints resolve to the exact tokens);
-    ``chev_t`` is the chevron's own 160 ms clock, defaulting to ``hovered``
-    because the mockup declares two clocks but one trigger.
+    still work — True == 1.0, and endpoints resolve to the exact tokens).
     """
     t = float(hovered)
     p.setRenderHint(QPainter.Antialiasing, True)
@@ -686,63 +685,36 @@ def paint_title_well(p: QPainter, rect: QRectF, tokens: dict, m: BarMetrics,
     draw_inset_hairline(p, rect, m.radius,
                         lerp_premul(tokens["well_line"], tokens["hair"], t),
                         dpr)
+    paint_stripe(p, stripe_rect(p, rect, m, dpr), tokens, m, dpr, stripe)
 
-    # --- gold stripe (.stripe :390-394) -------------------------------------
-    stripe = QRectF(snap_to_device(p, rect.left() + m.title_pad_l, dpr, False),
-                    snap_to_device(p, rect.center().y() - m.stripe_h / 2.0,
-                                   dpr, True),
-                    m.stripe_w, m.stripe_h)
-    soft_glow(p, stripe, tokens["stripe_glow"], dpr)
+
+def stripe_rect(p: QPainter, rect: QRectF, m: BarMetrics, dpr: float) -> QRectF:
+    """The 3x14 stripe box at the well's left pad (.stripe :390)."""
+    return QRectF(snap_to_device(p, rect.left() + m.title_pad_l, dpr, False),
+                  snap_to_device(p, rect.center().y() - m.stripe_h / 2.0,
+                                 dpr, True),
+                  m.stripe_w, m.stripe_h)
+
+
+def paint_stripe(p: QPainter, stripe: QRectF, tokens: dict, m: BarMetrics,
+                 dpr: float, kind: str = "gold") -> None:
+    """The identity stripe: gold (A), steel (B) or hollow (empty B)."""
+    if kind == "hollow":
+        ring = QColor(tokens["steel"])
+        ring.setAlphaF(ring.alphaF() * 0.45)
+        pen = QPen(ring, 1.0)
+        p.setPen(pen)
+        p.setBrush(Qt.NoBrush)
+        p.drawPath(_rounded_path(stripe.adjusted(0.5, 0.5, -0.5, -0.5),
+                                 _STRIPE_RADIUS * m.fs))
+        return
+    if kind == "steel":
+        glow, hi, lo = tokens["steel_glow"], tokens["steel_hi"], tokens["steel"]
+    else:
+        glow, hi, lo = tokens["stripe_glow"], tokens["gold_hi"], tokens["gold"]
+    soft_glow(p, stripe, glow, dpr)
     grad = QLinearGradient(stripe.topLeft(), stripe.bottomLeft())
-    grad.setColorAt(0.0, tokens["gold_hi"])
-    grad.setColorAt(1.0, tokens["gold"])
+    grad.setColorAt(0.0, hi)
+    grad.setColorAt(1.0, lo)
     p.setPen(Qt.NoPen)
     p.fillPath(_rounded_path(stripe, _STRIPE_RADIUS * m.fs), grad)
-
-    # --- chevron (.chev :377 / #i-chev :521) --------------------------------
-    _paint_chevron(p, rect, tokens, m, dpr, t if chev_t is None else chev_t)
-
-
-def chevron_rect(rect: QRectF, m: BarMetrics) -> QRectF:
-    """The 11x11 chevron glyph box inside ``rect`` (the well), or an empty rect
-    when the well is too narrow to seat it. Shared by the painter and the well's
-    click hit-test (F2/MAJOR 2: the chevron is the overlay-clear affordance, so
-    it must be hittable at exactly the pixels it is drawn)."""
-    size = _CHEV_PX
-    right = rect.right() - m.title_pad_r - m.close_d - m.title_gap
-    left = right - size
-    top = rect.center().y() - size / 2.0
-    if left < rect.left():
-        return QRectF()
-    return QRectF(left, top, size, size)
-
-
-def _paint_chevron(p: QPainter, rect: QRectF, tokens: dict, m: BarMetrics,
-                   dpr: float, hovered: float) -> None:
-    """The 11x11 disclosure chevron, just left of the close button's box.
-
-    The layout reserves no widget for it: the close glyph sits at
-    `right - title_pad_r - close_d` and the chevron owns the `title_gap` slot
-    before it. Golden landmark check at fs 1.0/1.25/1.5: the glyph stays 11x11
-    at every scale (the mockup writes `width="11"`, not `calc(11px*var(--fs))`)
-    while the gap around it scales — reproduced literally.
-    """
-    size = _CHEV_PX
-    box = chevron_rect(rect, m)
-    if box.isEmpty():
-        return
-    left = box.left()
-    top = box.top()
-    s = size / _CHEV_VIEWBOX
-    path = QPainterPath()
-    path.moveTo(left + 3.0 * s, top + 4.8 * s)
-    path.lineTo(left + 6.0 * s, top + 7.8 * s)
-    path.lineTo(left + 9.0 * s, top + 4.8 * s)
-    pen = QPen(lerp_premul(tokens["muted"], tokens["secondary_text"],
-                           float(hovered)))
-    pen.setWidthF(_CHEV_STROKE * s)
-    pen.setCapStyle(Qt.RoundCap)
-    pen.setJoinStyle(Qt.RoundJoin)
-    p.setPen(pen)
-    p.setBrush(Qt.NoBrush)
-    p.drawPath(path)

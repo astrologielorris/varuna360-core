@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="512" height="512">
+  <title>Scorpio</title>
+  <g fill="none" stroke="#4F86D0" stroke-width="7" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M12 26 C16 22 22 22 24 30 V78"/>
+    <path d="M24 34 C24 22 40 22 40 34 V78"/>
+    <path d="M40 34 C40 22 56 22 56 34 V70 C56 80 64 82 70 76 L86 60"/>
+    <path d="M74 60 H86 V72"/>
+  </g>
+</svg>

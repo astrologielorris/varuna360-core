@@ -43,10 +43,11 @@ from ui.popup_fonts import tier_px
 EXPERIENCE_KEY = "ui.hd_experience_level"
 MUTED_KEY = "ui.hd_frame_notice_hidden"
 
-# The manual section the "Read the manual" button lands on. HelpDialog scrolls
-# by HEADING TEXT (see help_dialog._on_toc_clicked), not by anchor, so this is
-# the heading string, and it must keep matching the <h2> in docs/help/manual.html.
-MANUAL_SECTION = "Human Design"
+# The manual section the "Read the manual" button lands on, by its STABLE
+# anchor id (help_dialog.MANUAL_SECTIONS, carried in each contents row's
+# UserRole), never by its title, which is translated (SPEC-LOC-002 INV-3).
+# Clicking the row then lets HelpDialog scroll to the heading as it always did.
+MANUAL_SECTION_ANCHOR = "human-design"
 
 # ---------------------------------------------------------------------------
 # COPY. Every string a user reads is written by the orchestrator session and
@@ -96,9 +97,8 @@ def copy_is_pending() -> bool:
     """
     return PLACEHOLDER in (NOTICE_TITLE, NOTICE_BODY, EXPLAIN_TITLE, EXPLAIN_BODY)
 
-# The Settings tab's title in the main tab bar (core_gui_qt.py:954). Matched by
-# text rather than by index: the Debug tab is conditional, so the index moves.
-SETTINGS_TAB_TITLE = "Settings"
+# The Settings tab is found by its widget (ui/tab_ids.py), never by its title
+# (translated, SPEC-LOC-002 INV-3) nor by index (the Debug tab is conditional).
 
 
 # ---- settings ---------------------------------------------------------------
@@ -127,7 +127,8 @@ def is_beginner() -> bool:
     if settings is None:
         return True
     try:
-        return settings.get(EXPERIENCE_KEY, "beginner") != "advanced"
+        from core.settings_registry import default as _registry_default
+        return settings.get(EXPERIENCE_KEY, _registry_default(EXPERIENCE_KEY)) != "advanced"
     except Exception:
         return True
 
@@ -217,7 +218,7 @@ def open_manual_at_human_design(parent) -> bool:
         return False
     for row in range(toc.count()):
         item = toc.item(row)
-        if item.text().strip() == MANUAL_SECTION:
+        if item.data(Qt.ItemDataRole.UserRole) == MANUAL_SECTION_ANCHOR:
             toc.setCurrentItem(item)
             toc.itemClicked.emit(item)
             return True
@@ -235,10 +236,12 @@ def open_settings(gui) -> bool:
     if tabs is None:
         return False
     try:
-        for index in range(tabs.count()):
-            if tabs.tabText(index).replace("&&", "&") == SETTINGS_TAB_TITLE:
-                tabs.setCurrentIndex(index)
-                return True
+        from ui.tab_ids import tab_index
+        # By widget, never by title (SPEC-LOC-002 INV-3).
+        index = tab_index(gui, "settings", tabs)
+        if index >= 0:
+            tabs.setCurrentIndex(index)
+            return True
     except Exception:
         return False
     return False

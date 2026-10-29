@@ -37,6 +37,9 @@ class HoraController(PanelControllerBase):
 
     def __init__(self, gui):
         super().__init__(gui=gui, lazy=False)
+        # The chart the table currently shows (None = not rendered): the AI
+        # capture marks the region 'stale' otherwise (SPEC-AIC-001 INV-2).
+        self.rendered_chart = None
 
     def _on_chart_changed(self):
         self._refresh()
@@ -60,6 +63,7 @@ class HoraController(PanelControllerBase):
             return
 
         gui.hora_table.clearContents()
+        self.rendered_chart = None
 
         try:
             from AI_tools.AI_main_function.retinue import get_chart_retinue
@@ -130,6 +134,7 @@ class HoraController(PanelControllerBase):
             summary_item.setForeground(QColor(desat_hex(sum_fg)))
             gui.hora_table.setItem(len(planets), 0, summary_item)
             gui.hora_table.setSpan(len(planets), 0, 1, 3)
+            self.rendered_chart = chart
 
         except Exception as e:
             print(f"Error updating Hora table: {e}")

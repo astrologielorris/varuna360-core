@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QWidget,
     QFrame,
+    QLabel,
 )
 from PySide6.QtCore import Qt
 
@@ -33,7 +34,10 @@ from ui.qt_theme import (
 )
 from ui.popup_fonts import tier_px, fit_fixed_button, popup_group_px
 
-from core.ayanamsa_data import AYANAMSA_OPTIONS, CATEGORY_ORDER, get_ayanamsa_name
+from core.ayanamsa_data import (AYANAMSA_OPTIONS, CATEGORY_ORDER, get_ayanamsa_name,  # noqa: F401
+                                get_ayanamsa_tooltip, format_dms, ayanamsa_offset_deg,
+                                today_jd)
+from core.i18n import t
 
 
 # ============================================================================
@@ -55,7 +59,7 @@ class AyanamsaDialog(QDialog):
     """
 
     def __init__(self, parent=None, current_ayanamsa=98,
-                 current_chart_zodiac="tropical", *, dasha_only=False):
+                 current_chart_zodiac="tropical", *, dasha_only=False, jd=None):
         super().__init__(parent)
         self.setWindowTitle("Select Ayanamsa")
         self.setMinimumWidth(720)
@@ -106,6 +110,32 @@ class AyanamsaDialog(QDialog):
         if dasha_only:
             self.setWindowTitle("Select Dasha Ayanamsa")
 
+        # ── Degrees: what each ayanamsa subtracts at the chart's moment ────────
+        offsets_jd = today_jd() if jd is None else jd
+        y, mo, d, _h = __import__("swisseph").revjul(offsets_jd)
+        date = f"{d:02d}/{mo:02d}/{y}"
+        # Through the i18n API (SPEC-LOC-002 INV-8; review 2026-10-13 H9: this
+        # label was added as an English literal and its census budget raised
+        # by hand). The dialog is built at open, so the current language holds.
+        if jd is not None:
+            note = t("ayanamsa.dialog.offsets_note_chart",
+                     "The degrees after each name are the exact amount subtracted from "
+                     "tropical longitudes for the sidereal signs on the chart's date "
+                     "({date}). A negative amount is added. Dhruva GC mid-Mula and "
+                     "Vedanga Jyotisha measure their nakshatras in equatorial "
+                     "coordinates, which is not a single shift.", date=date)
+        else:
+            note = t("ayanamsa.dialog.offsets_note_today",
+                     "The degrees after each name are the exact amount subtracted from "
+                     "tropical longitudes for the sidereal signs on today ({date}). A "
+                     "negative amount is added. Dhruva GC mid-Mula and Vedanga Jyotisha "
+                     "measure their nakshatras in equatorial coordinates, which is not "
+                     "a single shift.", date=date)
+        offsets_note = QLabel(note)
+        offsets_note.setWordWrap(True)
+        offsets_note.setStyleSheet(f"color: {text_muted}; font-size: {tier_px('buttons', 11)}px;")
+        main_layout.addWidget(offsets_note)
+
         # ── Scrollable area for ayanamsa options ─────────────────────────────
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -123,7 +153,13 @@ class AyanamsaDialog(QDialog):
 
         # Group options by category
         categories = {}
-        for aid, name, cat, tip in AYANAMSA_OPTIONS:
+        for aid, name, cat, _tip in AYANAMSA_OPTIONS:
+            name = get_ayanamsa_name(aid)          # 255: the name set in Settings
+            tip = get_ayanamsa_tooltip(aid)        # 255: through the i18n API
+            if aid != 999:
+                value = ayanamsa_offset_deg(aid, offsets_jd)
+                if value is not None:
+                    name = f"{name}  {format_dms(value)}"
             categories.setdefault(cat, []).append((aid, name, tip))
 
         # Build category group boxes
@@ -229,7 +265,7 @@ class AyanamsaDialog(QDialog):
 
         Returns:
             (ayanamsa_id, chart_zodiac)
-            - ayanamsa_id: int (0-46, 98, 100, 999)
+            - ayanamsa_id: int (0-46, 98, 100, 255 custom, 999)
             - chart_zodiac: str ("tropical" or "sidereal")
         """
         ayanamsa_id = self.ayanamsa_group.checkedId()

@@ -1,551 +1,287 @@
 {
   "meta": {
-    "source": "",
-    "version": 1,
+    "source": "Being names (labels only) for each Hora and Trimsamsa. No descriptions on this branch.",
+    "version": 2,
     "total_horas": 24,
     "total_trimsamsas": 60
   },
   "horas": {
     "Dhata": {
-      "aditya": {
-        "theme": "",
-        "healthy": "",
-        "afflicted": ""
-      },
+      "aditya": {},
       "naga": {
-        "name": "Vasuki",
-        "theme": "",
-        "healthy": "",
-        "afflicted": ""
+        "name": "Vasuki"
       }
     },
     "Aryama": {
-      "aditya": {
-        "theme": "",
-        "healthy": "",
-        "afflicted": ""
-      },
+      "aditya": {},
       "naga": {
-        "name": "Kachanira",
-        "theme": "",
-        "healthy": "",
-        "afflicted": ""
+        "name": "Kachanira"
       }
     },
     "Mitra": {
-      "aditya": {
-        "theme": "",
-        "healthy": "",
-        "afflicted": ""
-      },
+      "aditya": {},
       "naga": {
-        "name": "Takshaka",
-        "theme": "",
-        "healthy": "",
-        "afflicted": ""
+        "name": "Takshaka"
       }
     },
     "Varuna": {
-      "aditya": {
-        "theme": "",
-        "healthy": "",
-        "afflicted": ""
-      },
+      "aditya": {},
       "naga": {
-        "name": "Shukra",
-        "theme": "",
-        "healthy": "",
-        "afflicted": ""
+        "name": "Shukra"
       }
     },
     "Indra": {
-      "aditya": {
-        "theme": "",
-        "healthy": "",
-        "afflicted": ""
-      },
+      "aditya": {},
       "naga": {
-        "name": "Elapatra",
-        "theme": "",
-        "healthy": "",
-        "afflicted": ""
+        "name": "Elapatra"
       }
     },
     "Vivasvan": {
-      "aditya": {
-        "theme": "",
-        "healthy": "",
-        "afflicted": ""
-      },
+      "aditya": {},
       "naga": {
-        "name": "Shankhapala",
-        "theme": "",
-        "healthy": "",
-        "afflicted": ""
+        "name": "Shankhapala"
       }
     },
     "Tvasta": {
-      "aditya": {
-        "theme": "",
-        "healthy": "",
-        "afflicted": ""
-      },
+      "aditya": {},
       "naga": {
-        "name": "Kambala",
-        "theme": "",
-        "healthy": "",
-        "afflicted": ""
+        "name": "Kambala"
       }
     },
     "Vishnu": {
-      "aditya": {
-        "theme": "",
-        "healthy": "",
-        "afflicted": ""
-      },
+      "aditya": {},
       "naga": {
-        "name": "Ashvatara",
-        "theme": "",
-        "healthy": "",
-        "afflicted": ""
+        "name": "Ashvatara"
       }
     },
     "Amzu": {
-      "aditya": {
-        "theme": "",
-        "healthy": "",
-        "afflicted": ""
-      },
+      "aditya": {},
       "naga": {
-        "name": "Mahashankha",
-        "theme": "",
-        "healthy": "",
-        "afflicted": ""
+        "name": "Mahashankha"
       }
     },
     "Bhaga": {
-      "aditya": {
-        "theme": "",
-        "healthy": "",
-        "afflicted": ""
-      },
+      "aditya": {},
       "naga": {
-        "name": "Karkotaka",
-        "theme": "",
-        "healthy": "",
-        "afflicted": ""
+        "name": "Karkotaka"
       }
     },
     "Pusha": {
-      "aditya": {
-        "theme": "",
-        "healthy": "",
-        "afflicted": ""
-      },
+      "aditya": {},
       "naga": {
-        "name": "Dhananjaya",
-        "theme": "",
-        "healthy": "",
-        "afflicted": ""
+        "name": "Dhananjaya"
       }
     },
     "Parjanya": {
-      "aditya": {
-        "theme": "",
-        "healthy": "",
-        "afflicted": ""
-      },
+      "aditya": {},
       "naga": {
-        "name": "Airavata",
-        "theme": "",
-        "healthy": "",
-        "afflicted": ""
+        "name": "Airavata"
       }
     }
   },
   "trimsamsas": {
     "Dhata": {
       "gandharva": {
-        "name": "Tumburu",
-        "theme": "",
-        "healthy": "",
-        "afflicted": ""
+        "name": "Tumburu"
       },
       "rakshasa": {
-        "name": "Heti",
-        "theme": "",
-        "healthy": "",
-        "afflicted": ""
+        "name": "Heti"
       },
       "rishi": {
-        "name": "Pulastya",
-        "theme": "",
-        "healthy": "",
-        "afflicted": ""
+        "name": "Pulastya"
       },
       "yaksha": {
-        "name": "Rathakrit",
-        "theme": "",
-        "healthy": "",
-        "afflicted": ""
+        "name": "Rathakrit"
       },
       "apsara": {
-        "name": "Kritasthali",
-        "theme": "",
-        "healthy": "",
-        "afflicted": ""
+        "name": "Kritasthali"
       }
     },
     "Aryama": {
       "gandharva": {
-        "name": "Narada",
-        "theme": "",
-        "healthy": "",
-        "afflicted": ""
+        "name": "Narada"
       },
       "rakshasa": {
-        "name": "Praheti",
-        "theme": "",
-        "healthy": "",
-        "afflicted": ""
+        "name": "Praheti"
       },
       "rishi": {
-        "name": "Pulaha",
-        "theme": "",
-        "healthy": "",
-        "afflicted": ""
+        "name": "Pulaha"
       },
       "yaksha": {
-        "name": "Athauja",
-        "theme": "",
-        "healthy": "",
-        "afflicted": ""
+        "name": "Athauja"
       },
       "apsara": {
-        "name": "Punjikasthali",
-        "theme": "",
-        "healthy": "",
-        "afflicted": ""
+        "name": "Punjikasthali"
       }
     },
     "Mitra": {
       "gandharva": {
-        "name": "Haha",
-        "theme": "",
-        "healthy": "",
-        "afflicted": ""
+        "name": "Haha"
       },
       "rakshasa": {
-        "name": "Pauruseya",
-        "theme": "",
-        "healthy": "",
-        "afflicted": ""
+        "name": "Pauruseya"
       },
       "rishi": {
-        "name": "Atri",
-        "theme": "",
-        "healthy": "",
-        "afflicted": ""
+        "name": "Atri"
       },
       "yaksha": {
-        "name": "Rathasvana",
-        "theme": "",
-        "healthy": "",
-        "afflicted": ""
+        "name": "Rathasvana"
       },
       "apsara": {
-        "name": "Menaka",
-        "theme": "",
-        "healthy": "",
-        "afflicted": ""
+        "name": "Menaka"
       }
     },
     "Varuna": {
       "gandharva": {
-        "name": "Huhu",
-        "theme": "",
-        "healthy": "",
-        "afflicted": ""
+        "name": "Huhu"
       },
       "rakshasa": {
-        "name": "Citrasvana",
-        "theme": "",
-        "healthy": "",
-        "afflicted": ""
+        "name": "Citrasvana"
       },
       "rishi": {
-        "name": "Vasishtha",
-        "theme": "",
-        "healthy": "",
-        "afflicted": ""
+        "name": "Vasishtha"
       },
       "yaksha": {
-        "name": "Rathacitra",
-        "theme": "",
-        "healthy": "",
-        "afflicted": ""
+        "name": "Rathacitra"
       },
       "apsara": {
-        "name": "Sahajanya",
-        "theme": "",
-        "healthy": "",
-        "afflicted": ""
+        "name": "Sahajanya"
       }
     },
     "Indra": {
       "gandharva": {
-        "name": "Vishvashu",
-        "theme": "",
-        "healthy": "",
-        "afflicted": ""
+        "name": "Vishvashu"
       },
       "rakshasa": {
-        "name": "Varya",
-        "theme": "",
-        "healthy": "",
-        "afflicted": ""
+        "name": "Varya"
       },
       "rishi": {
-        "name": "Angiras",
-        "theme": "",
-        "healthy": "",
-        "afflicted": ""
+        "name": "Angiras"
       },
       "yaksha": {
-        "name": "Shruta",
-        "theme": "",
-        "healthy": "",
-        "afflicted": ""
+        "name": "Shruta"
       },
       "apsara": {
-        "name": "Pramlocha",
-        "theme": "",
-        "healthy": "",
-        "afflicted": ""
+        "name": "Pramlocha"
       }
     },
     "Vivasvan": {
       "gandharva": {
-        "name": "Ugrasena",
-        "theme": "",
-        "healthy": "",
-        "afflicted": ""
+        "name": "Ugrasena"
       },
       "rakshasa": {
-        "name": "Vyaghra",
-        "theme": "",
-        "healthy": "",
-        "afflicted": ""
+        "name": "Vyaghra"
       },
       "rishi": {
-        "name": "Bhrigu",
-        "theme": "",
-        "healthy": "",
-        "afflicted": ""
+        "name": "Bhrigu"
       },
       "yaksha": {
-        "name": "Asarana",
-        "theme": "",
-        "healthy": "",
-        "afflicted": ""
+        "name": "Asarana"
       },
       "apsara": {
-        "name": "Anumloca",
-        "theme": "",
-        "healthy": "",
-        "afflicted": ""
+        "name": "Anumloca"
       }
     },
     "Tvasta": {
       "gandharva": {
-        "name": "Dhritarashtra",
-        "theme": "",
-        "healthy": "",
-        "afflicted": ""
+        "name": "Dhritarashtra"
       },
       "rakshasa": {
-        "name": "Brahmapeta",
-        "theme": "",
-        "healthy": "",
-        "afflicted": ""
+        "name": "Brahmapeta"
       },
       "rishi": {
-        "name": "Jamadagni",
-        "theme": "",
-        "healthy": "",
-        "afflicted": ""
+        "name": "Jamadagni"
       },
       "yaksha": {
-        "name": "Shatajit",
-        "theme": "",
-        "healthy": "",
-        "afflicted": ""
+        "name": "Shatajit"
       },
       "apsara": {
-        "name": "Tilottama",
-        "theme": "",
-        "healthy": "",
-        "afflicted": ""
+        "name": "Tilottama"
       }
     },
     "Vishnu": {
       "gandharva": {
-        "name": "Suryavarcas",
-        "theme": "",
-        "healthy": "",
-        "afflicted": ""
+        "name": "Suryavarcas"
       },
       "rakshasa": {
-        "name": "Makhapeta",
-        "theme": "",
-        "healthy": "",
-        "afflicted": ""
+        "name": "Makhapeta"
       },
       "rishi": {
-        "name": "Vishvamitra",
-        "theme": "",
-        "healthy": "",
-        "afflicted": ""
+        "name": "Vishvamitra"
       },
       "yaksha": {
-        "name": "Satyajit",
-        "theme": "",
-        "healthy": "",
-        "afflicted": ""
+        "name": "Satyajit"
       },
       "apsara": {
-        "name": "Rambha",
-        "theme": "",
-        "healthy": "",
-        "afflicted": ""
+        "name": "Rambha"
       }
     },
     "Amzu": {
       "gandharva": {
-        "name": "Ritasena",
-        "theme": "",
-        "healthy": "",
-        "afflicted": ""
+        "name": "Ritasena"
       },
       "rakshasa": {
-        "name": "Vidyucchatru",
-        "theme": "",
-        "healthy": "",
-        "afflicted": ""
+        "name": "Vidyucchatru"
       },
       "rishi": {
-        "name": "Kashyapa",
-        "theme": "",
-        "healthy": "",
-        "afflicted": ""
+        "name": "Kashyapa"
       },
       "yaksha": {
-        "name": "Tarkshya",
-        "theme": "",
-        "healthy": "",
-        "afflicted": ""
+        "name": "Tarkshya"
       },
       "apsara": {
-        "name": "Urvashi",
-        "theme": "",
-        "healthy": "",
-        "afflicted": ""
+        "name": "Urvashi"
       }
     },
     "Bhaga": {
       "gandharva": {
-        "name": "Urna",
-        "theme": "",
-        "healthy": "",
-        "afflicted": ""
+        "name": "Urna"
       },
       "rakshasa": {
-        "name": "Sphurja",
-        "theme": "",
-        "healthy": "",
-        "afflicted": ""
+        "name": "Sphurja"
       },
       "rishi": {
-        "name": "Ayu",
-        "theme": "",
-        "healthy": "",
-        "afflicted": ""
+        "name": "Ayu"
       },
       "yaksha": {
-        "name": "Arishtanemi",
-        "theme": "",
-        "healthy": "",
-        "afflicted": ""
+        "name": "Arishtanemi"
       },
       "apsara": {
-        "name": "Purvachitti",
-        "theme": "",
-        "healthy": "",
-        "afflicted": ""
+        "name": "Purvachitti"
       }
     },
     "Pusha": {
       "gandharva": {
-        "name": "Suruci",
-        "theme": "",
-        "healthy": "",
-        "afflicted": ""
+        "name": "Suruci"
       },
       "rakshasa": {
-        "name": "Vata",
-        "theme": "",
-        "healthy": "",
-        "afflicted": ""
+        "name": "Vata"
       },
       "rishi": {
-        "name": "Gautama",
-        "theme": "",
-        "healthy": "",
-        "afflicted": ""
+        "name": "Gautama"
       },
       "yaksha": {
-        "name": "Sushena",
-        "theme": "",
-        "healthy": "",
-        "afflicted": ""
+        "name": "Sushena"
       },
       "apsara": {
-        "name": "Ghritaci",
-        "theme": "",
-        "healthy": "",
-        "afflicted": ""
+        "name": "Ghritaci"
       }
     },
     "Parjanya": {
       "gandharva": {
-        "name": "Vishvavasu",
-        "theme": "",
-        "healthy": "",
-        "afflicted": ""
+        "name": "Vishvavasu"
       },
       "rakshasa": {
-        "name": "Varca",
-        "theme": "",
-        "healthy": "",
-        "afflicted": ""
+        "name": "Varca"
       },
       "rishi": {
-        "name": "Bharadvaja",
-        "theme": "",
-        "healthy": "",
-        "afflicted": ""
+        "name": "Bharadvaja"
       },
       "yaksha": {
-        "name": "Senajit",
-        "theme": "",
-        "healthy": "",
-        "afflicted": ""
+        "name": "Senajit"
       },
       "apsara": {
-        "name": "Vishvaci",
-        "theme": "",
-        "healthy": "",
-        "afflicted": ""
+        "name": "Vishvaci"
       }
     }
   }

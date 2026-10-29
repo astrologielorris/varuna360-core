@@ -50,6 +50,8 @@ if _DEBUG_MODE:
     sys.argv = [arg for arg in sys.argv if arg not in ('-d', '--debug')]
 if _LITE_MODE:
     sys.argv = [arg for arg in sys.argv if arg not in ('-l', '--lite')]
+# --pro (SPEC-EDN-002 §3.4) is the launcher's; the window never reads it.
+sys.argv = [arg for arg in sys.argv if arg != '--pro']
 
 import os
 import platform
@@ -123,7 +125,12 @@ _VIEW_PERSIST_DEBOUNCE_MS = 500
 sys.path.insert(0, str(PROJECT_ROOT))
 
 # Import theme functions for styling (must be after sys.path modification)
-from ui.qt_theme import get_tab_bar_style, get_theme_colors, scaled_px, scaled_area_px, desat_hex, desat_qss
+from ui.theme_default import default_theme_file
+from ui.qt_theme import get_theme_colors, scaled_px, scaled_area_px, desat_hex, desat_qss
+from ui.accent_ink import on_accent_ink  # SPEC-THM-001 §13
+from apps.widgets.memory_pane.tab_row import main_tab_style  # SPEC-MEM-004 §5
+from ui.tab_ids import tab_id_at, migrate_tab_usage_counts, tab_usage_counts_for_settings  # SPEC-LOC-002 INV-3
+from ui import edition_panels  # panels an edition adds, refreshed by name (td-txv5v)
 
 # Import title formatting from chart_manager
 from managers.chart_manager import _format_chart_title
@@ -134,6 +141,7 @@ from managers.chart_manager import _format_chart_title
 # Stage 1d menu-builder mixin can share the one canonical dict without a
 # core -> mixin -> core import cycle. core.varga_codes has no GUI deps.
 from core.varga_codes import VARGA_NAMES
+from core.settings_registry import default as _registry_default
 
 
 # Import modular widgets
@@ -406,10 +414,12 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
         # level) now lives in DashaManager.dasha_state (SPEC-DSH-002, td-1bpk
         # w1-2), built from settings when the manager is constructed (~:460).
         # Read them via the manager accessors (ayanamsa/side_level/cycle_offset/
-        # rows/right_mode), never off self.
+        # rows/mode), never off self.
         from managers.settings_manager import get_settings
         _sm = get_settings()
-        self.nakshatra_coords     = _sm.get("zodiac.nakshatra_coords", "neither")
+        from core.exchange_chain_default import migrate_default
+        migrate_default(_sm)    # SPEC-EXCH-002 4.5: before any view or Settings row reads the key
+        self.nakshatra_coords     = _sm.get("zodiac.nakshatra_coords", _registry_default("zodiac.nakshatra_coords"))
 
         # Chart zodiac type: "tropical" (default) or "sidereal"
         self.chart_zodiac = "tropical"
@@ -462,13 +472,13 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
         # Direct assignment: no listeners connected yet, dispatch would be wasted.
         from managers.settings_manager import get_settings
         _sm = get_settings()
-        _sm_mode = _sm.get("zodiac.mode", "")
+        _sm_mode = _sm.get("zodiac.mode")
         if _sm_mode:
             from state.chart_state import VALID_ADITYA_MODES
             if _sm_mode in VALID_ADITYA_MODES:
                 self.state._aditya_mode = _sm_mode
 
-        _sm_hsys = _sm.get("zodiac.house_system", "")
+        _sm_hsys = _sm.get("zodiac.house_system")
         if _sm_hsys and _sm_hsys != self.state.house_system:
             from state.events import SetHouseSystem
             try:
@@ -494,7 +504,7 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
             self.chart_zodiac = "sidereal"
 
         # Sync remaining zodiac/display attributes from saved settings
-        self.use_western_names = _sm.get("zodiac.use_western_names", False)
+        self.use_western_names = _sm.get("zodiac.use_western_names", _registry_default("zodiac.use_western_names"))
         # SPEC-MODE-001 (path #5, section 4.7): in Beginner the experience-level
         # gate overrides any persisted/locked use_western_names. Clamp to the
         # native default for the active system and persist it, so an upgrade from
@@ -516,11 +526,11 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
         # through ChartState.dispatch, so a single observer covers them all plus
         # any future path. The callback re-clamps before the caller's re-render.
         self.state.connect(self._clamp_western_names_on_mode_change)
-        self.sign_language = _sm.get("zodiac.sign_language", "en")
+        self.sign_language = _sm.get("zodiac.sign_language", _registry_default("zodiac.sign_language"))
         _saved_ayan = _sm.get("zodiac.ayanamsa_id", None)
         if _saved_ayan is not None:
             self.chart_sidereal_ayanamsa_id = _saved_ayan
-        self.show_tropical_rim = _sm.get("chart.show_tropical_rim", False)
+        self.show_tropical_rim = bool(_sm.get("chart.show_tropical_rim", False)) and not _sm.get("chart.show_retinue_rings", False)  # F5 rings clear the rim (WheelView)
         self._saved_transit_overlay = _sm.get(
             "chart.show_transit_overlay",
             _sm.get("chart.show_transit_rim", False),
@@ -576,7 +586,7 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
             from managers.settings_manager import get_settings
             get_settings().on_changed(
                 "ui.hd_experience_level",
-                lambda *_: self.hd_manager.refresh_active_view())
+                lambda *_: self.hd_manager.on_experience_level_changed())
         except Exception:
             pass
         from PySide6.QtCore import Qt as QtCore_Qt
@@ -662,7 +672,9 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
 
         # Tab widget for Chart and Settings tabs
         self.tab_widget = QTabWidget()
-        self.tab_widget.setStyleSheet(get_tab_bar_style())
+        self.tab_widget.setObjectName("mainTabs")             # SPEC-MEM-004 §5 tab row
+        self.tab_widget.tabBar().setObjectName("mainTabBar")
+        self.tab_widget.setStyleSheet(main_tab_style())
         central_layout.addWidget(self.tab_widget)
 
         # === TAB 1: CHART TAB (vertical layout for memory panel + chart content) ===
@@ -777,10 +789,12 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
         # view (cycled with Wheel / South Indian), NOT a Pro tab. The panel owns
         # its own planet-click wiring and redraw-on-frame-change; the frame comes
         # from the main-tab zodiac buttons and the ayanamsa from zodiac.ayanamsa_id.
-        # Sidereal by default, sector click inert, no teacher content.
+        # Sidereal by default; a sector click opens the nakshatra descriptions.
         from apps.panels.nakshatra_core_panel import NakshatraCorePanel
         self.nakshatra_core_panel = NakshatraCorePanel(self)
         self.chart_stack.addWidget(self.nakshatra_core_panel)
+        from managers.hidden_view_paint import opt_in_chart_views
+        opt_in_chart_views(self)   # hidden views draw at their next show, not every step
 
         self._set_sign_language(self.sign_language)
 
@@ -813,11 +827,11 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
         self.vimshottari_panel = self.dasha_manager.build_panel("right", parent=self)
         chart_layout.addWidget(self.vimshottari_panel)
 
-        # Reshape the right panel for the persisted/boot mode via the one
-        # dispatcher (SPEC-ZR-001 §3.6). An unknown persisted mode falls back to
-        # the default with a logged warning instead of rendering as Vimshottari.
-        # announce=False: boot must not flash the "F7 to switch" status message.
-        self.dasha_manager.configure_right_panel(self.dasha_manager.right_mode, announce=False)
+        # Reshape BOTH panels for their persisted modes (SPEC-DSH-004); boot
+        # must not flash the "F7 to switch" status message (announce=False).
+        for _side in ("left", "right"):
+            self.dasha_manager.configure_side(
+                _side, self.dasha_manager.mode(_side), announce=False)
 
         chart_tab_layout.addWidget(chart_content)
 
@@ -827,9 +841,7 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
             self.vedanga_panel,
             self.varga_column,
             self.sign_selector_column,
-            self.right_scroll,
-            self.vimshottari_panel,
-        ]
+        ]   # the right side belongs to ChartLayoutManager (SPEC-LAYOUT-001)
 
         # Store target widths for animation restore
         self._panel_target_widths = {}
@@ -838,7 +850,6 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
 
         # Drawer state
         self._left_drawer_open = False
-        self._right_drawer_open = False
         self._running_anims = []  # prevent GC of QPropertyAnimation
 
         # Toggle button style (thin, subtle, theme-compatible)
@@ -874,6 +885,13 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
         self._right_toggle.clicked.connect(lambda: self._toggle_side_drawer("right"))
         self._right_toggle.setVisible(False)
         chart_layout.addWidget(self._right_toggle)
+        # SPEC-LAYOUT-001: sole owner of the right side (info column, right
+        # dasha, bottom shelf, last-resort right drawer); not the local QHBoxLayout above.
+        from managers.chart_layout_manager import ChartLayoutManager
+        self.chart_layout = ChartLayoutManager(self)
+        self.chart_layout.install()
+        from managers.chart_pair_manager import ChartPairManager   # SPEC-DUAL-001
+        self.chart_pair = ChartPairManager(self); self.chart_pair.install()
 
         self._setup_tabs()
 
@@ -885,14 +903,14 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
         # Status bar
         self.statusBar().showMessage("South Indian Chart - Ready (PySide6)")
 
-        # SPEC-FSV-001 WI-2: the position-ORDER control lives here now — one
-        # always-visible home on all five chart pages, replacing the four
-        # in-canvas copies. Permanent widgets sit right and are immune to
-        # transient showMessage() text (ui/sticky_status.py).
-        from apps.widgets.status_chrome import (
-            StatusFullscreenButton, StatusOrderButton)
-        self.status_order_button = StatusOrderButton()
-        self.statusBar().addPermanentWidget(self.status_order_button)
+        # Status-bar widgets (permanent widgets sit right, in insertion order,
+        # immune to transient showMessage() text, ui/sticky_status.py). The
+        # six AI pills became one AI button and the coach's question field
+        # (SPEC-COACH-001 §4.7, 2026-10-28); their features open from the hub.
+        from apps.widgets.status_chrome import StatusFullscreenButton
+        from apps.ai_hub import install_window_ai; install_window_ai(self)  # noqa: E702  AI button, coach field, edition pills, mynatal resume (SPEC-COACH-001 §4.6-4.7, SPEC-EDN-002 P4)
+        from apps.recorder.entry_points import install as _install_recorder
+        _install_recorder(self)         # screen recorder hotkey Ctrl+Alt+R (SPEC-REC-001)
 
         # SPEC-FSV-001 WI-3/WI-4: fullscreen the current chart page. The manager
         # owns the reparent/fit/restore (Rule 4); the status-bar glyph (right of
@@ -909,7 +927,7 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
             self.view_float_manager.toggle_fullscreen)
         self.statusBar().addPermanentWidget(self.status_fullscreen_button)
         # A width-only spacer to the RIGHT of the controls: sized by
-        # _align_status_controls() so the ORDER pill + fullscreen glyph line up
+        # _align_status_controls() so the pills + fullscreen glyph line up
         # with the chart view's right edge, not the far window edge (they sit
         # over the chart, not over the side panels). Plain QWidget = transparent,
         # paints nothing. SPEC-FSV-001 alignment refinement.
@@ -967,6 +985,14 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
         # Sync SessionManager with current profile (CRITICAL for loading correct session)
         self.session_manager.current_profile = current_profile_id
 
+        # Find Chart's store follows the session and the files the app writes,
+        # tab open or not (design find-chart §4.6, D4). Same profiles dir as
+        # ProfileManager, for the same reason. Held by the module
+        # (find_chart_sync.current()), not as a ChartGUI attribute (Rule 4b).
+        from managers.find_chart_sync import FindChartSync
+
+        FindChartSync(profiles_dir=lambda: self.session_manager.profiles_dir).install()
+
         # FIX: Start auto-save AFTER restore completes to prevent race condition
         # Previously: auto-save started immediately, restore ran 500ms later
         # This caused auto-save to potentially save empty session during startup
@@ -989,12 +1015,14 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
             self._update_toggle_button_styles()
             # Only start auto-save after restore is complete
             self.session_manager.start_auto_save()
-            # If no chart was loaded from session, create a "Now" chart
+            # If no chart was loaded from session, create a "Now" chart, unless
+            # a chart is opened or loading when the timer fires (startup_now_chart)
             if not self.state.active_chart:
-                QTimer.singleShot(200, self._load_now_chart)
+                from managers.startup_now_chart import schedule_now_chart
+                schedule_now_chart(self)
             else:
                 # Session restored a chart but dasha panels need explicit population
-                QTimer.singleShot(200, self._populate_dasha_after_startup)
+                QTimer.singleShot(200, self.dasha_manager.update_all_sides)
             # Dismiss startup overlay now (user sees the chart immediately)
             self.loading_manager.finish()
             # Preload popular tabs silently in the background
@@ -1116,7 +1144,7 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
             self.tab_widget.addTab(self.debug_tab, "Debug")
 
         from managers.settings_manager import get_settings
-        self._tab_usage_counts = get_settings().get("tab_usage_counts", {}) or {}
+        self._tab_usage_counts = migrate_tab_usage_counts(get_settings().get("tab_usage_counts", {}) or {})
         self._preloading = False  # Guard: don't count preloading as usage
         self._startup_phase = True  # Guard: suppress heavy work during init
 
@@ -1233,8 +1261,9 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
         return "varuna360_lite.png"
 
     def _setup_remote_control(self):
-        """Initialize remote control. Override in Pro."""
-        pass
+        """The remote-control layer, every edition (SPEC-LMCP-001 D-24)."""
+        from apps.remote_control import AppController
+        self.controller = AppController(self)
 
     def _create_settings_widget(self):
         """Create Settings tab lazily (direct import, no background thread)."""
@@ -1353,7 +1382,15 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
             index = self.tab_widget.indexOf(self._find_chart_placeholder)
             if index >= 0:
                 self.find_chart_panel = FindChartPanel(self)
-                self.find_chart_panel.chart_selected.connect(self._on_find_chart_selected)
+                self.find_chart_panel.chart_selected.connect(
+                    self._on_find_chart_selected
+                )
+                self.find_chart_panel.session_chart_selected.connect(
+                    self._on_find_chart_session_selected
+                )
+                from core.edition_features import ai_features as _aif
+                if _aif() is not None:
+                    _aif().attach_find_chart(self.find_chart_panel)  # ASK AI (SPEC-FIND-006), Pro and up
                 self.tab_widget.removeTab(index)
                 self.tab_widget.insertTab(index, self.find_chart_panel, "Find Chart")
                 # Only switch to this tab if user clicked it (not during preload)
@@ -1381,7 +1418,7 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
 
     def _get_preloadable_tabs(self):
         """Return set of tab names eligible for preloading. Override to extend."""
-        return {"Settings", "Find Chart"}
+        return {"settings", "find_chart"}  # stable tab ids (ui/tab_ids.py)
 
     def _preload_popular_tabs(self):
         """Preload the top 3 most-used tabs that have deferred initialization.
@@ -1405,30 +1442,36 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
         if not sorted_tabs:
             return
 
-        top3 = sorted_tabs[:3]
-
-        # Block signals to prevent _on_tab_changed firing during preload
-        self._preloading = True
-        current_index = self.tab_widget.currentIndex()
-        self.tab_widget.blockSignals(True)
-
-        try:
-            for tab_name, count in top3:
+        # One tab per event-loop turn, 1.5 s apart: each build holds the GUI
+        # thread for seconds (Settings, Find Chart), and back to back they froze
+        # the window for ~9 s just after boot (2026-10-23 probe).
+        from PySide6.QtCore import QTimer
+        import shiboken6
+        def preload(tab_name):
+            if not shiboken6.isValid(self) or not shiboken6.isValid(self.tab_widget):
+                return
+            # Block signals to prevent _on_tab_changed firing during preload
+            self._preloading = True
+            current_index = self.tab_widget.currentIndex()
+            self.tab_widget.blockSignals(True)
+            try:
                 self._preload_tab(tab_name)
-        finally:
-            # Restore original tab and unblock signals
-            self.tab_widget.setCurrentIndex(current_index)
-            self.tab_widget.blockSignals(False)
-            self._preloading = False
+            finally:
+                # Restore original tab and unblock signals
+                self.tab_widget.setCurrentIndex(current_index)
+                self.tab_widget.blockSignals(False)
+                self._preloading = False
+        for i, (tab_name, _count) in enumerate(sorted_tabs[:3]):
+            QTimer.singleShot(i * 1500, lambda n=tab_name: preload(n))
 
     def _preload_tab(self, tab_name: str):
         """Preload a single deferred tab by name."""
         try:
-            if tab_name == "Settings":
+            if tab_name == "settings":
                 if hasattr(self, '_settings_placeholder') and self._settings_placeholder:
                     self._create_settings_widget()
 
-            elif tab_name == "Find Chart":
+            elif tab_name == "find_chart":
                 if hasattr(self, '_find_chart_placeholder') and self._find_chart_placeholder:
                     self._create_find_chart_widget()
 
@@ -1539,11 +1582,11 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
         # edge as the window (and thus the chart column) resizes. Deferred once
         # so the side-panel show/hide above has settled its geometry first.
         self._align_status_controls()
-        from PySide6.QtCore import QTimer as _QTimer
-        _QTimer.singleShot(self.DRAWER_ANIM_MS + 40, self._align_status_controls)
+        if hasattr(self, 'chart_layout'):
+            self.chart_layout.on_window_resized()   # coalesced; re-aligns after layout settles
 
     def _align_status_controls(self):
-        """Right-align ORDER pill + fullscreen glyph with the chart view edge.
+        """Right-align the pills + fullscreen glyph with the chart view edge.
 
         The status bar spans the whole window, so ``addPermanentWidget`` parks
         the controls at the far right — over the side panels, not the chart. A
@@ -1633,8 +1676,10 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
             "refit": True,
             "cycle": True,
             "refit_signals": [self.chart_stack.currentChanged],
-            "on_enter": None,
-            "on_exit": None,
+            "on_enter": lambda: self.chart_layout.on_fullscreen(True),
+            "on_exit": lambda: self.chart_layout.on_fullscreen(False),
+            "on_settled": self.chart_layout.on_settled,   # SPEC-LAYOUT-001 D1
+            **(self.chart_pair.fullscreen_extra() if hasattr(self, "chart_pair") else {}),  # SPEC-DUAL-001 §4.7
         }
 
     # Threshold below which side panels auto-hide (px).
@@ -1655,51 +1700,45 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
             set_chart_title_compact(self, True)
 
     def _update_responsive_panels(self):
-        """Show/hide side panels based on window width for responsive tiling."""
+        """Compact the top chrome below COMPACT_THRESHOLD. The side panels'
+        visibility belongs to ChartLayoutManager (SPEC-LAYOUT-001 D2), which
+        calls ``_set_left_compact``; ``_side_panels_visible`` is the chrome flag."""
         if not hasattr(self, '_side_panels'):
             return
 
         should_show = self.width() >= self.COMPACT_THRESHOLD
+        if hasattr(self, 'chart_layout'):
+            self.chart_layout.schedule()
 
         if should_show == self._side_panels_visible:
             return  # No state change, avoid flicker
 
         self._side_panels_visible = should_show
-        self._stop_all_anims()
+        # Full-size or compact tab bar, memory panel and title bar
+        self.tab_widget.setStyleSheet(main_tab_style(compact=not should_show))
+        if hasattr(self, 'memory_panel'):
+            self.memory_panel.set_compact(not should_show)
+        from apps.widgets.chart_title_widget import set_chart_title_compact
+        set_chart_title_compact(self, not should_show)
 
-        if should_show:
-            # Entering full mode: restore all panels at their target widths
-            for panel in self._side_panels:
+    def _set_left_compact(self, compact):
+        """Fold the left group (Vedanga + varga + sign selector) into its drawer
+        or restore it. Called only by ChartLayoutManager (yield step 1, D2);
+        the left toggle being visible IS the compact state."""
+        if bool(compact) == self._left_toggle.isVisible():
+            return
+        self._stop_all_anims()
+        for panel in (p for p in self._side_panels if not self.chart_layout.owns_widget(p)):  # SPEC-DUAL-001
+            if compact:
+                panel.setVisible(False)
+            else:
                 w = self._panel_target_widths[panel]
                 panel.setMinimumWidth(w)
                 panel.setMaximumWidth(w)
                 panel.setVisible(True)
-            self._left_toggle.setVisible(False)
-            self._right_toggle.setVisible(False)
-            self._left_drawer_open = False
-            self._right_drawer_open = False
-            # Restore full-size tab bar, memory panel, and title bar
-            self.tab_widget.setStyleSheet(get_tab_bar_style(compact=False))
-            if hasattr(self, 'memory_panel'):
-                self.memory_panel.set_compact(False)
-            from apps.widgets.chart_title_widget import set_chart_title_compact
-            set_chart_title_compact(self, False)
-        else:
-            # Entering compact mode: hide all panels, show toggle buttons
-            for panel in self._side_panels:
-                panel.setVisible(False)
-            self._left_toggle.setText("\u25b6")
-            self._right_toggle.setText("\u25c0")
-            self._left_toggle.setVisible(True)
-            self._right_toggle.setVisible(True)
-            self._left_drawer_open = False
-            self._right_drawer_open = False
-            # Switch to compact tab bar, memory panel, and title bar
-            self.tab_widget.setStyleSheet(get_tab_bar_style(compact=True))
-            if hasattr(self, 'memory_panel'):
-                self.memory_panel.set_compact(True)
-            from apps.widgets.chart_title_widget import set_chart_title_compact
-            set_chart_title_compact(self, True)
+        self._left_toggle.setText("\u25b6")
+        self._left_toggle.setVisible(bool(compact))
+        self._left_drawer_open = False
 
     # ===== CLUSTER: LICENSE REFRESH =====
     def _refresh_license(self):
@@ -1765,139 +1804,50 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
             QMessageBox.StandardButton.Ok,
         )
 
-    # ===== CLUSTER: DASHA / VEDANGA / VIMSHOTTARI =====
-    # w3-2 (SPEC-DSH-002 D-W3-2): the eleven one-line dasha signal delegators
-    # (_set_vedanga_level, _set_vimshottari_level, _navigate_*, _on_vedanga_clicked,
-    # _on_vimshottari_clicked, _on_*_context_menu, _on_right_title_clicked) are
-    # retired. DashaPanelWidget's signals now connect straight to the manager's
-    # public methods in DashaManager.build_panel(). _cycle_right_dasha (F7 menu
-    # action + harness) and _change_dasha_ayanamsa (real logic) stay.
-
-    # === NISARGA DASHA (F7 toggle) ===
-
-    def _cycle_right_dasha(self):
-        """Cycle the right dasha panel through its modes (F7 / swap button).
-
-        Order lives in DashaManager.VALID_RIGHT_MODES; W5b's "zr" joins the
-        cycle automatically. The dispatcher reshapes and sets dasha_state.right_mode.
-        """
-        order = self.dasha_manager.VALID_RIGHT_MODES
-        cur = self.dasha_manager.right_mode
-        nxt = order[(order.index(cur) + 1) % len(order)] if cur in order else order[0]
-        self.dasha_manager.configure_right_panel(nxt)
-        from managers.settings_manager import get_settings
-        get_settings().persist_runtime_change("dasha.right.mode", self.dasha_manager.right_mode)
-
-    # w3-2 (SPEC-DSH-002 D-W3-3): the two per-mode right-panel configure helpers
-    # (nisarga / vimshottari) are retired. The right-panel reshape for every mode
-    # is now DashaManager.configure_right_panel feeding
-    # right_panel.set_shape(**_RIGHT_SHAPES[mode]) + the per-mode data resets +
-    # the renderer.
+    # ===== CLUSTER: DASHA =====
+    # SPEC-DSH-004: both dasha panels are DashaManager.sides; their signals, the
+    # F7 / Shift+F7 cycling and the mode menu go straight to the manager.
+    # _change_dasha_ayanamsa (the dialog needs chart_zodiac) stays here.
 
     def _on_dasha_settings_changed(self):
-        """Live-apply dasha ayanamsha/mode settings from the Settings tab (Apply).
+        """Live-apply the dasha settings from the Settings tab (Apply).
 
-        Sole APPLIER of the dasha.* route (SPEC-DSH-002). Stops and clears the
-        manager's deferred reconciliation FIRST — the Settings tab's own set()
-        calls filled _pending_settings synchronously through the manager
-        subscriber, and this handler applies them once so nothing is handled
-        twice. Then compares the OLD runtime mode to the setting exactly as
-        before, driving state + relist through the manager API (offset PRESERVED
-        on Apply: reset="navigation").
-        """
+        Sole APPLIER of the dasha.* route. Stops and clears the manager's
+        deferred reconciliation FIRST (the tab's own set() calls filled it), then
+        runs the manager's one per-side transaction with every owned leaf: adopt
+        all values state-only, then at most one reshape or re-list per side
+        (SPEC-DSH-004 §3.7, §4.5)."""
         from managers.settings_manager import get_settings
+        from managers.dasha_manager import OWNED_LEAF_DEFAULTS
         s = get_settings()
         dm = self.dasha_manager
-
-        # Cancel the deferred reconciliation for the keys Apply handles itself
-        # (through the manager API, not its private fields — Rule 4b).
         dm.cancel_pending_reconciliation()
+        self.nakshatra_coords = s.get("zodiac.nakshatra_coords", _registry_default("zodiac.nakshatra_coords"))
+        dm.apply_dasha_settings(
+            {k: s.get(k, d) for k, d in OWNED_LEAF_DEFAULTS.items()}, apply_route=True)
 
-        self.nakshatra_coords = s.get("zodiac.nakshatra_coords", "neither")
-
-        # SPEC-DSH-003: adopt the year length FIRST, state-only, so every
-        # re-list below runs on it (the same ordering rule as the right ayanamsa).
-        try:
-            dm.set_year_length(s.get("dasha.year_length.nakshatra", "saura"), relist=False)
-        except ValueError as exc:      # corrupt stored key: warn, keep the current year
-            import logging
-            logging.getLogger(__name__).warning("Ignoring dasha year length on Apply: %s", exc)
-
-        # LEFT (Vedanga): always an ayanamsha; keep the 120-year offset.
-        dm.set_ayanamsa("left", s.get("dasha.left.ayanamsa_id", 100),
-                        persist=False, relist=True, reset="navigation")
-
-        # RIGHT (Vimshottari / Nisarga / ZR): compare OLD runtime mode to setting.
-        old_mode = dm.right_mode
-        new_mode = s.get("dasha.right.mode", "nisarga")
-        right_id = s.get("dasha.right.ayanamsa_id", 98)
-        if new_mode != old_mode:
-            # State-only adopt the id, then the dispatcher reshapes + resets.
-            dm.set_ayanamsa("right", right_id, persist=False, relist=False, reset="none")
-            dm.configure_right_panel(new_mode)
-        elif new_mode == "vimshottari":
-            # Mode unchanged, only the ayanamsha changed: recompute Vimshottari.
-            dm.set_ayanamsa("right", right_id, persist=False, relist=True, reset="navigation")
-        elif new_mode == "zr":
-            # Mode unchanged, ZR options may have changed: adopt id (state-only),
-            # reset the ZR drill, and re-list through the dispatcher.
-            dm.set_ayanamsa("right", right_id, persist=False, relist=False, reset="none")
-            dm.reset_mode_entry("zr")
-            dm.update_right_panel()
-        else:  # nisarga unchanged: fixed ages, ayanamsha irrelevant.
-            dm.set_ayanamsa("right", right_id, persist=False, relist=False, reset="none")
-
-    def _change_dasha_ayanamsa(self, panel):
-        """Open ayanamsa selection dialog for a dasha panel and recalculate.
-        Also handles the chart zodiac setting (tropical/sidereal).
+    def _change_dasha_ayanamsa(self, side):
+        """Open the dasha ayanamsa chooser for a dasha panel and recalculate.
 
         NOT @_batched: the body runs dialog.exec() (a nested event loop). A batch
         must never span that — it would suppress every controller and hold queued
         dispatches hostage while the dialog sits open (MED-2). Only the accepted
         post-exec mutation+recalc is batched, below."""
-        from apps.widgets.ayanamsa_dialog import AyanamsaDialog
-        if panel == "vedanga":
-            current_ayanamsa = self.dasha_manager.ayanamsa("left")
-        else:
-            current_ayanamsa = self.dasha_manager.ayanamsa("right")
+        from apps.widgets.dasha_chooser_dialog import choose_dasha_ayanamsa
+        current_ayanamsa = self.dasha_manager.ayanamsa(side)
 
-        dialog = AyanamsaDialog(self, current_ayanamsa=current_ayanamsa,
-                                current_chart_zodiac=self.chart_zodiac, dasha_only=True)
-        if dialog.exec():
-            ayanamsa_id, chart_zodiac = dialog.get_selection()
-
+        # td-fj70t.11.5: the shared dasha chooser (dasha only, no chart zodiac).
+        ayanamsa_id = choose_dasha_ayanamsa(self, side, current_ayanamsa)
+        if ayanamsa_id is not None:
             # Dasha half (SPEC-DSH-002): one manager call adopts the id
             # (lock-respecting persist), zeroes navigation incl. the 120-year
             # offset (reset="full"), and re-lists that side through its current
-            # mode with title + cycle label refreshed. The level-button visual is
-            # the only widget state the caller still sets.
-            if panel == "vedanga":
-                self.dasha_manager.set_ayanamsa(
-                    "left", ayanamsa_id, persist=True, relist=True, reset="full")
-                self.dasha_manager.sync_level_buttons("left")
-            else:
-                self.dasha_manager.set_ayanamsa(
-                    "right", ayanamsa_id, persist=True, relist=True, reset="full")
-                self.dasha_manager.sync_level_buttons("right")
+            # mode with title + cycle label refreshed.
+            self.dasha_manager.set_ayanamsa(
+                side, ayanamsa_id, persist=True, relist=True, reset="full")
+            self.dasha_manager.sync_level_buttons(side)
 
     # === PANEL UPDATE METHODS ===
-
-    def _populate_dasha_after_startup(self):
-        """Populate both dasha panels after session restore."""
-        self._update_vedanga_dasha()
-        self._update_vimshottari_dasha()
-
-    def _update_vedanga_dasha(self):
-        """Update Vedanga dasha list. Delegates to DashaManager."""
-        self.dasha_manager.update_vedanga_dasha()
-
-    def _update_vimshottari_dasha(self):
-        """Re-list the right dasha panel for the current mode (no reshape).
-
-        Thin alias kept for its many callers (_finalize_chart_load, settings);
-        the routing lives in the one dispatcher (SPEC-ZR-001 §3.6).
-        """
-        self.dasha_manager.update_right_panel()
 
     def _get_sign_ruler(self, sign):
         """Get sign ruler. Phase 4 W5: now uses core.sidereal_helpers directly
@@ -1909,8 +1859,8 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
         """Phase 4 W5: no-op stub. All 12 info/analysis panels now self-update
         via PanelController subscriptions to ChartState.state_changed.
 
-        Nakshatra and Antikythera are not yet on controllers — explicit calls
-        cover their refresh path. To avoid blocking the event loop on every
+        Nakshatra and the edition panels registered in ui/edition_panels.py are
+        not yet on controllers — explicit calls cover their refresh path. To avoid blocking the event loop on every
         chart load (~0.5s each), they are only updated when their tab is
         visible; otherwise they are marked dirty and refreshed on tab switch.
         """
@@ -1918,7 +1868,7 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
             return
         chart_id = id(self.state.active_chart)
         current_tab = self.tab_widget.currentWidget()
-        for attr in ('nakshatra_panel', 'antikythera_panel'):
+        for attr in ('nakshatra_panel', *edition_panels.chart_refresh_attrs()):
             panel = getattr(self, attr, None)
             if panel is None:
                 continue
@@ -1979,7 +1929,7 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
         # SPEC-COT-001 D-5: solar_system is the verified order. The old
         # inline "vedic" fallback disagreed with the F2 view and mislabelled
         # three of the seven main cards in this table.
-        cot_order = _sm.get("cot.planet_order", "solar_system")
+        cot_order = _sm.get("cot.planet_order", _registry_default("cot.planet_order"))
 
         dialog = PlanetPlacementsDialog(
             parent=self,
@@ -2085,6 +2035,7 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
         dialog = SectorInfoDialog(sign_name, focus_ring=ring, focus_type=being_type,
                                   avastha_summaries=summaries, layer=ring,
                                   view=(ctrl.current_view() if ctrl else None), parent=self._dialog_parent())
+        if ctrl: ctrl.follow_popup(dialog, sign_name, ring, being_type)  # DUC method (td-7zu14)
         dialog.exec()
 
         dialog.deleteLater()
@@ -2472,7 +2423,7 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
             }}
             QPushButton:hover {{
                 background-color: {_t["primary"]};
-                color: {_t["primary_text"]};
+                color: {on_accent_ink(_t["primary"], _t["primary_text"])};
             }}
         """
 
@@ -2559,6 +2510,7 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
             panel = getattr(self, attr, None)
             if panel is not None:
                 yield panel
+        yield from (self.chart_pair.view_sync_targets() if hasattr(self, "chart_pair") else ())  # SPEC-DUAL-001 chart B
 
     def _do_broadcast(self, style):
         """Inner panel sync for _broadcast_chart_view: sync every constructed aux
@@ -2641,11 +2593,13 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
 
     def _flush_view_persist(self):
         """Write a pending debounced view change to disk. Idempotent: a no-op
-        when nothing is pending (safe to call from both the timer and close)."""
+        when nothing is pending (safe to call from both the timer and close).
+        Returns False when the save failed (the MCP window action reports it)."""
         if getattr(self, '_pending_view_persist', False):
             from managers.settings_manager import get_settings
-            get_settings().flush()
             self._pending_view_persist = False
+            return get_settings().flush()
+        return True
 
     # ===== CLUSTER: CHART LOAD / RECALC / TITLE / MODE =====
     def _finalize_chart_load(self, *, skip_dasha=False,
@@ -2666,8 +2620,7 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
         self._update_all_chart_views(skip_loading=skip_loading)
 
         if not skip_dasha:
-            self._update_vedanga_dasha()
-            self._update_vimshottari_dasha()
+            self.dasha_manager.update_all_sides()
 
         self._update_title()
         self._update_chart_display_preview()
@@ -2777,13 +2730,9 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
                     _utc_off = _prev.context.timeJD.utcoffset
                 else:
                     _utc_off = 0.0
-                from core.sun_degree_shift import shift_sun_degrees
-                chart_jd, _ = shift_sun_degrees(
-                    self.birth_jd, self.birth_lat, self.birth_lon, -88,
-                    utcoffset=_utc_off,
-                )
-                _chart = build_chart_from_params(
-                    jd=chart_jd, lat=self.birth_lat, lon=self.birth_lon,
+                from core.sun_degree_shift import build_design_chart  # one build, GUI and tools
+                _chart = build_design_chart(
+                    self.birth_jd, self.birth_lat, self.birth_lon,
                     mode=self.hd_manager.design_chart_mode(), utcoffset=_utc_off,
                     ayanamsa=self.chart_sidereal_ayanamsa_id,
                     name=getattr(self, 'person_name', ''),
@@ -2907,26 +2856,8 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
                        and abs(_active_jd - self.birth_jd) > 0.0001
                        and not getattr(self, 'is_human_design', False))
         if not _is_transit and self.birth_jd is not None:
-            try:
-                from datetime import datetime
-                if birth_data:
-                    b_y = birth_data['local_year'] if 'local_year' in birth_data else birth_data.get('year')
-                    b_m = birth_data['local_month'] if 'local_month' in birth_data else birth_data.get('month')
-                    b_d = birth_data['local_day'] if 'local_day' in birth_data else birth_data.get('day')
-                else:
-                    chart = self.current_chart_data or {}
-                    b_y, b_m, b_d = chart.get('year'), chart.get('month'), chart.get('day')
-                if b_y and b_m and b_d:
-                    now = datetime.now()
-                    total_months = (now.year - b_y) * 12 + (now.month - b_m)
-                    if now.day < b_d:
-                        total_months -= 1
-                    years = total_months // 12
-                    months = total_months % 12
-                    if years > 0 or months > 0:
-                        age_suffix = f"  {years}y {months}m"
-            except Exception:
-                pass
+            from core.chart_age import age_suffix as _age_suffix   # SPEC-DUAL-001
+            age_suffix = _age_suffix(birth_data or self.current_chart_data or {})
 
         # Pill button (center) - name (title case) + current age
         _bar = getattr(self, 'chart_title_widget', None)
@@ -2950,7 +2881,8 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
             varga = self.state.current_varga
             if varga and varga != 1:
                 varga_name = VARGA_NAMES.get(varga, f"D-{varga}")
-                self.setWindowTitle(f"{self._app_name} | {full_title} | D-{varga} {varga_name}")
+                from core.varga_codes import varga_display_label   # td-m6xyo: "D-10R", not "D-1010"
+                self.setWindowTitle(f"{self._app_name} | {full_title} | D-{varga_display_label(varga)} {varga_name}")
             else:
                 self.setWindowTitle(f"{self._app_name} | {full_title}")
         else:
@@ -3149,7 +3081,8 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
             self.dual_rim_btn.setChecked(self.show_tropical_rim)
 
         from managers.settings_manager import get_settings
-        get_settings().set("chart.show_tropical_rim", self.show_tropical_rim)
+        if get_settings().get("chart.show_tropical_rim") != self.show_tropical_rim:
+            get_settings().set("chart.show_tropical_rim", self.show_tropical_rim)  # adoption: no write
 
         if self.show_tropical_rim:
             self.statusBar().showMessage("Dual rim ON - Aditya + Tropical outer ring")
@@ -3279,8 +3212,9 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
                 self.dual_rim_btn.setChecked(False)
             if hasattr(self, 'wheel_view') and self.wheel_view:
                 self.wheel_view.set_show_tropical_rim(False)
-            from managers.settings_manager import get_settings
-            get_settings().set("chart.show_tropical_rim", False)
+            if not getattr(mgr, "story_time", False):   # an AI coach story's rim is not a choice
+                from managers.settings_manager import get_settings
+                get_settings().set("chart.show_tropical_rim", False)
         if hasattr(self, 'transit_btn'):
             self.transit_btn.setChecked(mgr.transit_enabled)
         if hasattr(self, 'transit_action'):
@@ -3363,42 +3297,9 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
             self.statusBar().showMessage("Outer planets hidden")
 
     def _toggle_planet_names(self):
-        """Toggle planet labels between degrees and localized names (F11)."""
-        show = self.planet_names_action.isChecked()
-
-        if hasattr(self, 'chart_view') and self.chart_view:
-            self.chart_view.show_planet_names = show
-            if self.chart_view._chart:
-                self.chart_view.draw_full_chart()
-                self.chart_view.ensure_visible()
-
-        if hasattr(self, 'north_indian_view') and self.north_indian_view:
-            self.north_indian_view.show_planet_names = show
-            if self.north_indian_view._chart:
-                self.north_indian_view.draw_chart()
-                self.north_indian_view.ensure_visible()
-
-        if hasattr(self, 'wheel_view') and self.wheel_view:
-            self.wheel_view.show_planet_names = show
-            if self.wheel_view._chart:
-                self.wheel_view.draw_wheel()
-                self.wheel_view.ensure_visible()
-
-        from managers.settings_manager import get_settings
-        get_settings().persist_runtime_change(
-            "chart.show_planet_names", show)
-
-        if show:
-            self.planet_names_action.setText(
-                "Planet Labels: Show &Degrees (F11)")
-            self.statusBar().showMessage(
-                "Planet labels: Names (F10 to switch back to degrees)",
-                3000)
-        else:
-            self.planet_names_action.setText(
-                "Planet Labels: Show &Names (F11)")
-            self.statusBar().showMessage(
-                "Planet labels: Degrees (F10 to switch to names)", 3000)
+        """F11: cycle what the text under the planets says (SPEC-PLM-001 v2)."""
+        from managers import planet_label_manager
+        planet_label_manager.cycle(self)
 
     def _toggle_retinue_rings(self, checked: bool):
         """Toggle Hora + Trimsamsa outer rings on the wheel chart (F5)."""
@@ -3518,6 +3419,8 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
                         else:
                             wheel.cusp_glow_mode = new_mode % 3
                             wheel._retinue_dirty = True
+            # SPEC-SET-003 §4.6: a LOCKED key writes no setting, so publish now.
+            self.zodiac_settings.publish_live()
         else:
             self.statusBar().showMessage(
                 "Cusp lines only available on Wheel view (F2 to switch)", 3000)
@@ -3579,6 +3482,8 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
         if hasattr(self, 'north_indian_view') and self.north_indian_view:
             self.north_indian_view.set_ascendant_override(override)
 
+        self.dasha_manager.on_view_input_changed("view.ascendant_override")  # modes reading it re-list
+
         # Status message
         if override is not None:
             sign_name = ADITYA_NAMES[override]
@@ -3626,30 +3531,16 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
         if self.time_adjust_widget is None:
             self.time_adjust_widget = create_time_adjust_overlay(self)
 
-        # Position widget on the left side of the chart area (works on any view)
-        target = self.chart_stack if hasattr(self, 'chart_stack') else self.chart_view
-        if target:
-            self.time_adjust_widget.setParent(target)
-            # Seed the live preview FIRST so the 3-line readout chip has its real
-            # content BEFORE we measure: re-apply the theme-aware shell (rim
-            # tracks a light<->dark switch), set Save/Revert state, capture the
-            # last-saved baseline, and paint the readout. Sizing an empty label
-            # then filling it left the first open clipped.
-            self.time_adjust_widget._apply_shell_style()
-            self.time_adjust_widget.update_save_button_state()
-            self.time_adjust_widget.capture_baseline()
-            self.time_adjust_widget.refresh_preview()
-            # Now fit to the populated content and position (clamp y so a short
-            # chart area never pushes the taller popup off the top).
-            self.time_adjust_widget.adjustSize()
-            view_rect = target.rect()
-            widget_h = self.time_adjust_widget.height()
-            margin = 10
-            x = margin
-            y = max(margin, (view_rect.height() - widget_h) // 2)
-            self.time_adjust_widget.move(x, y)
-            self.time_adjust_widget.raise_()  # Bring to front
-            self.time_adjust_widget.show()
+        # Seed the live preview FIRST so the readout has its real content before
+        # the popup measures itself, then float it over the whole app area (any
+        # panel, not just the chart) at the remembered size and spot
+        # (SPEC-TAW-001 S12; first open sits left of the chart area).
+        taw = self.time_adjust_widget
+        taw.update_save_button_state()
+        taw.capture_baseline()
+        taw.refresh_preview()
+        anchor = self.chart_stack if hasattr(self, 'chart_stack') else self.chart_view
+        taw.float_over(self.centralWidget() or self, anchor)
 
     def _hide_time_adjust_overlay(self):
         """Hide the time adjust widget overlay."""
@@ -3744,63 +3635,17 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
 
     def _load_now_chart(self):
         """Create and display a transit chart for the current moment."""
-        from core.transit_utils import calculate_transit_now, get_current_location, get_current_location_name
-        from datetime import datetime
-        from zoneinfo import ZoneInfo
-
-        _transit_result = calculate_transit_now(
-            mode=self.state.aditya_mode,
-            ayanamsa=getattr(self, 'chart_sidereal_ayanamsa_id', 100),
-            hsys=self.state.house_system_code,
-        )
-        if not _transit_result:
+        from core.now_chart import build_now_chart   # SPEC-DUAL-001 §4.5
+        _now = build_now_chart(self.state.aditya_mode,
+                               getattr(self, 'chart_sidereal_ayanamsa_id', 100),
+                               self.state.house_system_code)
+        if _now is None:
             from PySide6.QtWidgets import QMessageBox
             QMessageBox.warning(self, "Transit Error", "Could not calculate transit chart.")
             return
-        _transit_chart, iana_tz_str = _transit_result
-
-        # Get location info for metadata
-        lat, lon = get_current_location()
-        location_name = get_current_location_name()
-        city = location_name.split(",")[0].strip() if "," in location_name else location_name
-        country = location_name.split(",")[1].strip() if "," in location_name else ""
-        try:
-            local_tz = ZoneInfo(iana_tz_str)
-        except Exception:
-            local_tz = ZoneInfo('UTC')
-            iana_tz_str = 'UTC'
-
-        # Convert UTC to true local time for display and metadata
-        now_utc = datetime.now(ZoneInfo('UTC'))
-        now_local = now_utc.astimezone(local_tz)
-        name = f"Now {now_local.strftime('%A')}"
-        _transit_chart.context.name = name
-
-        _timedec = now_local.hour + now_local.minute / 60.0 + now_local.second / 3600.0
-        _utc_off = now_local.utcoffset().total_seconds() / 3600.0 if now_local.utcoffset() else 0.0
-
-        from core.chart_factory import make_recipe
-        # metadata N/A: derived chart ("Now" transit, no birth metadata).
-        _recipe = make_recipe(
-            name=name,
-            year=now_local.year, month=now_local.month, day=now_local.day,
-            timedec=_timedec,
-            utcoffset=_utc_off,
-            timezone=iana_tz_str,
-            lat=lat, lon=lon,
-            city=city, country=country,
-        )
-
-        _now_birth_data = {
-            'name': name,
-            'year': now_local.year, 'month': now_local.month, 'day': now_local.day,
-            'timedec': _timedec,
-            'hour': now_local.hour, 'minute': now_local.minute, 'second': now_local.second,
-            'lat': lat, 'lon': lon,
-            'utcoffset': _utc_off,
-            'iana_timezone': iana_tz_str, 'timezone': iana_tz_str,
-            'city': city, 'country': country,
-        }
+        _transit_chart, iana_tz_str, name = _now.chart, _now.tz, _now.name
+        _recipe, _now_birth_data = _now.recipe, _now.birth_data
+        city, country = _now.city, _now.country
 
         from core.chart_factory import make_source_params
         from state.events import SetActiveChart
@@ -3822,7 +3667,7 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
         if hasattr(self, 'chart_memory_panel') and self.chart_memory_panel:
             self.chart_memory_panel.add_chart(
                 _recipe,
-                is_transit=True,
+                kind="transit",
                 chart_obj=self.state.active_chart,
             )
 
@@ -4016,6 +3861,7 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
 
         if hasattr(self, "north_indian_view") and self.north_indian_view:
             self.north_indian_view.set_ascendant_override(sign_idx_0based)
+        self.dasha_manager.on_view_input_changed("view.ascendant_override")  # modes reading it re-list
 
         if sign_idx_0based is not None:
             from apps.widgets.chart_view import SouthIndianView
@@ -4034,11 +3880,15 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
         self.varga_in_center = bool(enabled)
         try:
             from managers.settings_manager import get_settings
-            get_settings().set("display.varga_in_center", self.varga_in_center)
+            # SPEC-SET-003 §4.6 / W5 F3: the lock-respecting writer (a locked key
+            # is never written) and an immediate publish (no poll dependency).
+            if get_settings().get("display.varga_in_center") != self.varga_in_center:  # adoption: no write
+                get_settings().persist_runtime_change("display.varga_in_center", self.varga_in_center)
         except Exception as e:      # a preference must never block the view
             print(f"[VARGA] Could not persist varga_in_center: {e}")
 
         self._apply_current_varga()
+        self.zodiac_settings.publish_live()
 
         varga = self.state.current_varga
         if not self.varga_in_center:
@@ -4052,8 +3902,9 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
                 "pick a divisional chart")
         else:
             name = VARGA_NAMES.get(varga, f"D-{varga}")
+            from core.varga_codes import varga_display_label
             self.statusBar().showMessage(
-                f"{name} (D-{varga}) in the {self._varga_surface_phrase()} - "
+                f"{name} (D-{varga_display_label(varga)}) in the {self._varga_surface_phrase()} - "
                 "main chart stays D-1")
 
     def _center_varga_suspended_by(self):
@@ -4183,18 +4034,13 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
         # Use libaditya Chart.varga(N) directly. Mode is baked into the Chart
         # at construction time (Issue 2), so chart.varga() already returns the
         # mode-correct Varga object — no `chart.tropical()` branch needed (G7).
-        # Translate GUI varga numbers into libaditya's classical-formula codes
-        # (negative for BPHS deity-based vargas) — without this, D-10/D-24/
-        # D-40/D-45/D-60 silently return parivritti results.
-        from core.varga_codes import to_libaditya_varga_code
+        # GUI varga numbers are translated into libaditya's classical-formula
+        # codes inside varga_surfaces (negative for BPHS deity-based vargas);
+        # without it D-10/D-24/D-40/D-45/D-60 return parivritti results.
         varga_number = self.state.current_varga
-        rcode = (None if varga_number == 1
-                 else to_libaditya_varga_code(varga_number))
-
         ayanamsa_off = (self.chart_ayanamsa_offset
                         if self.state.aditya_mode == "sidereal" else 0.0)
         use_western = getattr(self, 'use_western_names', False)
-        render_offset = 0.0 if varga_number != 1 else ayanamsa_off
 
         # C9 / SPEC-HD gate: the -88 Design chart is BUILT in the HD-gated
         # frame (hd_manager.design_chart_mode()) — Beginner pins it to
@@ -4204,56 +4050,41 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
         # design_chart_mode() == the app mode, and the branch only fires when
         # is_human_design. Never mutates state.aditya_mode (one resolver, both
         # views — same rule as hd_manager.frame()).
-        if getattr(self, 'is_human_design', False):
-            _disp_mode = self.hd_manager.design_chart_mode()
-            _disp_western = (_disp_mode != 'aditya')
-            _disp_ayan = ayanamsa_off if _disp_mode == 'sidereal' else 0.0
-        else:
-            _disp_mode = self.state.aditya_mode
-            _disp_western = use_western
-            _disp_ayan = ayanamsa_off
-        _disp_render_off = 0.0 if varga_number != 1 else _disp_ayan
+        from core.hd_model import chart_display_for  # the one display rule
+        _disp_mode, _disp_western = chart_display_for(
+            self.state.aditya_mode, use_western,
+            self.hd_manager.design_chart_mode() if getattr(self, 'is_human_design', False) else None)
+        _disp_ayan = ayanamsa_off if _disp_mode == 'sidereal' else 0.0
 
-        # SPEC-VGC-001 + SPEC-VGO-001: with the mode on, the MAIN chart of
-        # every view that has a second surface stays on D-1 and the varga is
-        # drawn beside it — inside the South Indian center box, around the
-        # wheel and the North Indian chart. Body graph has no second surface,
-        # so it keeps the varga full-size (SPEC-VGC-001 D-2).
-        in_second_surface = (bool(getattr(self, 'varga_in_center', False))
-                             and rcode is not None)
-        main_varga = None if in_second_surface else rcode
-        center_varga = rcode if in_second_surface else None
-        ring_varga = rcode if in_second_surface else None
-        grid_varga = main_varga
+        # SPEC-VGC-001 + SPEC-VGO-001, the one rule (core.capabilities.chart.
+        # varga_surfaces, shared with render_chart): with the mode on, the MAIN
+        # chart of every view that has a second surface stays on D-1 and the
+        # varga is drawn beside it — inside the South Indian center box, around
+        # the wheel and the North Indian chart. Body graph has no second
+        # surface, so it keeps the varga full-size (SPEC-VGC-001 D-2): `full`.
+        from core.capabilities.chart import varga_surfaces
+        vs = varga_surfaces(varga_number, getattr(self, 'varga_in_center', False), _disp_ayan)
+        full = varga_surfaces(varga_number, False, _disp_ayan)
+        rcode = full["main"]
 
         if hasattr(self, 'chart_view') and self.chart_view:
             self.chart_view.update_from_chart(
-                active_chart, varga_code=grid_varga,
-                use_western_names=_disp_western,
-                ayanamsa_offset=(_disp_ayan if grid_varga is None
-                                 else _disp_render_off),
-                aditya_mode=_disp_mode)
+                active_chart, varga_code=vs["grid"], use_western_names=_disp_western,
+                ayanamsa_offset=vs["grid_offset"], aditya_mode=_disp_mode)
             setter = getattr(self.chart_view, 'set_center_varga', None)
             if setter is not None:
-                setter(center_varga)
+                setter(vs["center"])
+        main_kw = dict(varga_code=vs["main"], ring_varga_code=vs["ring"],
+                       use_western_names=_disp_western,
+                       ayanamsa_offset=vs["main_offset"], aditya_mode=_disp_mode)
         if hasattr(self, 'wheel_view') and self.wheel_view:
-            self.wheel_view.update_from_chart(active_chart, varga_code=main_varga,
-                                               ring_varga_code=ring_varga,
-                                               use_western_names=_disp_western,
-                                               ayanamsa_offset=(_disp_ayan if main_varga is None
-                                                                else _disp_render_off),
-                                               aditya_mode=_disp_mode)
+            self.wheel_view.update_from_chart(active_chart, **main_kw)
         if hasattr(self, 'north_indian_view') and self.north_indian_view:
-            self.north_indian_view.update_from_chart(active_chart, varga_code=main_varga,
-                                                      ring_varga_code=ring_varga,
-                                                      use_western_names=_disp_western,
-                                                      ayanamsa_offset=(_disp_ayan if main_varga is None
-                                                                       else _disp_render_off),
-                                                      aditya_mode=_disp_mode)
+            self.north_indian_view.update_from_chart(active_chart, **main_kw)
         if hasattr(self, 'body_graph_view') and self.body_graph_view:
             self.body_graph_view.update_from_chart(active_chart, varga_code=rcode,
                                                     use_western_names=_disp_western,
-                                                    ayanamsa_offset=_disp_render_off,
+                                                    ayanamsa_offset=full["main_offset"],
                                                     aditya_mode=_disp_mode,
                                                     gender=self._current_body_gender())
         # SPEC-COT-001 INV-15 v2: the spread FOLLOWS the varga. It gets the full
@@ -4276,10 +4107,13 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
         if hasattr(self, 'hd_manager'):
             self.hd_manager.refresh_active_view()
 
-        if hasattr(self, 'varga_buttons') and varga_number in self.varga_buttons:
-            self.varga_buttons[varga_number].setChecked(True)
-        if hasattr(self, 'varga_actions') and varga_number in self.varga_actions:
-            self.varga_actions[varga_number].setChecked(True)
+        # td-m6xyo: a styled varga (1010 = 10R) checks its column number (10)
+        from core.varga_codes import base_gui_varga
+        base_number = base_gui_varga(varga_number)
+        if hasattr(self, 'varga_buttons') and base_number in self.varga_buttons:
+            self.varga_buttons[base_number].setChecked(True)
+        if hasattr(self, 'varga_actions') and base_number in self.varga_actions:
+            self.varga_actions[base_number].setChecked(True)
 
         # Surya/Chandra Lagna follows the main chart painted above. Resolve
         # after repaint so chart/frame/varga changes cannot leave it stale.
@@ -4287,14 +4121,20 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
 
         self._sync_varga_center_button()
         self._update_title()
+        if hasattr(self, "chart_pair"): self.chart_pair.invalidate()   # SPEC-DUAL-001 INV-14
 
-    def _switch_varga(self, varga_number):
-        """Switch to display a different Varga chart"""
+    def _switch_varga(self, varga_number, pump=True):
+        """Switch to display a different Varga chart. ``pump=False``: no
+        event pump (an MCP window action, SPEC-LMCP-001 D-41)."""
         # Chart-Everywhere Issue 3 (G8): guard on active_chart, not the dict.
         if not self.state.active_chart:
             self.statusBar().showMessage("No chart loaded - load a chart first")
             return
 
+        # td-m6xyo (SPEC-DIG-001): the varga style turns a column number into the
+        # varga it draws (10 + Reversed = 1010); an explicit styled code is kept
+        from managers.varga_style import resolve_switch
+        varga_number = resolve_switch(varga_number)
         from state.events import SetVarga
         self.state.dispatch(SetVarga(varga_number=varga_number))
 
@@ -4304,24 +4144,27 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
         self._apply_current_varga()
 
         # Ensure varga chart displays immediately
-        QApplication.processEvents()
+        if pump:
+            QApplication.processEvents()
 
         varga_name = VARGA_NAMES.get(varga_number, f"D-{varga_number}")
+        from core.varga_codes import varga_display_label
+        varga_label = varga_display_label(varga_number)       # "10R", "2p" (td-m6xyo)
         suspended = self._center_varga_suspended_by()
         if suspended:
             # INV-5: the varga is selected but nothing on screen shows it.
             self.statusBar().showMessage(
-                f"{varga_name} (D-{varga_number}) selected - the "
+                f"{varga_name} (D-{varga_label}) selected - the "
                 f"{self._varga_surface_phrase()} is showing {suspended}")
         elif getattr(self, 'varga_in_center', False) and varga_number != 1:
             # D-4: the main chart IS D-1 here, so say where the varga went
             # rather than claiming the chart is a varga.
             self.statusBar().showMessage(
-                f"{varga_name} (D-{varga_number}) in the "
+                f"{varga_name} (D-{varga_label}) in the "
                 f"{self._varga_surface_phrase()} - main chart stays D-1")
         else:
             self.statusBar().showMessage(
-                f"Showing {varga_name} (D-{varga_number}) chart")
+                f"Showing {varga_name} (D-{varga_label}) chart")
 
     # ─── Keyboard Shortcuts ───────────────────────────────────────────
     # ===== CLUSTER: CHART LOAD CALLBACKS & REQUEST HANDLERS =====
@@ -4342,6 +4185,18 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
         # and chart views have correct geometry before rendering.
         self.tab_widget.setCurrentIndex(0)
         self.chart_manager.load_chart(filepath)
+
+    def _on_find_chart_session_selected(self, entry_id):
+        """A loaded chart with no file from Find Chart (design.md D11)."""
+        from panels.find_chart.opening import memory_index, session_ref
+
+        ref = session_ref(entry_id)
+        if ref is None:
+            return
+        index = memory_index(self.memory_panel.charts, ref.session_id)
+        if index >= 0:
+            self.tab_widget.setCurrentIndex(0)
+            self.memory_panel.select_chart(index)
 
     def _on_birth_finder_result_selected(self, result_data):
         """Handle result selection from Birth Finder tab - load as synthetic chart."""
@@ -4428,7 +4283,7 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
                         timezone=self.current_timezone,
                         city=city, country=country,
                     )
-                    mp.add_chart(_bf_recipe, chart_obj=_chart)
+                    mp.add_chart(_bf_recipe, chart_obj=_chart, kind="birth_time_finder")
 
                 self._current_chart_data = None
                 self._current_birth_data = None
@@ -4516,7 +4371,7 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
                         _chart, name=name, timezone=timezone_str,
                         city=city, country=country,
                     )
-                    mp.add_chart(_lunar_recipe, chart_obj=_chart)
+                    mp.add_chart(_lunar_recipe, chart_obj=_chart, kind="lunar")
 
                 self._current_chart_data = None
                 self._current_birth_data = None
@@ -4596,7 +4451,7 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
                         _chart, name=name, timezone=timezone_str,
                         city=city, country=country,
                     )
-                    mp.add_chart(_eclipse_recipe, chart_obj=_chart)
+                    mp.add_chart(_eclipse_recipe, chart_obj=_chart, kind="eclipse")
 
                 self._current_chart_data = None
                 self._current_birth_data = None
@@ -4652,6 +4507,7 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
             from managers.birth_data_manager import BirthDataManager
             # SPEC-IMPORT-001 §6.1: dispatch by extension so exploration can load
             # both .chtk and .toml companion charts.
+            # Default canonicalize=True is intentional for the GUI load (td-tw7hq): do not flip.
             bd = BirthDataManager.create_birth_data_from_file(chtk_path)
             BirthDataManager.report_tz_warnings(
                 BirthDataManager.validate_birth_data(bd),
@@ -4721,6 +4577,7 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
                     _expl_recipe,
                     chtk_path=str(chtk_path) if chtk_path else None,
                     chart_obj=_chart,
+                    kind="exploration",
                 )
 
             self._current_chart_data = None
@@ -4764,19 +4621,26 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
                 filename = THEME_NAME_TO_FILE.get(theme_name)
                 if filename:
                     return filename
-            return self.prefs_store.get("theme", "dark_blue.xml")
+            return self.prefs_store.get("theme", default_theme_file())
         except Exception as e:
             print(f"Error loading theme preference: {e}")
-        return "dark_blue.xml"
+        return default_theme_file()
 
     def _save_theme_preference(self, theme_file: str):
-        """Save theme preference to both PrefsStore and SettingsManager."""
+        """Save theme preference to both PrefsStore and SettingsManager. An AI
+        command's theme change passes the AI write policy for appearance.theme
+        before either store is touched, and writes the canonical store only
+        (rolled back with the command; SPEC-SET-003 §4.5b, fix round 4)."""
         try:
-            self.prefs_store.update("theme", theme_file)
             from ui.themes import THEME_FILE_TO_NAME
+            from managers import ai_write_hook
+            from managers.settings_manager import get_settings
             display_name = THEME_FILE_TO_NAME.get(theme_file)
             if display_name:
-                from managers.settings_manager import get_settings
+                ai_write_hook.check(get_settings(), "appearance.theme", display_name)
+            if not ai_write_hook.active():
+                self.prefs_store.update("theme", theme_file)
+            if display_name:
                 get_settings().persist_runtime_change("appearance.theme", display_name)
         except Exception as e:
             print(f"Error saving theme preference: {e}")
@@ -4785,8 +4649,8 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
         """Handle tab switch events - triggers lazy loading for placeholder tabs."""
         # Track tab usage (but not during preloading or before init completes)
         if not getattr(self, '_preloading', True):
-            tab_name = self.tab_widget.tabText(index)
-            self._tab_usage_counts[tab_name] = self._tab_usage_counts.get(tab_name, 0) + 1
+            tab_name = tab_id_at(self, index)  # stable id, never the title (INV-3)
+            if tab_name: self._tab_usage_counts[tab_name] = self._tab_usage_counts.get(tab_name, 0) + 1
             try:
                 from managers.settings_manager import get_settings
                 get_settings().set("ui.last_active_tab", index)
@@ -4802,13 +4666,17 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
             return
 
         # Find Chart tab
-        if hasattr(self, '_find_chart_placeholder') and tab_widget == self._find_chart_placeholder:
+        if (
+            hasattr(self, "_find_chart_placeholder")
+            and tab_widget == self._find_chart_placeholder
+        ):
+            # _load_cached_index (scheduled unless preloading) syncs the session.
             self._create_find_chart_widget()
             return
 
-        if hasattr(self, 'find_chart_panel') and tab_widget == self.find_chart_panel:
-            if self.find_chart_panel.cache and len(self.find_chart_panel.cache.index) == 0:
-                QTimer.singleShot(100, self.find_chart_panel._load_cached_index)
+        if hasattr(self, "find_chart_panel") and tab_widget == self.find_chart_panel:
+            # Session sync and refresh; no folder scan (SPEC-FIND-003 §5.2).
+            self.find_chart_panel._load_cached_index()
             return
 
         # Edit Chart tab (lazy placeholder)
@@ -4825,8 +4693,8 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
                 if self.state.active_chart:
                     self.edit_chart_panel.load_from_gui()
 
-        # Deferred panel chart-refresh for Nakshatra/Antikythera (perf: ~0.5s each)
-        for attr in ('nakshatra_panel', 'antikythera_panel'):
+        # Deferred panel chart-refresh for Nakshatra and edition panels (perf: ~0.5s each)
+        for attr in ('nakshatra_panel', *edition_panels.chart_refresh_attrs()):
             panel = getattr(self, attr, None)
             if panel and tab_widget is panel and getattr(panel, '_chart_dirty', False):
                 panel._chart_dirty = False
@@ -4842,8 +4710,13 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
         # render happened to redraw a wheel. showEvent covers every reveal
         # path (tab switch, subpage nav, dual-stack index switch) per wheel.
 
-    def _on_theme_changed(self, theme_file: str, loading_message: str = None):
+    def _on_theme_changed(self, theme_file: str, loading_message: str = None,
+                          persist: bool = True):
         """Handle theme change from settings tab - apply immediately.
+
+        persist=False re-applies without saving anything (live adoption of a
+        setting saved elsewhere, the saturation fan-out: no setting write in
+        any store, SPEC-SET-003 §4.5b fix round 4).
 
         loading_message overrides the "Applying <Theme>..." caption — the
         saturation fan-out reuses this method but is not a theme change, so it
@@ -4866,15 +4739,20 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
                 # inherits the muted QTMATERIAL_* env vars for free. theme_file
                 # stays the logical name so _save_theme_preference is unaffected.
                 from ui.qt_theme import desaturated_theme_path
-                apply_fn(QApplication.instance(), theme=desaturated_theme_path(theme_file), style=None)
-                # G9d: qt-material reset the app sheet, so re-append the global
-                # input-font rule (else combos/inputs snap back to the frozen 13px).
                 from ui.input_font_qss import apply_global_input_font_qss
-                apply_global_input_font_qss(QApplication.instance())
-                self._save_theme_preference(theme_file)
+                from managers.context_menu_manager import search_context_menu_paused
+                # td-8m3kd: an app-wide restyle sends every widget its events;
+                # keep the Python app filters out of that flood.
+                with search_context_menu_paused():
+                    apply_fn(QApplication.instance(), theme=desaturated_theme_path(theme_file), style=None)
+                    # G9d: qt-material reset the app sheet, so re-append the global
+                    # input-font rule (else combos/inputs snap back to the frozen 13px).
+                    apply_global_input_font_qss(QApplication.instance())
+                if persist:
+                    self._save_theme_preference(theme_file)
                 # Refresh tab bar and menu bar styles (reads from qt-material env vars)
                 from ui.qt_theme import apply_menu_bar_style
-                self.tab_widget.setStyleSheet(get_tab_bar_style())
+                self.tab_widget.setStyleSheet(main_tab_style(compact=not getattr(self, '_side_panels_visible', True)))
                 apply_menu_bar_style(self.menuBar())
                 # Refresh dasha list styles to pick up new theme colors
                 self._refresh_panel_styles()
@@ -4951,7 +4829,8 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
                 _refresh_attr('cliwoc_map_panel')        # not instantiated in Pro
                 _refresh_attr('nakshatra_core_panel')    # Core/F2 scene + viewport canvas
                 _refresh_attr('nakshatra_panel')         # td-iqjb Wave D: now has refresh_theme
-                _refresh_attr('antikythera_panel')       # td-iqjb Wave D: now has refresh_theme
+                for _attr in edition_panels.theme_refresh_attrs():  # edition panels
+                    _refresh_attr(_attr)
                 # SPEC-THM-001 W1: four chart views re-read get_theme_colors() and redraw
                 # to apply colors to existing scene items (pre-mortem P-002/P-003).
                 _refresh_attr('chart_view')
@@ -4970,11 +4849,13 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
                 # _refresh_scaled_surfaces), so a live Dark<->Light switch left the
                 # page on the old palette — caught by the :0 dark/light harness.
                 _refresh_attr('human_design_view')
-                # SPEC-FSV-001: status-bar chart chrome (ORDER pill + fullscreen
-                # button) — painted widgets that read the palette live, so their
+                # SPEC-FSV-001: status-bar chart chrome (fullscreen button) — a
+                # painted widget that reads the palette live, so its
                 # refresh_theme is a bare repaint.
-                _refresh_attr('status_order_button')
                 _refresh_attr('status_fullscreen_button')
+                from apps.ai_hub import window_refresh_parts
+                for _name, _refresh in window_refresh_parts(self):
+                    _refresh()                    # AI button, pills, coach field (SPEC-EDN-002 P4)
                 # SPEC-THM-001 W3 G13: loading overlay (wrapped by LoadingManager).
                 _refresh_attr('loading_manager')
                 # SPEC-THM-001 W3 G18/G19: HTML controllers re-render content with live
@@ -5060,6 +4941,7 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
             _safe("scale_refresh",
                   lambda: self._apply_scale_refresh(get_scale_factor()))
             _safe("relayout", lambda: relayout_info_panels(self))
+            _safe("chart_layout", self.chart_layout.refresh_fonts)   # SPEC-LAYOUT-001
 
             # All surfaces whose painted or HTML output embeds a scaled_area_*
             # value: sidebar columns, chart title, chart views, side panels, HTML
@@ -5079,7 +4961,8 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
         # overlay — the surface refresh blocks ~8.8 s on a loaded chart
         # (td-5qkks measurement).
         def _run_font_refresh_scoped():
-            with loading_scope(self, "Applying font sizes..."):
+            from ui.stylesheet_dedupe import unchanged_sheets_skipped   # H6: same sheet, no re-polish
+            with loading_scope(self, "Applying font sizes..."), unchanged_sheets_skipped():
                 _run_font_refresh()
         QTimer.singleShot(0, _run_font_refresh_scoped)
 
@@ -5137,6 +5020,9 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
             from ui.qt_theme import get_scale_factor as _gsf
             _safe("action_bar_scale", lambda: bar.refresh_scale(_gsf()))
 
+        # td-8m3kd: a view or panel not on screen is refreshed just before it
+        # is next shown (managers/font_refresh_deferral), not now.
+        from managers.font_refresh_deferral import refresh_now_or_on_show as _when_shown
         # Chart views: refresh_theme() fully redraws the scene (wheel and
         # north-indian via draw_*, body graph via update_from_chart), so label
         # items are recreated with the new scaled_area_font/size. Each view
@@ -5146,7 +5032,7 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
                            'cards_of_truth_view', 'human_design_view'):
             view = getattr(self, _view_name, None)
             if view is not None and hasattr(view, 'refresh_theme'):
-                _safe(_view_name, view.refresh_theme)
+                _safe(_view_name, lambda v=view: _when_shown(v, v.refresh_theme, self))
 
         # Side panels, the settings tab, and the loading overlay each own a
         # refresh_theme() that regenerates scaled_area_* styling.
@@ -5160,7 +5046,7 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
                            # from the font-size fan-out, so a per-area change left
                            # them stale until the next theme switch. refresh_theme()
                            # re-reads scaled_area_* / redraws the scene. getattr-guarded.
-                           'nakshatra_panel', 'antikythera_panel',
+                           'nakshatra_panel', *edition_panels.theme_refresh_attrs(),
                            'solar_return_page',
                            # B7-a WIRE: time_adjust_widget owns scaled_area_* chrome
                            # (buttons + panel_titles readout) and a conforming
@@ -5171,7 +5057,7 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
                            'loading_manager'):
             panel = getattr(self, _panel_name, None)
             if panel is not None and hasattr(panel, 'refresh_theme'):
-                _safe(_panel_name, panel.refresh_theme)
+                _safe(_panel_name, lambda p=panel: _when_shown(p, p.refresh_theme, self))
 
         # Font-size-dependent HTML controllers. _refresh() rebuilds each
         # controller's HTML so it re-reads scaled_area_px/size. Deferred
@@ -5221,16 +5107,14 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
         from ui.popup_fonts import refresh_live_popups
         _safe("live_popups", refresh_live_popups)
 
-        # B7-a4 WIRE: the status-bar ORDER pill paints its text with the
-        # 'status' font area (scaled_tier_size). It was already refreshed by the
-        # THEME fan-out but not this one, so a per-area font change left it
-        # frozen. refresh_theme() repaints AND updateGeometry()s so it grows to
-        # fit. (The fullscreen glyph beside it is a symbol icon, not text — it
-        # keeps its scale-only font and is intentionally NOT wired: SKIP, same
-        # principle as the profile 👤 button.)
-        _order_pill = getattr(self, 'status_order_button', None)
-        if _order_pill is not None and hasattr(_order_pill, 'refresh_theme'):
-            _safe("status_order_button", _order_pill.refresh_theme)
+        # B7-a4 WIRE: the status-bar pills paint their text with the 'status'
+        # font area (scaled_tier_size); refresh_theme() repaints AND
+        # updateGeometry()s so they grow to fit. (The fullscreen glyph is a
+        # symbol icon, not text — it keeps its scale-only font and is
+        # intentionally NOT wired: SKIP, same principle as the profile 👤 button.)
+        from apps.ai_hub import window_refresh_parts
+        for _name, _refresh in window_refresh_parts(self):
+            _safe(_name, _refresh)
 
     def _on_saturation_changed(self, pct: int):
         """Handle a global Color-Saturation change from settings (SPEC-SAT-001 WI-6).
@@ -5249,11 +5133,8 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
         """
         from ui import qt_theme
         qt_theme.set_ui_saturation(pct)
-        try:
-            from managers.settings_manager import get_settings
-            get_settings().set("display.color_saturation", int(pct))
-        except Exception:
-            pass
+        # No setting write here (SPEC-SET-003 §4.5b fix round 4): the Settings
+        # Apply and the AI commit have saved it; this only re-applies.
 
         # Clear every icon/image cache in the live widget tree.
         from PySide6.QtWidgets import QWidget
@@ -5282,8 +5163,9 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
         try:
             current_theme = self._load_theme_preference()
         except Exception:
-            current_theme = "dark_blue.xml"
-        self._on_theme_changed(current_theme, loading_message=f"Applying saturation {int(pct)}%...")
+            current_theme = default_theme_file()
+        self._on_theme_changed(current_theme, loading_message=f"Applying saturation {int(pct)}%...",
+                               persist=False)
 
     def _on_scale_changed(self, factor: float):
         """Handle a global Display-Scale change from settings (SPEC-FONT-001 M1).
@@ -5313,6 +5195,7 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
             # "Font scale: N%" status message on success.
             _safe("scale_refresh", lambda: self._apply_scale_refresh(factor))
             _safe("relayout", lambda: relayout_info_panels(self))
+            _safe("chart_layout", self.chart_layout.refresh_fonts)   # SPEC-LAYOUT-001
 
             # Plus every scaled_area_* surface — the M1 regression fix.
             self._refresh_scaled_surfaces(_safe)
@@ -5337,15 +5220,18 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
         Re-generates all stylesheets that use scaled_px()/scaled_size().
         Called by Apply button click and monitor switch.
         """
-        from ui.qt_theme import get_tab_bar_style, apply_menu_bar_style
-        from ui.input_font_qss import apply_global_input_font_qss
+        from ui.qt_theme import apply_menu_bar_style
+        from ui.input_font_qss import apply_input_font_sizes
         pct = int(factor * 100)
-        # Zone 1: Tab bar + menu bar
-        self.tab_widget.setStyleSheet(get_tab_bar_style())
+        # Zone 1: Tab bar + menu bar. An unchanged sheet is not re-set: it
+        # would repolish every page under the tab widget (td-8m3kd).
+        _tabs_qss = main_tab_style(compact=not getattr(self, '_side_panels_visible', True))
+        if self.tab_widget.styleSheet() != _tabs_qss:
+            self.tab_widget.setStyleSheet(_tabs_qss)
         apply_menu_bar_style(self.menuBar())
         # G9d: the effective px of the combo/input font just changed — re-append
         # the global input-font rule so the new size takes effect live.
-        apply_global_input_font_qss(QApplication.instance())
+        apply_input_font_sizes(QApplication.instance())
         # Zones 2-9: All panel styles (dasha buttons, info lists, tables, etc.)
         self._refresh_panel_styles()
         bar = getattr(self, 'chart_title_widget', None)
@@ -5450,18 +5336,15 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
         sync_all_chart_hosts()
 
         # 2. Outer planets
-        show_outer = s.get("chart.show_outer_planets", True)
+        show_outer = s.get("chart.show_outer_planets", _registry_default("chart.show_outer_planets"))
         if hasattr(self, 'outer_planets_action'):
             if self.outer_planets_action.isChecked() != show_outer:
                 self.outer_planets_action.setChecked(show_outer)
                 self._toggle_outer_planets()
 
-        # 2b. Planet names
-        show_names = s.get("chart.show_planet_names", False)
-        if hasattr(self, 'planet_names_action'):
-            if self.planet_names_action.isChecked() != show_names:
-                self.planet_names_action.setChecked(show_names)
-                self._toggle_planet_names()
+        # 2b. The text under the planets (F11)
+        from managers import planet_label_manager
+        planet_label_manager.restore(self, s)
 
         # 3. Cusp glow
         cusp_mode = s.get("chart.cusp_glow_mode", 0)
@@ -5497,14 +5380,14 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
         from managers.startup_state_manager import _apply_panel_tabs
         _apply_panel_tabs(self, s)
 
-        # Antikythera FT map rasterises planet icons into its scene, so a display
-        # Apply that changes display.planet_icon_set (or the SVG family / colours /
-        # variations) needs an explicit icon rebuild — a plain repaint keeps the
+        # An edition panel that rasterises planet icons into its scene needs an
+        # explicit icon rebuild when a display Apply changes display.planet_icon_set
+        # (or the SVG family / colours / variations): a plain repaint keeps the
         # stale pixmaps (td-jxxp DeepSeek review; parity with the saturation path).
-        ak = getattr(self, 'antikythera_panel', None)
-        mv = getattr(ak, 'map_view', None) if ak is not None else None
-        if mv is not None and hasattr(mv, 'refresh_icons'):
-            mv.refresh_icons()
+        for _attr, _refresh_icons in edition_panels.icon_refreshers():
+            _panel = getattr(self, _attr, None)
+            if _panel is not None:
+                _refresh_icons(_panel)
 
         self._refresh_chart_display()
         self.statusBar().showMessage("Chart display settings applied")
@@ -5525,6 +5408,9 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
             self._on_chart_display_changed()
             from apps.widgets.planet_icon_style import refresh_icon_views
             refresh_icon_views()
+        # SPEC-SET-003 §4.6 (W5 F2): the store-write watch fired before the
+        # views adopted the values; publish the completed frame.
+        self.zodiac_settings.publish_live()
 
     def _on_wheel_display_changed(self):
         """Handle Wheel chart display settings change - reload wheel view with new settings"""
@@ -5578,22 +5464,10 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
         # SPEC-THM-001 E5: get_theme_colors is module-level.
         theme = get_theme_colors()
 
-        # Header style with new theme colors
-        header_style = f"""
-            QWidget {{
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 {theme["primary_light"]},
-                    stop:1 {theme["primary"]});
-                border-radius: 6px;
-            }}
-        """
-
-        # Apply directly to each header widget (widget-level styles override app-level)
-        header_names = ['karakas_header', 'strength_header', 'aspects_header']  # dasha headers self-restyle (w3-2)
-        for header_name in header_names:
-            if hasattr(self, header_name):
-                header = getattr(self, header_name)
-                header.setStyleSheet(header_style)
+        # SPEC-PANELS-001 §2.6: the info panel headers, tabs, chevrons and swap
+        # buttons paint from the live theme; re-measure and repaint them.
+        from apps.widgets.panel_header import refresh_panel_headers
+        refresh_panel_headers(self)
 
         # (dasha list styles handled by dasha_manager.refresh_panel_styles above)
 
@@ -5611,7 +5485,7 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
             }}
             QListWidget::item:selected {{
                 background-color: {theme["primary"]};
-                color: {theme["primary_text"]};
+                color: {on_accent_ink(theme["primary"], theme["primary_text"])};
             }}
         """
         if hasattr(self, 'karakas_list'):
@@ -5648,44 +5522,26 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
             frame = getattr(self, attr, None)
             if frame:
                 frame.setStyleSheet(frame_bg)
+        if hasattr(self, 'chart_layout'):
+            self.chart_layout.refresh_theme()   # SPEC-LAYOUT-001: after the frame restyle
 
         # w3-2 (SPEC-DSH-002): the dasha nav bar backgrounds, arrows, cycle
         # labels, lord combos and the Karaka/Cusp/House column-label fonts are
         # all replayed by dasha_manager.refresh_panel_styles() at the top of this
         # method (each panel's ThemedStyleMixin re-reads the live theme + fonts).
 
-        # Refresh table backgrounds (Karakas, Strength, Elements, etc.)
-        table_style = f"""
-            QTableWidget {{
-                background-color: {theme["secondary_dark"]};
-                gridline-color: {theme["secondary_light"]};
-                color: {theme["secondary_text"]};
-                border: none;
-                font-size: {scaled_area_px('tables')}px;
-            }}
-            QTableWidget::item {{
-                background-color: transparent;
-            }}
-            QTableWidget::item:selected {{
-                background-color: {theme["primary"]};
-                color: {theme["primary_text"]};
-            }}
-            QHeaderView::section {{
-                background-color: {theme["secondary"]};
-                color: {theme["secondary_text"]};
-                border: none;
-                padding: 4px;
-                font-size: {scaled_area_px('table_headers')}px;
-                font-weight: bold;
-            }}
-        """
-        for attr in ('karakas_table', 'strength_table', 'elements_table',
-                      'modality_table', 'aspects_table', 'avastha_table',
-                      'tajika_matrix_table', 'tajika_rel_table',
-                      'hora_table', 'trimsamsa_table'):
-            tbl = getattr(self, attr, None)
-            if tbl:
-                tbl.setStyleSheet(table_style)
+        # Refresh table backgrounds (Karakas, Strength, Elements, etc.) with the
+        # SAME per-family style the construction sites use (info_table_style):
+        # one source, so a live switch cannot drift from boot (theme_audit).
+        from apps.panels.info_panels import info_table_style
+        for kind, attrs in (("table", ('karakas_table', 'strength_table', 'elements_table',
+                                       'modality_table', 'dignities_table')),
+                            ("retinue", ('hora_table', 'trimsamsa_table')),
+                            ("aspects", ('aspects_table', 'tajika_matrix_table', 'tajika_rel_table'))):
+            for attr in attrs:
+                tbl = getattr(self, attr, None)
+                if tbl:
+                    tbl.setStyleSheet(info_table_style(kind))
         # Avastha table: its own compact style (SPEC-AVA-001 rev3) — the SAME
         # helper the construction site uses, so live refresh cannot drift.
         if getattr(self, 'avastha_table', None):
@@ -5700,55 +5556,8 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
                 # 2026-06), which both font/scale paths already call right
                 # after this method.
 
-        # Swap/lang icon buttons on the Karakas + Strength headers (td-v21r):
-        # construction-styled with secondary_dark bg / primary border and never
-        # replayed, so they kept the previous theme's colors after a live
-        # switch. Same expression as their construction sites; the icon is
-        # re-tinted with the LIVE primary_text (the stored _make_swap_icon
-        # closure's default color froze the construction theme, so pass it).
-        _swap_btn_style = f"""
-            QPushButton {{ background: {theme["secondary_dark"]}; border: 1px solid {theme["primary"]};
-                border-radius: {scaled_px(4)}px; padding: 0px; }}
-            QPushButton:hover {{ background: {theme["primary"]}; border-color: {theme["primary_light"]}; }}
-        """
-        _make_swap_icon = getattr(self, '_make_swap_icon', None)
-        for attr in ('karakas_swap_btn', 'strength_lang_btn'):
-            btn = getattr(self, attr, None)
-            if btn:
-                btn.setStyleSheet(_swap_btn_style)
-                if _make_swap_icon:
-                    try:
-                        btn.setIcon(_make_swap_icon(theme["primary_text"]))
-                    except Exception:
-                        pass
-
-        # Dignities table: omit `color` from QTableWidget so DignityColorDelegate
-        # can set per-cell text colors via ForegroundRole (SPEC-THM-001 compliant)
-        dignities_tbl = getattr(self, 'dignities_table', None)
-        if dignities_tbl:
-            dignities_style = f"""
-                QTableWidget {{
-                    background-color: {theme["secondary_dark"]};
-                    gridline-color: {theme["secondary_light"]};
-                    border: none;
-                    font-size: {scaled_area_px('tables')}px;
-                }}
-                QTableWidget::item {{
-                    background-color: transparent;
-                }}
-                QTableWidget::item:selected {{
-                    background-color: {theme["primary"]};
-                }}
-                QHeaderView::section {{
-                    background-color: {theme["secondary"]};
-                    color: {theme["secondary_text"]};
-                    border: none;
-                    padding: 4px;
-                    font-size: {scaled_area_px('table_headers')}px;
-                    font-weight: bold;
-                }}
-            """
-            dignities_tbl.setStyleSheet(dignities_style)
+        # Dignities: info_table_style('table') sets no QTableWidget `color`, so
+        # DignityColorDelegate keeps its per-cell ForegroundRole colours.
 
         # w3-2 (SPEC-DSH-002): the dasha title buttons and the right-panel swap
         # button restyle through dasha_manager.refresh_panel_styles() above.
@@ -5759,110 +5568,10 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
         # visual mismatches on the checked state; the dedicated function uses
         # a secondary-bg + thick primary-border highlight, which is the design.
 
-        # Refresh info panel header tab buttons (KARAKAS|HORA|TRIMSAMSA, etc.)
-        header_tab_style = f"""
-            QPushButton {{
-                color: {theme['primary_text']}; font-size: {scaled_area_px('panel_titles')}px; font-weight: bold;
-                background: transparent; border: none; padding: 4px 8px;
-            }}
-            QPushButton:hover {{ text-decoration: underline; }}
-        """
-        header_tab_normal = f"""
-            QPushButton {{
-                color: {theme['primary_text']}; font-size: {scaled_area_px('panel_titles')}px; font-weight: normal;
-                background: transparent; border: none; padding: 4px 8px;
-            }}
-            QPushButton:hover {{ text-decoration: underline; }}
-        """
-        for attr in ('karakas_tab_btn', 'hora_tab_btn', 'trimsamsa_tab_btn',
-                     'strength_tab_btn', 'elements_tab_btn', 'modality_tab_btn',
-                     'aspects_tab_btn', 'avastha_tab_btn', 'shame_tab_btn'):
-            btn = getattr(self, attr, None)
-            if btn:
-                # Keep the bold state for currently active tab
-                if btn.font().bold():
-                    btn.setStyleSheet(header_tab_style)
-                else:
-                    btn.setStyleSheet(header_tab_normal)
-
         # SPEC-BAR-001 M3 W8 (Dm3-1): the bar-button restyle block that lived
         # here is deleted whole. Two of its three attribute names (south_btn,
         # open_kala_btn) were dead, and the surviving chart_info_btn write was
         # a sizeHint corruption under the v2 custom paint (INV-4).
-
-        # SPEC-THM-001 W2 G06: rebuild stored tab style strings on theme change.
-        # info_panels.py caches `gui._tab_active_style`, `gui._karakas_tab_active_style`,
-        # etc. at construction time. Click handlers re-apply these stale strings,
-        # reverting the buttons after a refresh. Rebuild them here using live theme,
-        # then re-apply to the currently active tabs (pre-mortem P-007).
-        strength_tab_active = f"""
-            QPushButton {{
-                color: {theme['primary_text']}; font-size: {scaled_area_px('panel_titles')}px; font-weight: bold;
-                background: transparent; border: none;
-                border-bottom: 2px solid {theme['primary_text']}; padding: 2px 8px;
-            }}
-        """
-        strength_tab_inactive = f"""
-            QPushButton {{
-                color: {theme['primary_text']}; font-size: {scaled_area_px('panel_titles')}px; font-weight: normal;
-                background: transparent; border: none;
-                border-bottom: 2px solid transparent; padding: 2px 8px; opacity: 0.7;
-            }}
-            QPushButton:hover {{ border-bottom: 2px solid rgba(255,255,255,0.5); }}
-        """
-        self._tab_active_style = strength_tab_active
-        self._tab_inactive_style = strength_tab_inactive
-        self._karakas_tab_active_style = strength_tab_active
-        self._karakas_tab_inactive_style = strength_tab_inactive
-        # Re-apply to the currently-active tab in each group so the visible state
-        # picks up the new colors immediately.
-        strength_names = ('strength_tab_btn', 'elements_tab_btn', 'modality_tab_btn', 'dignities_tab_btn')
-        karakas_names = ('karakas_tab_btn', 'hora_tab_btn', 'trimsamsa_tab_btn', 'graph_tab_btn')
-        aspects_index = getattr(self.aspects_stack, 'currentIndex', lambda: 0)()
-        aspects_active = {0: 0, 1: 1, 2: 2, 6: 3, 7: 4}.get(aspects_index, -1)
-        aspects_names = ('aspects_tab_btn', 'avastha_tab_btn', 'shame_tab_btn',
-                         'exchange_tab_btn', 'nabhasa_tab_btn')
-        groups = (
-            (getattr(self.strength_elements_stack, 'currentIndex', lambda: 0)(), strength_names),
-            (getattr(self.karakas_stack, 'currentIndex', lambda: 0)(), karakas_names),
-            (aspects_active, aspects_names),
-        )
-        for active_index, group in groups:
-            group_btns = [getattr(self, n, None) for n in group]
-            group_btns = [b for b in group_btns if b is not None]
-            for index, button in enumerate(group_btns):
-                button.setStyleSheet(strength_tab_active if index == active_index
-                                     else strength_tab_inactive)
-
-        # SPEC-THM-001 W2 G21/G22: strength_lang_btn + aspects_mode_btn small toggle buttons.
-        toggle_btn_style = f"""
-            QPushButton {{
-                background-color: {theme["secondary_dark"]};
-                color: {theme["secondary_text"]};
-                border-radius: 12px;
-                font-size: {scaled_area_px('status')}px;
-                font-weight: bold;
-                border: 2px solid {theme["secondary_text"]};
-            }}
-            QPushButton:hover {{
-                background-color: {theme["secondary"]};
-            }}
-        """
-        for attr in ('strength_lang_btn', 'aspects_mode_btn'):
-            btn = getattr(self, attr, None)
-            if btn:
-                btn.setStyleSheet(toggle_btn_style)
-
-        # Refresh swap icon color for light/dark theme (info-panel buttons).
-        # w3-2: the right dasha panel's swap icon is re-tinted by the panel's own
-        # refresh_theme (through its swap_icon_getter), no longer here.
-        make_icon = getattr(self, '_make_swap_icon', None)
-        if make_icon:
-            themed_icon = make_icon(theme["primary_text"])
-            for attr in ('strength_lang_btn', 'aspects_mode_btn'):
-                btn = getattr(self, attr, None)
-                if btn:
-                    btn.setIcon(themed_icon)
 
         # SPEC-THM-001 W2 G23: graph_tab_btn uses the karakas tab style group.
         # Already handled by the karakas group loop above; nothing extra needed.
@@ -5933,8 +5642,8 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
 
         This is called automatically when the user closes the window.
         """
-        # Save window geometry for next launch
-        self._save_window_geometry()
+        from core.edition_features import ai_features as _aif; _aif() is not None and _aif().window_closed(self)  # noqa: E702  SET-003 W6c R4-1: settings requests end at THIS close, not at aboutToQuit (a fullscreen chart can keep the app alive)
+        self._save_window_geometry()  # window geometry for next launch
 
         # td-iopy: flush any debounced chart-view change so a quit inside the
         # debounce window still records the settled view (crash-safety half of
@@ -5944,9 +5653,16 @@ class ChartGUI(ProfileMenuMixin, MenuBuilderMixin, ChartCaptureMixin, FileOpsMix
         # Persist tab usage counts
         if self._tab_usage_counts:
             from managers.settings_manager import get_settings
-            get_settings().set("tab_usage_counts", self._tab_usage_counts)
+            get_settings().set("tab_usage_counts", tab_usage_counts_for_settings(self._tab_usage_counts))  # ids in memory, fixed English titles on disk (W0: no persisted byte change)
         if hasattr(self, 'session_manager'):
             self.session_manager.save_session(mark_closed=True)
+        from managers import find_chart_sync as _find_chart_sync
+        if _find_chart_sync.current() is not None:
+            _find_chart_sync.current().close()
+        if self.find_chart_panel is not None:
+            self.find_chart_panel.stop_background_work(app_quit=True)  # a running compute ends first; a sort finishes its current file
+        from panels.find_chart import workers as _fc_workers
+        _fc_workers.join_parked()  # workers a closed Find Chart panel left running (SPEC-FIND-005 §4.9)
         # Defensive: join the license-refresh QThread before the window (its
         # parent) is torn down. KeyRefreshWorker overrides run() with a bounded
         # network call and has no event loop, so quit() is a no-op — wait()
@@ -5970,9 +5686,10 @@ def main():
     # Use the debug mode that was detected at module import time
     # (BEFORE utils/debug.py could consume the flag)
     debug_mode = _DEBUG_MODE
-
     app = QApplication(sys.argv)
+    from managers.settings_write import startup_hook; startup_hook()  # noqa: E702  SET-003 §4.5b F3/F3-R1: instance exclusion, then the settings lock, before any settings read (after QApplication: in-app wait signal)
     app.setDesktopFileName("varuna360-core")
+    from apps.widgets.icon_prefetch import start as _icon_prefetch; _icon_prefetch(app)  # noqa: E702  chart art decoded in parallel with the build
 
     # Register the bundled Inter family so QFont("Inter") resolves in dev and in
     # frozen builds instead of silently substituting (SPEC-FONT, WI-7). Silent
@@ -6020,7 +5737,7 @@ def main():
     if apply_fn:
         from state.user_data import get_user_data_dir
         data_dir = get_user_data_dir() or PROJECT_ROOT
-        theme = "dark_blue.xml"
+        theme = default_theme_file()
         # SPEC-SAT-001 WI-2: boot saturation. SettingsManager does NOT exist yet
         # at this point, so read display.color_saturation with the SAME raw
         # json.load pattern the theme read uses (never get_settings()). Covering
@@ -6047,7 +5764,7 @@ def main():
                 if theme_settings_path.exists():
                     with open(theme_settings_path, "r") as f:
                         settings = json.load(f)
-                        theme = settings.get("theme", "dark_blue.xml")
+                        theme = settings.get("theme", default_theme_file())
                         boot_saturation = settings.get("display", {}).get(
                             "color_saturation", 100)
         except Exception:
@@ -6151,8 +5868,10 @@ def main():
     # key-gated (frozen) build reaches this line only if it got past the gate
     # with a valid token, so the timer can never be used to escape a blocked
     # gate and produce a vacuous "pass" (fail-closed: no token, no pass).
-    if _boot_check_active:
-        QTimer.singleShot(_boot_check_ms, app.quit)
+    # The timer itself is armed after window.show() below: armed here, the
+    # processEvents() calls of window construction fired it before app.exec()
+    # whenever the build took longer than the delay, and quit() outside the
+    # event loop does nothing, so the boot check never exited (2026-10-23).
 
     # ────────────────────────────────────────────────────────────
 
@@ -6177,15 +5896,25 @@ def main():
         welcome.exec()
 
     gui_class = ChartGUI
-    if not _LITE_MODE:
-        try:
-            pass  # Pro import stripped for Lite distribution
-            gui_class = ProChartGUI
-        except ImportError:
-            pass
-    window = gui_class(debug_mode=debug_mode)
+    if not _LITE_MODE:  # the Pro main window, registered by Pro (core/edition_hooks.py)
+        from core.edition_hooks import MAIN_WINDOW_CLASS, resolve
+        gui_class = resolve(MAIN_WINDOW_CLASS, ChartGUI)
+    # Built with the app-wide Python filters off: construction sends ~260k
+    # events (ChildAdded, Polish...) that only cross into Python to be
+    # dismissed (2.8 s of the 2026-10-23 boot profile). They are back on
+    # before show(), so the Show hooks see the first show.
+    from managers.context_menu_manager import search_context_menu_paused
+    with search_context_menu_paused():
+        window = gui_class(debug_mode=debug_mode)
     window._license_state = license_state  # Store for periodic refresh
     window.show()
+    if _boot_check_active:
+        QTimer.singleShot(_boot_check_ms, app.quit)
+    from core.error_journal import install_runtime_hooks  # SPEC-AIR-001 §4.1: after boot
+    install_runtime_hooks()
+    from core.edition_features import ai_enabled, ai_features
+    if ai_enabled():
+        ai_features().prewarm()     # engines for the AI-written Report a problem (Pro)
 
     # Open a chart file if passed as command-line argument (e.g. double-click
     # from file manager). SPEC-IMPORT-001 §6.1: accept .toml as well as .chtk;
@@ -6200,5 +5929,5 @@ def main():
 
     sys.exit(app.exec())
 
-if __name__ == "__main__":
-    main()
+if __name__ == "__main__":  # a script run starts through the launcher run_app.py (it loads the edition)
+    import runpy; sys.argv = list(_ORIGINAL_ARGV); runpy.run_path(str(PROJECT_ROOT / "run_app.py"), run_name="__main__")

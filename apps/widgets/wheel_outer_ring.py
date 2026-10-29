@@ -207,7 +207,7 @@ def draw_ring_cusps_and_ascendant(view, cusps, asc_sign_name):
         else:
             text = f"C{house_num} {deg_in_sign}°"
         lbl = QGraphicsTextItem(text)
-        lbl.setFont(scaled_area_font('chart_labels', family='Inter'))
+        lbl.setFont(scaled_area_font('cusp_degrees', family='Inter'))
         # Line keeps its gold/gray identity; the writing follows the theme so it
         # stays legible on a light background (black in light, gold/gray in dark).
         text_color = _CUSP_LABEL_LIGHT_THEME_COLOR if is_light_theme() else cl
@@ -295,17 +295,18 @@ def _draw_ring_planets(view, planets_data, ring_inner, base_z,
         deg = planets_data[name].get("decimal_degrees", 0)
         # Sign index from the Chart object when available (no manual sign math,
         # SPEC-ZOD-002); fall back to the raw longitude bucket otherwise.
-        if view._transit_planets and name in view._transit_planets:
-            sign_index = (view._transit_planets[name].sign() - 1) % 12
-        elif view._outer_rim_planets and name in view._outer_rim_planets:
-            sign_index = (view._outer_rim_planets[name].sign() - 1) % 12
-        else:
-            sign_index = int(deg / 30) % 12
+        obj = planets_data[name].get("planet_obj")   # this ring's own planet
+        if obj is None and view._transit_planets and name in view._transit_planets:
+            obj = view._transit_planets[name]
+        elif obj is None and view._outer_rim_planets and name in view._outer_rim_planets:
+            obj = view._outer_rim_planets[name]
+        sign_index = (obj.sign() - 1) % 12 if obj is not None else int(deg / 30) % 12
         planets_list.append({
             "name": name,
             "degrees": deg,
             "deg_in_sign": deg % 30,
             "sign_index": sign_index,
+            "planet_obj": obj,     # the F11 gate / nakshatra caption reads it
         })
 
     if not planets_list:
@@ -354,6 +355,6 @@ def _draw_ring_planets(view, planets_data, ring_inner, base_z,
             )
             scene.addItem(icon)
 
-        # Label via the natal planet_degrees path (font/color/weight/offsets, F10,
+        # Label via the natal planet_degrees path (font/color/weight/offsets, F11,
         # sign_language). Natal offsets the label 51 px below the icon.
         view._draw_planet_label(x, y + 51, planet, label_offset)

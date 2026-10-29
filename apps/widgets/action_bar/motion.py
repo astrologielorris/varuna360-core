@@ -218,12 +218,17 @@ class HoverFade:
     exact-reversal case of Dm4-5), so duration = ms * that distance.
     """
 
-    def __init__(self, widget, ms: int, curve: QEasingCurve | None = None):
+    def __init__(self, widget, ms: int, curve: QEasingCurve | None = None,
+                 on_change=None):
         self._w = widget
         self._ms = ms
         self._curve = curve if curve is not None else EASE_CSS
         self._anim: QVariantAnimation | None = None
         self._v = 0.0
+        # Called after the value CHANGED (tick or snap), never from a paint:
+        # an owner whose fade also shows in another widget (the close
+        # button's rim, painted by the well) repaints that widget here.
+        self._on_change = on_change
 
     def value(self) -> float:
         return self._v
@@ -254,9 +259,14 @@ class HoverFade:
     def snap(self, v: float) -> None:
         if self._anim is not None:
             self._anim.stop()
-        self._v = 1.0 if v >= 1.0 else 0.0 if v <= 0.0 else v
-        self._w.update()
+        self._set(1.0 if v >= 1.0 else 0.0 if v <= 0.0 else v)
 
     def _tick(self, value) -> None:
-        self._v = float(value)
+        self._set(float(value))
+
+    def _set(self, v: float) -> None:
+        changed = v != self._v
+        self._v = v
         self._w.update()
+        if changed and self._on_change is not None:
+            self._on_change()

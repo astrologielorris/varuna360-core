@@ -46,23 +46,65 @@ class ChartOverlayManager:
         self._status("Nothing to overlay from that drop.")
         return False
 
+    def build_from_memory_id(self, entry_id):
+        """Build a chart from a memory entry (by id) WITHOUT activating it.
+
+        SPEC-DUAL-001 INV-7 (td-1mgk7): the one memory resolver, shared by the
+        overlay and the Chart tab's chart B. Returns ``(chart, label, birth,
+        recipe)`` where ``recipe`` is the deep copy the chart was built from
+        (chart B keeps it as its immutable snapshot). Raises ``LookupError``
+        when the id is not in the memory row and lets build errors propagate.
+        """
+        entry = self._find_entry(entry_id)
+        if entry is None:
+            raise LookupError("Could not find that chart in memory.")
+        recipe = self._recipe_copy(entry)
+        chart = self._build_from_recipe(recipe)
+        label = self._entry_label(entry)
+        # D-23(b) / F2: the chip's full birth-identity payload comes from
+        # the recipe (the built Chart cannot supply the place — its
+        # Location.placename holds the person NAME, chart_factory.py).
+        from managers.overlay_display import overlay_display_from_recipe
+        birth = overlay_display_from_recipe(entry.get("recipe") or {})
+        return chart, label, birth, recipe
+
+    def build_from_file(self, path):
+        """Build a chart from a .chtk/.toml file WITHOUT activating it.
+
+        SPEC-DUAL-001 INV-7: the one file resolver (``chart_manager.
+        build_chart_from_file``, ``canonicalize=False``). Returns ``(chart,
+        label, birth, params)`` where ``params`` are the built
+        ``jd, lat, lon, name, utcoffset`` (chart B's immutable snapshot).
+        Raises on failure.
+        """
+        from pathlib import Path
+        chart, birth_data = self._gui.chart_manager.build_chart_from_file(path)
+        label = birth_data.get("name") or Path(path).stem
+        # D-23(b) / F2: build the chip payload from the file's birth_data.
+        from managers.overlay_display import overlay_display_from_birth_data
+        birth = overlay_display_from_birth_data(birth_data)
+        if not birth_data.get("name"):
+            import dataclasses
+            birth = dataclasses.replace(birth, name=Path(path).stem)
+        params = {
+            "jd": chart.context.timeJD.jd_number(),
+            "lat": birth_data.get("latitude", 0),
+            "lon": birth_data.get("longitude", 0),
+            "name": birth_data.get("name", ""),
+            "utcoffset": birth_data.get("utc_offset_hours", 0.0),
+        }
+        return chart, label, birth, params
+
     def overlay_from_memory_id(self, entry_id):
         """Build a chart from a memory entry (by id) and overlay it."""
         if self._gui.state.active_chart is None:
             self._status("Load a chart first, then drop one to overlay it.")
             return False
-        entry = self._find_entry(entry_id)
-        if entry is None:
+        if self._find_entry(entry_id) is None:
             self._status("Could not find that chart in memory.")
             return False
         try:
-            chart = self._build_from_entry(entry)
-            label = self._entry_label(entry)
-            # D-23(b) / F2: the chip's full birth-identity payload comes from
-            # the recipe (the built Chart cannot supply the place — its
-            # Location.placename holds the person NAME, chart_factory.py).
-            from managers.overlay_display import overlay_display_from_recipe
-            birth = overlay_display_from_recipe(entry.get("recipe") or {})
+            chart, label, birth, _recipe = self.build_from_memory_id(entry_id)
         except Exception as e:
             self._status(f"Could not overlay chart: {e}")
             import traceback
@@ -78,14 +120,7 @@ class ChartOverlayManager:
             self._status("Load a chart first, then drop one to overlay it.")
             return False
         try:
-            chart, birth_data = self._gui.chart_manager.build_chart_from_file(path)
-            label = birth_data.get("name") or Path(path).stem
-            # D-23(b) / F2: build the chip payload from the file's birth_data.
-            from managers.overlay_display import overlay_display_from_birth_data
-            birth = overlay_display_from_birth_data(birth_data)
-            if not birth_data.get("name"):
-                import dataclasses
-                birth = dataclasses.replace(birth, name=Path(path).stem)
+            chart, label, birth, _params = self.build_from_file(path)
         except Exception as e:
             self._status(f"Could not overlay {Path(path).name}: {e}")
             import traceback
@@ -151,18 +186,26 @@ class ChartOverlayManager:
                 return entry
         return None
 
-    def _build_from_entry(self, entry):
-        """Build from a COPY of the recipe so the persisted memory row is never
-        mutated (SPEC-TRN-006 B-9: get_or_build_chart writes house_system into the
-        entry recipe and pollutes its cache, a two-instance conflict hazard)."""
+    def _recipe_copy(self, entry):
+        """A COPY of the entry recipe so the persisted memory row is never
+        mutated (SPEC-TRN-006 B-9: get_or_build_chart writes house_system into
+        the entry recipe and pollutes its cache, a two-instance conflict hazard)."""
+        return copy.deepcopy(entry["recipe"])
+
+    def _build_from_recipe(self, recipe):
+        """Build in the active chart's current frame; ``recipe`` is a copy owned
+        by the caller (its house_system is set to the current one)."""
         from core.chart_factory import build_chart_from_recipe
-        recipe = copy.deepcopy(entry["recipe"])
         recipe["house_system"] = self._gui.state.house_system
         return build_chart_from_recipe(
             recipe,
             self._gui.state.aditya_mode,
             getattr(self._gui, "chart_sidereal_ayanamsa_id", 100),
         )
+
+    def _build_from_entry(self, entry):
+        """Build from a copy of the entry recipe (kept for existing callers)."""
+        return self._build_from_recipe(self._recipe_copy(entry))
 
     def _entry_label(self, entry):
         recipe = entry.get("recipe") or {}

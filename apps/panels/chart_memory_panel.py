@@ -6,47 +6,38 @@ Chart Memory Panel - Multi-chart memory with visual selector (PySide6)
 Ported from ui/chart_memory_panel.py (CustomTkinter version)
 
 Allows keeping 50-100 charts in memory with quick switching.
-Displays 2 rows × 20 columns of chart buttons with pagination.
+Displays the page's 40 charts as chips in one two-row tray, with paging
+(SPEC-MEM-004 "Single Tray", widgets in apps/widgets/memory_pane).
 """
 import uuid
 from pathlib import Path
 from PySide6.QtWidgets import (
-    QWidget,
-    QHBoxLayout,
     QLabel,
-    QPushButton,
-    QGridLayout,
     QMenu,
+    QWidgetAction,
     QMessageBox,
     QFileDialog,
     QApplication,
-    QToolButton,
 )
-from PySide6.QtCore import Qt, QSize
-from PySide6.QtGui import QFont, QIcon
+from PySide6.QtCore import Qt
 
 # Import centralized theme - uses get_theme_colors() for theme-adaptive styling
 from ui.qt_theme import (
-    STATUS,
-    MEMORY_SELECTION,
-    TEXT_PRIMARY,
     get_theme_colors,
-    scaled_px,
     scaled_area_px,
-    scaled_area_size,
-    desat_hex,
 )
 
 # Import calculation logic
 # Issue 8c: get_all_planets_data import removed; recalculation now goes through
 # core.chart_factory (mode-aware Chart at construction time).
-# Panel constants
-CHART_MEMORY_PANEL_HEIGHT = 70  # Fixed height in pixels
-CHART_BUTTON_WIDTH_RATIO = 9.5  # cell width = font px * ratio (95px at default size 10)
-CHART_BUTTON_HEIGHT = 28  # Height of each chart button
-CHARTS_PER_ROW = 20  # Number of chart buttons per row
-NUM_ROWS = 2  # Number of rows to display
-CHARTS_PER_PAGE = CHARTS_PER_ROW * NUM_ROWS  # 40 charts per page
+# Panel constants. The strip's geometry lives in apps/widgets/memory_pane
+# (SPEC-MEM-004, "Single Tray"); only the paging constants stay here.
+NUM_ROWS = 2  # Chip rows in the tray
+# Charts per page before the tray has a width. Once shown, a page holds
+# exactly what the tray shows (2 rows x visible columns, SPEC-MEM-004 v1.1):
+# no chip is ever hidden and the tray never scrolls.
+CHARTS_PER_PAGE = 40
+CHARTS_PER_ROW = CHARTS_PER_PAGE // NUM_ROWS
 
 
 def _stamp(entry):
@@ -88,6 +79,7 @@ class ChartMemoryPanel:
         self.charts = []  # List of stored chart dicts
         self.current_index = -1  # Currently selected (-1 = none)
         self.current_page = 0  # Current page for pagination
+        self.page_size = CHARTS_PER_PAGE  # follows the tray's capacity
 
         # Display settings
         self.charts_per_row = CHARTS_PER_ROW
@@ -96,13 +88,13 @@ class ChartMemoryPanel:
         # UI elements (will be created in _create_panel)
         self.panel = None
         self.buttons_container = None
-        self.buttons_grid = None
         self.chart_buttons = []  # Keep references to button widgets
 
         # Pagination controls
-        self.prev_btn = None
-        self.next_btn = None
-        self.page_label = None
+        self.nav_pad = None  # ◀ ▶ pages, ▲ ▼ viewed-chart history
+        # Viewed-chart history (back / forward across profiles, this run only)
+        from core.chart_view_history import ChartViewHistory
+        self.view_history = ChartViewHistory()
         self.count_label = None
         self.clear_btn = None
         self.sort_btn = None
@@ -125,253 +117,235 @@ class ChartMemoryPanel:
         # Create the panel
         self._create_panel()
 
+    # Texts of the pill cells: (icon, full label, short label, icon-step label).
+    # Labels and tooltips are the approved mockup's (MC-INTENT).
+    _LOAD_TIP = "Load folder: load every .chtk chart file of a folder into this profile"
+
     def _create_panel(self):
-        """Create the chart selector panel UI."""
-        # Get theme colors (adapts to light/dark theme)
-        theme = get_theme_colors()
+        """Create the chart memory pane ("Single Tray", SPEC-MEM-004).
 
-        # Main container
-        self.panel = QWidget()
-        self.panel.setFixedHeight(CHART_MEMORY_PANEL_HEIGHT)
-        self.panel.setStyleSheet(f"""
-            QWidget {{
-                background-color: {theme["secondary"]};
-                border: 1px solid {theme["secondary_dark"]};
-            }}
-        """)
+        The widgets (apps/widgets/memory_pane) only draw and report clicks;
+        every behaviour stays in this class. The old attribute names point at
+        the new controls so callers keep working: ``panel`` is the strip,
+        ``buttons_container`` the chip tray (the recorder's privacy target),
+        ``load_folder_btn`` the round LOAD key, ``search_btn`` / ``sort_btn`` /
+        ``select_btn`` / ``clear_btn`` the four pill cells, ``more_btn`` the ⋯
+        cell, ``action_box`` the 2x2 block and ``count_label`` the profile well.
+        """
+        from apps.widgets.chart_nav_pad import ChartNavPad
+        from apps.widgets.memory_pane.strip import MemoryPaneStrip
 
-        layout = QHBoxLayout(self.panel)
-        layout.setContentsMargins(5, 3, 5, 3)
-        layout.setSpacing(5)
+        # Chart D-pad: LEFT / RIGHT = pages of this list, UP / DOWN = back /
+        # forward through the charts viewed this session, across profiles.
+        self.nav_pad = ChartNavPad()
+        self.nav_pad.pressed_dir.connect(self._on_nav_pad)
 
-        # === LEFT SIDE: Chart Buttons Area ===
-        self.buttons_container = QWidget()
-        self.buttons_grid = QGridLayout(self.buttons_container)
-        self.buttons_grid.setContentsMargins(0, 0, 0, 0)
-        self.buttons_grid.setSpacing(2)
-        self.buttons_grid.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+        self.strip = MemoryPaneStrip(self.nav_pad)
+        self.panel = self.strip
+        self.buttons_container = self.strip.tray
+        self.well = self.strip.well
+        self.count_label = self.strip.well
+        self.action_box = self.strip.actions
 
-        layout.addWidget(self.buttons_container, stretch=1)
-
-        # === RIGHT SIDE: Pagination Controls ===
-        pagination_container = QWidget()
-        pagination_layout = QHBoxLayout(pagination_container)
-        pagination_layout.setContentsMargins(0, 0, 0, 0)
-        pagination_layout.setSpacing(8)
-
-        # Load Folder button (modern rounded style)
-        self.load_folder_btn = QPushButton("📁 Load Folder")
-        self.load_folder_btn.setFixedSize(110, 32)
-        self.load_folder_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.load_folder_btn.setToolTip("Select a folder to load all CHTK files into memory")
-        self.load_folder_btn.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {theme["secondary"]};
-                color: {theme["secondary_text"]};
-                border: 1px solid {theme["primary"]};
-                border-radius: 16px;
-                font-size: {scaled_area_px('buttons')}px;
-                font-weight: 600;
-                padding: 0px 8px;
-            }}
-            QPushButton:hover {{
-                background-color: {theme["primary"]};
-                border-color: {theme["primary_light"]};
-                color: {theme["secondary_text"]};
-            }}
-            QPushButton:pressed {{
-                background-color: {theme["primary_light"]};
-            }}
-        """)
+        self.load_folder_btn = self.strip.well.load_key
+        self.load_folder_btn.setToolTip(self._LOAD_TIP)
         self.load_folder_btn.clicked.connect(self._load_folder_charts)
-        pagination_layout.addWidget(self.load_folder_btn)
 
-        # Spacer between open folder and navigation
-        pagination_layout.addSpacing(12)
-
-        # Previous page button (modern rounded)
-        self.prev_btn = QPushButton("◀")
-        self.prev_btn.setFixedSize(38, 32)
-        self.prev_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.prev_btn.setEnabled(False)  # Disabled initially
-        self.prev_btn.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {theme["secondary"]};
-                color: {theme["secondary_text"]};
-                border: 1px solid {theme["secondary_dark"]};
-                border-radius: 16px;
-                font-size: {scaled_area_px('buttons')}px;
-                font-weight: bold;
-            }}
-            QPushButton:hover:enabled {{
-                background-color: {theme["primary"]};
-                border-color: {theme["primary_light"]};
-                color: {theme["secondary_text"]};
-            }}
-            QPushButton:pressed {{
-                background-color: {theme["primary_light"]};
-            }}
-            QPushButton:disabled {{
-                color: {theme["secondary_text"]};
-                background-color: {theme["secondary_dark"]};
-                border-color: {theme["secondary_dark"]};
-            }}
-        """)
-        self.prev_btn.clicked.connect(self.prev_page)
-        pagination_layout.addWidget(self.prev_btn)
-
-        # Page indicator label (modern rounded pill)
-        self.page_label = QLabel("0/0")
-        self.page_label.setFixedSize(60, 28)
-        self.page_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.page_label.setStyleSheet(f"""
-            QLabel {{
-                color: {theme["secondary_text"]};
-                font-size: {scaled_area_px('status')}px;
-                font-weight: 600;
-                background-color: {theme["secondary"]};
-                border: 1px solid {theme["secondary_dark"]};
-                border-radius: 14px;
-                padding: 2px 0px;
-            }}
-        """)
-        pagination_layout.addWidget(self.page_label)
-
-        # Next page button (modern rounded)
-        self.next_btn = QPushButton("▶")
-        self.next_btn.setFixedSize(38, 32)
-        self.next_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.next_btn.setEnabled(False)  # Disabled initially
-        self.next_btn.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {theme["secondary"]};
-                color: {theme["secondary_text"]};
-                border: 1px solid {theme["secondary_dark"]};
-                border-radius: 16px;
-                font-size: {scaled_area_px('buttons')}px;
-                font-weight: bold;
-            }}
-            QPushButton:hover:enabled {{
-                background-color: {theme["primary"]};
-                border-color: {theme["primary_light"]};
-                color: {theme["secondary_text"]};
-            }}
-            QPushButton:pressed {{
-                background-color: {theme["primary_light"]};
-            }}
-            QPushButton:disabled {{
-                color: {theme["secondary_text"]};
-                background-color: {theme["secondary_dark"]};
-                border-color: {theme["secondary_dark"]};
-            }}
-        """)
-        self.next_btn.clicked.connect(self.next_page)
-        pagination_layout.addWidget(self.next_btn)
-
-        # Chart count label (modern pill badge)
-        self.count_label = QLabel("(0 charts)")
-        self.count_label.setStyleSheet(f"""
-            QLabel {{
-                color: {theme["secondary_text"]};
-                font-size: {scaled_area_px('status')}px;
-                font-weight: 500;
-                background: transparent;
-                padding: 0px 6px;
-            }}
-        """)
-        pagination_layout.addWidget(self.count_label)
-
-        # Spacer
-        pagination_layout.addSpacing(8)
-
-        # === ACTION BUTTONS BOX (Sort + Clear All) ===
-        self.action_box = action_box = QWidget()
-        action_box.setFixedSize(248, 58)
-        action_box.setStyleSheet(f"""
-            QWidget {{
-                background-color: {theme["secondary_dark"]};
-                border: 1px solid {theme["secondary_dark"]};
-                border-radius: 6px;
-            }}
-        """)
-        action_layout = QHBoxLayout(action_box)
-        action_layout.setContentsMargins(4, 4, 4, 4)
-        action_layout.setSpacing(4)
-
-        # Search button (left of Sort, matches Sort/Clear aesthetic)
-        self.search_btn = QPushButton("🔍\nSearch")
-        self.search_btn.setFixedSize(56, 50)
-        self.search_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.search_btn.setToolTip("Search for charts in database")
-        self.search_btn.clicked.connect(lambda: self.gui.search_btn.click())
-        self._update_search_button_style()
-        action_layout.addWidget(self.search_btn)
-
-        # Sort button (square, 3D style)
-        self.sort_btn = QPushButton("Sort\nA→Z")
-        self.sort_btn.setFixedSize(56, 50)
-        self.sort_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.sort_btn.setToolTip("Cycle sort: A→Z → Birth Date → Load Order")
-        self._update_sort_button_style()
-        self.sort_btn.clicked.connect(self._cycle_sort_mode)
-        action_layout.addWidget(self.sort_btn)
-
-        # Clear All button (square, 3D style)
-        self.clear_btn = QPushButton("Clear\nAll")
-        self.clear_btn.setFixedSize(56, 50)
-        self.clear_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.clear_btn.setToolTip("Clear all charts from memory")
-        self._update_clear_button_style()
-        self.clear_btn.clicked.connect(self._confirm_clear_all)
-        action_layout.addWidget(self.clear_btn)
-
-        # Select button (QToolButton for icon-above-text layout)
-        _select_icon_path = str(Path(__file__).resolve().parent.parent.parent / "img" / "icons" / "checkbox_check.svg")
-        self._select_icon_path = _select_icon_path
-        self.select_btn = QToolButton()
-        self.select_btn.setText("Select")
-        self.select_btn.setIcon(QIcon(_select_icon_path))
-        self.select_btn.setIconSize(QSize(scaled_px(14), scaled_px(14)))
-        self.select_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
-        _select_font = self.select_btn.font()
-        _select_font.setPointSize(scaled_area_size('buttons'))
-        _select_font.setWeight(QFont.Weight.Bold)
-        self.select_btn.setFont(_select_font)
-        self.select_btn.setFixedSize(56, 50)
-        self.select_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.select_btn.setToolTip("Select multiple charts for batch deletion")
-        self._update_select_button_style()
+        acts = self.strip.actions
+        self.search_btn = acts.search_cell
+        self.sort_btn = acts.sort_cell
+        self.select_btn = acts.select_cell
+        self.clear_btn = acts.clear_cell
+        self.more_btn = acts.more_cell
+        # One dispatcher per cell: what a cell does depends on Select mode,
+        # so nothing is disconnected / reconnected on mode changes.
+        self.search_btn.clicked.connect(self._on_search_cell)
+        self.sort_btn.clicked.connect(self._on_sort_cell)
         self.select_btn.clicked.connect(self._toggle_select_mode)
-        action_layout.addWidget(self.select_btn)
+        self.clear_btn.clicked.connect(self._on_clear_cell)
+        self.more_btn.clicked.connect(self._show_more_menu)
+        self.more_btn.setToolTip("More actions")
+        self.strip.step_changed.connect(self._on_step_changed)
+        self.strip.tray.capacity_changed.connect(self._on_capacity_changed)
+        self._refresh_queued = False
 
-        pagination_layout.addWidget(action_box)
-
-        layout.addWidget(pagination_container)
+        self._compact = False
+        self._profile_names = {}
+        self._fit_controls()
+        self._update_action_cells()
 
         # Initial refresh to show empty state
         self.refresh()
 
-        # Compact mode state
-        self._compact = False
+    def _fit_controls(self):
+        """Re-read the font areas: chip, cell and key fonts, and the widths
+        that grow with them (td-80vqm: a bigger area must not clip text)."""
+        for cell in self.strip.actions.cells():
+            cell.apply_font()
+        self.load_folder_btn.apply_font()
+        self.strip.well.setStyleSheet(
+            "#memoryProfileWell { font-size: %dpx; }" % scaled_area_px('buttons'))
+        self.strip.apply_step(self.strip.step, force=False)
+
+    def _on_step_changed(self, _step):
+        self._update_action_cells()
+        self.refresh()
+
+    def _on_capacity_changed(self, capacity):
+        """The tray now shows ``capacity`` chips: re-page so the open chart
+        (or else the first chart shown) stays on screen, then redraw once."""
+        capacity = max(1, int(capacity))
+        if capacity == self.page_size:
+            return
+        start = self.current_page * self.page_size
+        if start <= self.current_index < start + self.page_size:
+            anchor = self.current_index
+        else:
+            anchor = start
+        self.page_size = capacity
+        self.current_page = max(0, anchor) // capacity
+        self._ensure_page_valid()
+        if not self._refresh_queued:
+            # Coalesce: a window drag crosses many widths in one event pass.
+            self._refresh_queued = True
+            from PySide6.QtCore import QTimer
+            QTimer.singleShot(0, self._queued_refresh)
+
+    def _queued_refresh(self):
+        self._refresh_queued = False
+        self.refresh()
 
     def set_compact(self, compact):
-        """Switch between compact (tiled) and full layout.
+        """Kept for the window's responsive pass (core_gui_qt).
 
-        In compact mode: hides Load Folder, Sort/Clear, and chart count to
-        give more room for chart name pills.
+        The pane no longer hides anything when the window is narrow: the
+        strip picks its width step itself (S0-S3, SPEC-MEM-004) and every
+        control stays visible or moves into the ⋯ menu. Lorris's bug was
+        exactly this method hiding Load, the count and the actions.
         """
-        if compact == self._compact:
-            return
-        self._compact = compact
-        if compact and self._select_mode:
-            self._exit_select_mode()
-        self.load_folder_btn.setVisible(not compact)
-        self.action_box.setVisible(not compact)
-        self.count_label.setVisible(not compact)
+        self._compact = bool(compact)
 
+    # -- action cells -------------------------------------------------------
+
+    def _sort_label(self):
+        return self.SORT_LABELS.get(self.current_sort_mode, "A→Z").upper()
+
+    def _update_action_cells(self):
+        """Labels, colours and tooltips of the four cells for the mode."""
+        from apps.widgets.memory_pane.actions import DANGER, PLAIN, PRIMARY_ICON
+        sel = self._select_mode
+        if sel:
+            n = len(self._selected_ids)
+            self.search_btn.set_content("mp_chk", "ALL", "ALL", "")
+            self.search_btn.setToolTip("Select all charts (toggle)")
+            self.sort_btn.set_content("mp_trash", f"DELETE {n}", f"DEL {n}", f"{n}", DANGER)
+            self.sort_btn.setToolTip(f"Delete {n} selected chart(s) across all pages")
+            self.sort_btn.setEnabled(n > 0)
+            self.clear_btn.set_content("mp_chk", "INVERT", "INVERT", "")
+            self.clear_btn.setToolTip("Invert selection (swap selected/unselected)")
+            self.select_btn.setToolTip("Select mode is on: click to leave it")
+        else:
+            label = self._sort_label()
+            self.search_btn.set_content("mp_search", "SEARCH", "SEARCH", "", PRIMARY_ICON)
+            self.search_btn.setToolTip("Search the chart database")
+            self.sort_btn.set_content("mp_sort", f"SORT {label}", label, label, PRIMARY_ICON)
+            self.sort_btn.setToolTip(
+                f"Sort: {self.SORT_LABELS.get(self.current_sort_mode, 'A→Z')}. "
+                "Click to cycle A→Z, Date, Added")
+            self.sort_btn.setEnabled(True)
+            self.clear_btn.set_content("mp_trash", "CLEAR ALL", "CLEAR", "", DANGER)
+            self.clear_btn.setToolTip("Clear all charts from the list (asks to confirm)")
+            self.select_btn.setToolTip("Select charts to remove (toggle)")
+        self.select_btn.set_content("mp_chk", "SELECT", "SELECT", "", PLAIN)
+        self.select_btn.active = sel
+        self.select_btn.update()
+        self.more_btn.dot = sel and self.strip.step.folded
+        self.more_btn.update()
+
+    def _on_search_cell(self):
+        if self._select_mode:
+            self._select_all_charts()
+        else:
+            self.gui.search_btn.click()
+
+    def _on_sort_cell(self):
+        if self._select_mode:
+            self._delete_selected_charts()
+        else:
+            self._cycle_sort_mode()
+
+    def _on_clear_cell(self):
+        if self._select_mode:
+            self._invert_selection()
+        else:
+            self._confirm_clear_all()
+
+    def _build_more_menu(self):
+        """The ⋯ menu (S3): Select, the sort order pick list, Clear all…"""
+        menu = QMenu(self.panel)
+        menu.setStyleSheet(self._menu_style())
+        sel = menu.addAction("Select charts to remove")
+        sel.setCheckable(True)
+        sel.setChecked(self._select_mode)
+        sel.triggered.connect(lambda _c=False: self._toggle_select_mode())
+        if self._select_mode:
+            n = len(self._selected_ids)
+            menu.addAction("Select all").triggered.connect(
+                lambda _c=False: self._select_all_charts())
+            menu.addAction("Invert selection").triggered.connect(
+                lambda _c=False: self._invert_selection())
+            delete = menu.addAction(f"Delete selected ({n})")
+            delete.setEnabled(n > 0)
+            delete.triggered.connect(lambda _c=False: self._delete_selected_charts())
+        menu.addSeparator()
+        head = menu.addAction("SORT ORDER")
+        head.setEnabled(False)
+        for mode, name in (("az", "Sort A→Z"), ("date", "Sort by date"),
+                           ("added", "Sort by added")):
+            act = menu.addAction(name)
+            act.setCheckable(True)
+            act.setChecked(self.current_sort_mode == mode)
+            act.triggered.connect(lambda _c=False, m=mode: self._set_sort_mode(m))
+        menu.addSeparator()
+        # "Clear all…" in red (QSS cannot reach one QAction): a widget row.
+        from apps.widgets.memory_pane.actions import DangerMenuRow
+        row = DangerMenuRow("Clear all…", menu)
+        clear = QWidgetAction(menu)
+        clear.setText("Clear all…")
+        clear.setDefaultWidget(row)
+        row.chosen.connect(clear.trigger)
+        row.chosen.connect(menu.close)
+        clear.triggered.connect(lambda _c=False: self._confirm_clear_all())
+        menu.addAction(clear)
+        return menu
+
+    def _show_more_menu(self):
+        menu = self._build_more_menu()
+        btn = self.more_btn
+        menu.exec(btn.mapToGlobal(btn.rect().bottomLeft()))
+        menu.deleteLater()  # one menu per opening, freed after it closes
+
+    def _menu_style(self):
+        from apps.widgets.memory_pane.tokens import pane_tokens
+        tok = pane_tokens()
+
+        def rgba(c):
+            return f"rgba({c.red()},{c.green()},{c.blue()},{c.alphaF():.3f})"
+        return f"""
+            QMenu {{ background-color: {rgba(tok["menu_fill"])};
+                     color: {tok["primary_text"].name()};
+                     border: 1px solid {rgba(tok["hair"])}; border-radius: 8px;
+                     padding: 4px; }}
+            QMenu::item {{ padding: 4px 12px 4px 22px; border-radius: 5px; }}
+            QMenu::item:selected {{ background-color: {tok["primary"].name()};
+                                    color: {tok["on_primary"].name()}; }}
+            QMenu::item:disabled {{ color: {tok["muted"].name()}; }}
+            QMenu::separator {{ height: 1px; margin: 4px 6px;
+                                background: {rgba(tok["hair"])}; }}
+        """
     def add_chart(self, recipe, *, mode=None, ayanamsa=None,
                   chtk_path=None, is_transit=False, chart_obj=None,
-                  defer_refresh=False):
+                  defer_refresh=False, kind=None):
         """Add a chart to memory (SPEC-MEM-002 S5).
 
         Args:
@@ -379,11 +353,14 @@ class ChartMemoryPanel:
             mode:      Zodiac mode. Defaults to current GUI mode.
             ayanamsa:  Ayanamsa ID. Defaults to current GUI setting.
             chtk_path: Source CHTK file path, or None.
-            is_transit: True for transit/Now charts.
+            is_transit: True for transit/Now charts (legacy spelling of
+                kind="transit"; ignored when ``kind`` is given).
             chart_obj: Pre-built Chart object (cached as _chart).
             defer_refresh: When True, skip the per-add UI refresh.
                 Bulk loaders use this to avoid O(N^2) grid rebuilds; the
                 caller is responsible for invoking self.refresh() once at end.
+            kind:      What the chart is (core.chart_kind.KINDS): "birth"
+                (default), or an event kind. Sets ``is_transit`` too.
 
         Returns:
             int: Index of the added or existing chart.
@@ -393,6 +370,9 @@ class ChartMemoryPanel:
         if ayanamsa is None:
             ayanamsa = getattr(self.gui, 'chart_sidereal_ayanamsa_id', 100)
 
+        from core.chart_kind import is_transit_kind, resolve_kind
+        kind = resolve_kind(kind, is_transit)
+
         # All keys must be present: heal-on-match (S5.2) does existing.update(chart_entry)
         chart_entry = {
             'id': str(uuid.uuid4()),
@@ -400,7 +380,8 @@ class ChartMemoryPanel:
             'mode': mode,
             'ayanamsa': ayanamsa,
             'chtk_path': chtk_path,
-            'is_transit': is_transit,
+            'kind': kind,
+            'is_transit': is_transit_kind(kind),
             '_chart': chart_obj,
             '_built_mode': mode if chart_obj else None,
             '_built_ayanamsa': ayanamsa if chart_obj else None,
@@ -432,11 +413,18 @@ class ChartMemoryPanel:
                 # rebuilds the wrong chart from it (td-971a).
                 # id must be set before update() so _insertion_order stays valid
                 chart_entry['id'] = existing['id']
+                # A saved birth chart is never demoted by an incidental match
+                # (e.g. Exploration "Load in main" on the base moment of the
+                # chart it was opened from): Find Chart would stop finding it.
+                if existing.get('kind') == 'birth' and chart_entry['kind'] != 'birth':
+                    chart_entry['kind'] = 'birth'
+                    chart_entry['is_transit'] = False
                 existing.update(chart_entry)
                 self.current_index = i
                 if not defer_refresh:
                     self._ensure_page_visible(i)
                     self.refresh()
+                    self._record_view(existing)
                 return i
 
         self.charts.append(chart_entry)
@@ -445,6 +433,7 @@ class ChartMemoryPanel:
         if not defer_refresh:
             self._ensure_page_visible(self.current_index)
             self.refresh()
+            self._record_view(chart_entry)
         return self.current_index
 
     def _is_same_chart(self, entry1, entry2):
@@ -551,6 +540,75 @@ class ChartMemoryPanel:
         self.refresh()
         if hasattr(self.gui, 'edit_chart_panel') and self.gui.edit_chart_panel:
             self.gui.edit_chart_panel.load_chart_from_memory(entry)
+        self._record_view(entry)
+
+    # -- viewed-chart history (back / forward) -----------------------------
+
+    def _record_view(self, entry):
+        """Add the chart now on screen to the viewed-chart history. Bulk adds
+        (defer_refresh) are not views and never reach here."""
+        self.view_history.record(self._current_profile_id(), entry.get('id'),
+                                 (entry.get('recipe') or {}).get('name'))
+        self._update_history_buttons()
+
+    def _current_profile_id(self):
+        pm = getattr(self.gui, 'profile_manager', None)
+        try:
+            return pm.get_current_profile() if pm is not None else ""
+        except Exception:
+            return ""
+
+    def _history_label(self, entry):
+        pm = getattr(self.gui, 'profile_manager', None)
+        name = entry.name or "chart"
+        if pm is None or not entry.profile_id:
+            return name
+        return f"{name} ({self._profile_display_name(pm, entry.profile_id)})"
+
+    def _on_nav_pad(self, direction):
+        {"left": self.prev_page, "right": self.next_page,
+         "up": lambda: self.go_history(-1), "down": lambda: self.go_history(1)}[direction]()
+
+    def _update_history_buttons(self):
+        pad = self.nav_pad
+        if pad is None:
+            return
+        hist = self.view_history
+        for key, step, verb, none in (("up", -1, "Back to", "No earlier chart this session"),
+                                      ("down", 1, "Forward to", "No later chart this session")):
+            target = hist.peek(step)
+            pad.set_key_enabled(key, target is not None)
+            pad.set_key_tooltip(key, none if target is None
+                                else f"{verb} {self._history_label(target)}")
+
+    def _index_of_chart_id(self, chart_id):
+        for i, entry in enumerate(self.charts):
+            if entry.get('id') == chart_id:
+                return i
+        return -1
+
+    def go_history(self, step):
+        """Show the chart viewed before (step -1) or after (+1) the current
+        one, switching profile when it lives in another. A chart that has
+        since been removed is dropped from the history and skipped."""
+        hist = self.view_history
+        while True:
+            target = hist.peek(step)
+            if target is None:
+                break
+            with hist.suppressed():
+                if target.profile_id and target.profile_id != self._current_profile_id():
+                    pm = getattr(self.gui, 'profile_manager', None)
+                    if pm is not None:
+                        pm._on_profile_selected(target.profile_id)
+                idx = self._index_of_chart_id(target.chart_id)
+                if idx >= 0:
+                    hist.move(step)
+                    self._ensure_page_visible(idx)
+                    self.select_chart(idx)
+                    break
+            hist.discard(target)
+        self._update_history_buttons()
 
     def _unstar_if_in_favorites_profile(self, entries, checked=False):
         """Unstar charts removed from the Favorites panel (SPEC-PROF-002 §5.1.0).
@@ -855,8 +913,7 @@ class ChartMemoryPanel:
         self._insertion_order.clear()
         self.current_sort_mode = None
         if self.sort_btn:
-            self.sort_btn.setText("Sort\nA→Z")
-            self.sort_btn.setToolTip("Cycle sort: A→Z → Birth Date → Load Order")
+            self._update_action_cells()
         self.current_index = -1
         self.current_page = 0
         self.refresh()
@@ -1019,124 +1076,29 @@ class ChartMemoryPanel:
     def refresh_theme(self):
         """
         Refresh panel styling when theme changes.
-        Called from core_gui_qt.py when user changes theme.
+        Called from core_gui_qt.py when user changes theme (and on font
+        changes). Every colour is read from the theme at paint time, so this
+        re-reads the font areas and repaints.
         """
-        theme = get_theme_colors()
-
-        # Update main panel background
-        self.panel.setStyleSheet(f"""
-            QWidget {{
-                background-color: {theme["secondary"]};
-                border: 1px solid {theme["secondary_dark"]};
-            }}
-        """)
-
-        # Update action button styles with new theme colors
-        if self._select_mode:
-            self._exit_select_mode()
-        else:
-            self._update_search_button_style()
-            self._update_sort_button_style()
-            self._update_clear_button_style()
-            self._update_select_button_style()
-
-        # Update "Load Folder" button styling
-        if hasattr(self, 'load_folder_btn'):
-            self.load_folder_btn.setStyleSheet(f"""
-                QPushButton {{
-                    background-color: {theme["secondary"]};
-                    color: {theme["secondary_text"]};
-                    border: 1px solid {theme["primary"]};
-                    border-radius: 16px;
-                    font-size: {scaled_area_px('buttons')}px;
-                    font-weight: 600;
-                    padding: 0px 8px;
-                }}
-                QPushButton:hover {{
-                    background-color: {theme["primary"]};
-                    border-color: {theme["primary_light"]};
-                    color: {theme["secondary_text"]};
-                }}
-                QPushButton:pressed {{
-                    background-color: {theme["primary_light"]};
-                }}
-            """)
-
-        # Update prev/next navigation buttons
-        nav_button_style = f"""
-            QPushButton {{
-                background-color: {theme["secondary"]};
-                color: {theme["secondary_text"]};
-                border: 1px solid {theme["secondary_dark"]};
-                border-radius: 16px;
-                font-size: {scaled_area_px('buttons')}px;
-                font-weight: bold;
-            }}
-            QPushButton:hover:enabled {{
-                background-color: {theme["primary"]};
-                border-color: {theme["primary_light"]};
-                color: {theme["secondary_text"]};
-            }}
-            QPushButton:pressed {{
-                background-color: {theme["primary_light"]};
-            }}
-            QPushButton:disabled {{
-                color: {theme["secondary_text"]};
-                background-color: {theme["secondary_dark"]};
-                border-color: {theme["secondary_dark"]};
-            }}
-        """
-
-        if hasattr(self, 'prev_btn'):
-            self.prev_btn.setStyleSheet(nav_button_style)
-        if hasattr(self, 'next_btn'):
-            self.next_btn.setStyleSheet(nav_button_style)
-
-        # Update page label styling
-        if hasattr(self, 'page_label'):
-            self.page_label.setStyleSheet(f"""
-                QLabel {{
-                    color: {theme["secondary_text"]};
-                    font-size: {scaled_area_px('status')}px;
-                    font-weight: 600;
-                    background-color: {theme["secondary"]};
-                    border: 1px solid {theme["secondary_dark"]};
-                    border-radius: 14px;
-                    padding: 2px 0px;
-                }}
-            """)
-
-        # SPEC-THM-001 G08: count_label was missing from refresh_theme().
-        if hasattr(self, 'count_label') and self.count_label is not None:
-            self.count_label.setStyleSheet(f"""
-                QLabel {{
-                    color: {theme["secondary_text"]};
-                    font-size: {scaled_area_px('status')}px;
-                    font-weight: 500;
-                    background: transparent;
-                    padding: 0px 6px;
-                }}
-            """)
-
-        # SPEC-THM-001 G09: action_box (Sort/Search/Clear container) was missing.
-        if hasattr(self, 'action_box') and self.action_box is not None:
-            self.action_box.setStyleSheet(f"""
-                QWidget {{
-                    background-color: {theme["secondary_dark"]};
-                    border: 1px solid {theme["secondary_dark"]};
-                    border-radius: 6px;
-                }}
-            """)
-
-        # Regenerate all chart buttons with new theme colors
+        self._fit_controls()
+        if self.nav_pad is not None:
+            self.nav_pad.refresh_theme()
+        for w in (self.strip, self.strip.tray, self.strip.well, self.strip.actions,
+                  self.load_folder_btn, *self.strip.actions.cells()):
+            w.update()
+        self._update_action_cells()
+        # Regenerate the chips (fonts and widths follow the areas)
         self.refresh()
 
     def refresh(self):
-        """Refresh the chart selector display."""
+        """Refresh the chart chips for the current page."""
+        from apps.widgets.memory_pane.chip import MemoryChip
         theme = get_theme_colors()
+        tray = self.strip.tray
 
-        # Clear existing buttons
+        # Clear existing chips (Rule 18: Qt owns them, deleteLater)
         for btn in self.chart_buttons:
+            btn.hide()
             btn.deleteLater()
         self.chart_buttons.clear()
 
@@ -1150,264 +1112,87 @@ class ChartMemoryPanel:
                     font-size: {scaled_area_px('status')}px;
                     font-style: italic;
                     background: transparent;
+                    border: none;
                 }}
             """)
-            self.buttons_grid.addWidget(empty_label, 0, 0, 1, self.charts_per_row)
+            tray.set_empty(empty_label)
             self.chart_buttons.append(empty_label)
             self._update_pagination()
             return
 
         # Calculate visible range
-        start = self.current_page * CHARTS_PER_PAGE
-        end = min(start + CHARTS_PER_PAGE, len(self.charts))
+        start = self.current_page * self.page_size
+        end = min(start + self.page_size, len(self.charts))
         visible_charts = self.charts[start:end]
 
-        # Compute chart-memory font size and derived button width
-        mem_px = scaled_area_px('chart_memory')
-        btn_width = round(mem_px * CHART_BUTTON_WIDTH_RATIO)
-
-        # Create grid of buttons
+        current_chip = None
         for i, chart in enumerate(visible_charts):
             actual_index = start + i
-            row = i // self.charts_per_row
-            col = i % self.charts_per_row
-
-            # Determine button appearance - selected uses accent color
-            is_selected = actual_index == self.current_index
-
-            # Truncate name (shorter in select mode to fit checkbox prefix)
+            is_current = actual_index == self.current_index
+            name = chart['person_name'].title()
+            # SPEC-TRN-006: the chip is a ChartMemoryButton, so it can also be
+            # dragged onto the TRANSIT button to overlay this chart. Drag is
+            # suppressed in select-mode (draggable=False) where it would
+            # conflict with check box toggling.
+            chip = MemoryChip(
+                name, chart.get('id'), tray.content,
+                draggable=not self._select_mode,
+                current=is_current,
+                select_mode=self._select_mode,
+                checked_box=self._select_mode and chart.get('id') in self._selected_ids)
+            chip.setToolTip(name)
             if self._select_mode:
-                is_multi_selected = chart.get('id') in self._selected_ids
-                prefix = "☑ " if is_multi_selected else "☐ "
-                display_name = prefix + self._truncate_name(chart['person_name'].title(), 17)
+                chip.clicked.connect(
+                    lambda checked=False, idx=actual_index: self._toggle_chart_selection(idx))
             else:
-                display_name = self._truncate_name(chart['person_name'].title(), 20)
-
-            # SPEC-TRN-006: ChartMemoryButton is a drop-in QPushButton that can
-            # also be dragged onto the TRANSIT button to overlay this chart. Drag
-            # is suppressed in select-mode (draggable=False) where it would
-            # conflict with checkbox toggling.
-            from apps.widgets.chart_memory_button import ChartMemoryButton
-            btn = ChartMemoryButton(display_name, chart.get('id'),
-                                    draggable=not self._select_mode)
-            btn.setFixedSize(btn_width, CHART_BUTTON_HEIGHT)
-            btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            btn.setToolTip(chart['person_name'].title())
-
-            if self._select_mode:
-                # Select mode styling
-                if is_multi_selected:
-                    btn.setStyleSheet(f"""
-                        QPushButton {{
-                            background-color: {theme["secondary"]};
-                            color: {theme["secondary_text"]};
-                            border: 2px solid {desat_hex(MEMORY_SELECTION['base'])};
-                            border-radius: 4px;
-                            font-family: 'Inter', 'Segoe UI', 'Arial', sans-serif;
-                            font-size: {mem_px}px;
-                            font-weight: bold;
-                            text-align: left;
-                            padding: 0px 2px 0px 3px;
-                            text-transform: none;
-                        }}
-                        QPushButton:hover {{
-                            background-color: {theme["secondary_light"]};
-                            border-color: {desat_hex(MEMORY_SELECTION['hover'])};
-                        }}
-                        QPushButton:pressed {{
-                            background-color: {theme["secondary_dark"]};
-                        }}
-                    """)
-                else:
-                    btn.setStyleSheet(f"""
-                        QPushButton {{
-                            background-color: {theme["secondary_dark"]};
-                            color: {theme["secondary_text"]};
-                            border: 1px dashed {theme["secondary_light"]};
-                            border-radius: 4px;
-                            font-family: 'Inter', 'Segoe UI', 'Arial', sans-serif;
-                            font-size: {mem_px}px;
-                            text-align: left;
-                            padding: 0px 2px 0px 3px;
-                            text-transform: none;
-                        }}
-                        QPushButton:hover {{
-                            background-color: {theme["secondary_light"]};
-                            border: 1px dashed {desat_hex(MEMORY_SELECTION['base'])};
-                        }}
-                        QPushButton:pressed {{
-                            background-color: {theme["secondary"]};
-                        }}
-                    """)
-                btn.clicked.connect(lambda checked, idx=actual_index: self._toggle_chart_selection(idx))
-            else:
-                # Normal mode styling
-                if is_selected:
-                    btn.setStyleSheet(f"""
-                        QPushButton {{
-                            background-color: {theme["secondary"]};
-                            color: {theme["secondary_text"]};
-                            border: 2px solid {theme["primary"]};
-                            border-radius: 4px;
-                            font-family: 'Inter', 'Segoe UI', 'Arial', sans-serif;
-                            font-size: {mem_px}px;
-                            font-weight: bold;
-                            text-align: left;
-                            padding: 0px 2px 0px 5px;
-                            text-transform: none;
-                        }}
-                        QPushButton:hover {{
-                            background-color: {theme["secondary_light"]};
-                            border-color: {theme["primary_light"]};
-                        }}
-                        QPushButton:pressed {{
-                            background-color: {theme["secondary_dark"]};
-                        }}
-                    """)
-                else:
-                    btn.setStyleSheet(f"""
-                        QPushButton {{
-                            background-color: {theme["secondary_dark"]};
-                            color: {theme["secondary_text"]};
-                            border: 1px solid {theme["secondary_light"]};
-                            border-radius: 4px;
-                            font-family: 'Inter', 'Segoe UI', 'Arial', sans-serif;
-                            font-size: {mem_px}px;
-                            text-align: left;
-                            padding: 0px 2px 0px 5px;
-                            text-transform: none;
-                        }}
-                        QPushButton:hover {{
-                            background-color: {theme["secondary_light"]};
-                            border-color: {theme["primary"]};
-                        }}
-                        QPushButton:pressed {{
-                            background-color: {theme["secondary"]};
-                            border-color: {theme["primary"]};
-                        }}
-                    """)
-                btn.clicked.connect(lambda checked, idx=actual_index: self.select_chart(idx))
-                btn.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-                btn.customContextMenuRequested.connect(
-                    lambda pos, idx=actual_index, b=btn: self._show_context_menu(b, idx, pos)
+                chip.clicked.connect(
+                    lambda checked=False, idx=actual_index: self.select_chart(idx))
+                chip.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+                chip.customContextMenuRequested.connect(
+                    lambda pos, idx=actual_index, b=chip: self._show_context_menu(b, idx, pos)
                 )
+            if is_current:
+                current_chip = chip
+            self.chart_buttons.append(chip)
 
-            # Add to grid
-            self.buttons_grid.addWidget(btn, row, col)
-            self.chart_buttons.append(btn)
-
+        tray.set_chips(self.chart_buttons, current_chip)
         self._update_pagination()
 
-    def _truncate_name(self, name, max_length):
-        """Truncate name to fit button width."""
-        if len(name) <= max_length:
-            return name
-        return name[:max_length - 2] + ".."
-
-    @staticmethod
-    def _darken_color(hex_color, factor=0.8):
-        """Darken a hex color by multiplying RGB values by factor."""
-        hex_color = hex_color.lstrip('#')
-        r, g, b = int(hex_color[0:2], 16), int(hex_color[2:4], 16), int(hex_color[4:6], 16)
-        r, g, b = int(r * factor), int(g * factor), int(b * factor)
-        return f"#{r:02x}{g:02x}{b:02x}"
-
-    @staticmethod
-    def _lighten_color(hex_color, factor=1.3):
-        """Lighten a hex color by multiplying RGB values by factor (capped at 255)."""
-        hex_color = hex_color.lstrip('#')
-        r, g, b = int(hex_color[0:2], 16), int(hex_color[2:4], 16), int(hex_color[4:6], 16)
-        r, g, b = min(255, int(r * factor)), min(255, int(g * factor)), min(255, int(b * factor))
-        return f"#{r:02x}{g:02x}{b:02x}"
-
-    def _get_3d_button_style(self, base_color, text_color):
-        """Generate 3D beveled square button stylesheet."""
-        top_edge = self._lighten_color(base_color, 1.4)
-        bottom_edge = self._darken_color(base_color, 0.5)
-        hover_base = self._lighten_color(base_color, 1.15)
-        pressed_base = self._darken_color(base_color, 0.75)
-        return f"""
-            QPushButton {{
-                background-color: qlineargradient(
-                    x1:0, y1:0, x2:0, y2:1,
-                    stop:0 {self._lighten_color(base_color, 1.2)},
-                    stop:0.5 {base_color},
-                    stop:1 {self._darken_color(base_color, 0.8)}
-                );
-                color: {text_color};
-                border: 1px solid {bottom_edge};
-                border-top: 2px solid {top_edge};
-                border-left: 2px solid {top_edge};
-                border-right: 2px solid {bottom_edge};
-                border-bottom: 2px solid {bottom_edge};
-                border-radius: 5px;
-                font-size: {scaled_area_px('buttons')}px;
-                font-weight: 700;
-                padding: 2px;
-            }}
-            QPushButton:hover {{
-                background-color: qlineargradient(
-                    x1:0, y1:0, x2:0, y2:1,
-                    stop:0 {self._lighten_color(hover_base, 1.2)},
-                    stop:0.5 {hover_base},
-                    stop:1 {self._darken_color(hover_base, 0.8)}
-                );
-            }}
-            QPushButton:pressed {{
-                background-color: qlineargradient(
-                    x1:0, y1:0, x2:0, y2:1,
-                    stop:0 {self._darken_color(pressed_base, 0.9)},
-                    stop:0.5 {pressed_base},
-                    stop:1 {self._lighten_color(pressed_base, 1.1)}
-                );
-                border-top: 2px solid {bottom_edge};
-                border-left: 2px solid {bottom_edge};
-                border-right: 2px solid {top_edge};
-                border-bottom: 2px solid {top_edge};
-            }}
-        """
-
-    def _update_search_button_style(self):
-        """Update Search button styling with 3D beveled square design."""
-        from ui.qt_theme import get_theme_accent
-        accent = get_theme_accent()
-        # SPEC-THM-001 G07: live theme text color (was frozen TEXT_PRIMARY).
-        # qt-material's primary_text is white on dark primary, dark on light primary.
-        theme = get_theme_colors()
-        self.search_btn.setStyleSheet(self._get_3d_button_style(accent["base"], theme["primary_text"]))
-
-    def _update_clear_button_style(self):
-        """Update Clear button styling with 3D beveled square design."""
-        from ui.qt_theme import STATUS
-        # SPEC-SAT-001: mute the semantic error red with the saturation slider
-        # (no-op at 100). SPEC-THM-001 G07: white on red is correct on both themes.
-        error_base = desat_hex(STATUS["error"])
-        self.clear_btn.setStyleSheet(self._get_3d_button_style(error_base, TEXT_PRIMARY))
-
-    def _update_sort_button_style(self):
-        """Update Sort button styling with 3D beveled square design.
-        Uses theme accent color — follows selected qt-material theme."""
-        from ui.qt_theme import get_theme_accent
-        accent = get_theme_accent()
-        # SPEC-THM-001 G07: live theme text color (was frozen TEXT_PRIMARY).
-        theme = get_theme_colors()
-        self.sort_btn.setStyleSheet(self._get_3d_button_style(accent["base"], theme["primary_text"]))
+    def _profile_name(self):
+        """The active profile's display name (cached per profile id)."""
+        pm = getattr(self.gui, 'profile_manager', None)
+        if pm is None:
+            return ""
+        try:
+            pid = pm.get_current_profile()
+        except Exception:
+            return ""
+        if pid not in self._profile_names:
+            self._profile_names[pid] = self._profile_display_name(pm, pid) or ""
+        return self._profile_names[pid]
 
     def _update_pagination(self):
-        """Update pagination controls and labels."""
+        """Update the D-pad and the profile well (count, page ticks)."""
         total_charts = len(self.charts)
-        total_pages = max(1, (total_charts + CHARTS_PER_PAGE - 1) // CHARTS_PER_PAGE)
+        total_pages = max(1, (total_charts + self.page_size - 1) // self.page_size)
         current_page_display = self.current_page + 1 if total_charts > 0 else 0
 
-        # Update page label
-        self.page_label.setText(f"{current_page_display}/{total_pages}")
+        # Update page indicator (centre of the D-pad)
+        self.nav_pad.set_page_text(f"{current_page_display}/{total_pages}")
 
-        # Update count label
-        self.count_label.setText(f"({total_charts} charts)")
+        # The well: profile name, chart count, one tick per page
+        self.strip.well.set_state(self._profile_name(), total_charts,
+                                  self.current_page + 1, total_pages)
 
         # Enable/disable navigation buttons
-        self.prev_btn.setEnabled(self.current_page > 0)
-        self.next_btn.setEnabled(self.current_page < total_pages - 1)
+        self.nav_pad.set_key_enabled("left", self.current_page > 0)
+        self.nav_pad.set_key_enabled("right", self.current_page < total_pages - 1)
+        self.nav_pad.set_key_tooltip(
+            "left", f"Previous page ({current_page_display} of {total_pages})"
+            if self.current_page > 0 else "First page")
+        self.nav_pad.set_key_tooltip(
+            "right", f"Next page ({current_page_display} of {total_pages})"
+            if self.current_page < total_pages - 1 else "Last page")
 
     def prev_page(self):
         """Go to previous page."""
@@ -1417,20 +1202,20 @@ class ChartMemoryPanel:
 
     def next_page(self):
         """Go to next page."""
-        total_pages = max(1, (len(self.charts) + CHARTS_PER_PAGE - 1) // CHARTS_PER_PAGE)
+        total_pages = max(1, (len(self.charts) + self.page_size - 1) // self.page_size)
         if self.current_page < total_pages - 1:
             self.current_page += 1
             self.refresh()
 
     def _ensure_page_visible(self, index):
         """Ensure the chart at given index is on the visible page."""
-        target_page = index // CHARTS_PER_PAGE
+        target_page = index // self.page_size
         if target_page != self.current_page:
             self.current_page = target_page
 
     def _ensure_page_valid(self):
         """Ensure current page is valid after chart removal."""
-        total_pages = max(1, (len(self.charts) + CHARTS_PER_PAGE - 1) // CHARTS_PER_PAGE)
+        total_pages = max(1, (len(self.charts) + self.page_size - 1) // self.page_size)
         if self.current_page >= total_pages:
             self.current_page = max(0, total_pages - 1)
 
@@ -1557,9 +1342,15 @@ class ChartMemoryPanel:
             self.current_sort_mode = self.SORT_MODES[(idx + 1) % len(self.SORT_MODES)]
 
         self._apply_sort()
-        label = self.SORT_LABELS[self.current_sort_mode]
-        self.sort_btn.setText(f"Sort\n{label}")
-        self.sort_btn.setToolTip(f"Current: {label} | Click to cycle")
+        self._update_action_cells()
+
+    def _set_sort_mode(self, mode):
+        """Pick a sort mode directly (the ⋯ menu's sort order list)."""
+        if not self.charts or mode not in self.SORT_MODES:
+            return
+        self.current_sort_mode = mode
+        self._apply_sort()
+        self._update_action_cells()
 
     def _apply_sort(self):
         """Sort self.charts according to current_sort_mode, preserving selection."""
@@ -1604,103 +1395,18 @@ class ChartMemoryPanel:
             self._enter_select_mode()
 
     def _enter_select_mode(self):
+        """Select mode: chips show a check box and toggle it on click; the
+        cells become ALL / DELETE n / SELECT (on) / INVERT."""
         if not self.charts:
             return
         self._select_mode = True
         self._selected_ids.clear()
-
-        # Swap Search → Select All
-        self.search_btn.setText("Select\nAll")
-        self.search_btn.setToolTip("Select all charts (toggle)")
-        try:
-            self.search_btn.clicked.disconnect()
-        except RuntimeError:
-            pass
-        self.search_btn.clicked.connect(self._select_all_charts)
-
-        # Swap Sort → Delete (count)
-        self.sort_btn.setText("Delete\n(0)")
-        self.sort_btn.setToolTip("Delete selected charts")
-        self.sort_btn.setEnabled(False)
-        try:
-            self.sort_btn.clicked.disconnect()
-        except RuntimeError:
-            pass
-        self.sort_btn.clicked.connect(self._delete_selected_charts)
-        self._update_delete_button_style()
-
-        # Swap Clear All → Cancel
-        self.clear_btn.setText("Cancel")
-        self.clear_btn.setToolTip("Exit selection mode")
-        try:
-            self.clear_btn.clicked.disconnect()
-        except RuntimeError:
-            pass
-        self.clear_btn.clicked.connect(self._exit_select_mode)
-        from ui.qt_theme import get_theme_accent
-        accent = get_theme_accent()
-        theme = get_theme_colors()
-        self.clear_btn.setStyleSheet(
-            self._get_3d_button_style(accent["base"], theme["primary_text"]))
-
-        # Repurpose Select button as Invert in select mode
-        self.select_btn.setIcon(QIcon())
-        self.select_btn.setText("Invert")
-        self.select_btn.setToolTip("Invert selection (swap selected/unselected)")
-        try:
-            self.select_btn.clicked.disconnect()
-        except RuntimeError:
-            pass
-        self.select_btn.clicked.connect(self._invert_selection)
-        self._update_select_button_active_style()
+        self._update_action_cells()
         self.refresh()
 
     def _restore_action_buttons(self):
-        """Restore all action buttons to normal-mode text, connections, and styles."""
-        # Restore Search
-        self.search_btn.setText("\U0001f50d\nSearch")
-        self.search_btn.setToolTip("Search for charts in database")
-        try:
-            self.search_btn.clicked.disconnect()
-        except RuntimeError:
-            pass
-        self.search_btn.clicked.connect(lambda: self.gui.search_btn.click())
-        self._update_search_button_style()
-
-        # Restore Sort
-        label = self.SORT_LABELS.get(self.current_sort_mode, "A→Z")
-        self.sort_btn.setText(f"Sort\n{label}")
-        self.sort_btn.setToolTip("Cycle sort: A→Z → Birth Date → Load Order")
-        self.sort_btn.setEnabled(True)
-        try:
-            self.sort_btn.clicked.disconnect()
-        except RuntimeError:
-            pass
-        self.sort_btn.clicked.connect(self._cycle_sort_mode)
-        self._update_sort_button_style()
-
-        # Restore Clear All
-        self.clear_btn.setText("Clear\nAll")
-        self.clear_btn.setToolTip("Clear all charts from memory")
-        try:
-            self.clear_btn.clicked.disconnect()
-        except RuntimeError:
-            pass
-        self.clear_btn.clicked.connect(self._confirm_clear_all)
-        self._update_clear_button_style()
-
-        # Restore Select (with SVG icon, icon-above-text)
-        self.select_btn.setIcon(QIcon(self._select_icon_path))
-        self.select_btn.setIconSize(QSize(scaled_px(14), scaled_px(14)))
-        self.select_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
-        self.select_btn.setText("Select")
-        self.select_btn.setToolTip("Select multiple charts for batch deletion")
-        try:
-            self.select_btn.clicked.disconnect()
-        except RuntimeError:
-            pass
-        self.select_btn.clicked.connect(self._toggle_select_mode)
-        self._update_select_button_style()
+        """Restore the cells to their normal-mode labels and actions."""
+        self._update_action_cells()
 
     def _exit_select_mode(self):
         self._select_mode = False
@@ -1740,10 +1446,7 @@ class ChartMemoryPanel:
         self.refresh()
 
     def _update_delete_count(self):
-        count = len(self._selected_ids)
-        self.sort_btn.setText(f"Delete\n({count})")
-        self.sort_btn.setToolTip(f"Delete {count} selected chart(s) across all pages")
-        self.sort_btn.setEnabled(count > 0)
+        self._update_action_cells()
 
     def _delete_selected_charts(self):
         self._selected_ids &= {c.get('id') for c in self.charts if c.get('id')}
@@ -1791,30 +1494,6 @@ class ChartMemoryPanel:
         if hasattr(self.gui, 'session_manager') and self.gui.session_manager:
             self.gui.session_manager.save_session()
 
-    def _get_3d_toolbutton_style(self, base_color, text_color):
-        style = self._get_3d_button_style(base_color, text_color).replace(
-            "QPushButton", "QToolButton")
-        return style.replace(
-            "padding: 2px;",
-            "padding: 0px;\n                margin: 0px;")
-
-    def _update_select_button_style(self):
-        from ui.qt_theme import get_theme_accent
-        accent = get_theme_accent()
-        theme = get_theme_colors()
-        self.select_btn.setStyleSheet(
-            self._get_3d_toolbutton_style(accent["base"], theme["primary_text"]))
-
-    def _update_select_button_active_style(self):
-        self.select_btn.setStyleSheet(
-            self._get_3d_toolbutton_style(desat_hex(STATUS["success"]), TEXT_PRIMARY))
-
-    def _update_delete_button_style(self):
-        from ui.qt_theme import STATUS
-        error_base = STATUS["error"]
-        self.sort_btn.setStyleSheet(
-            self._get_3d_button_style(error_base, TEXT_PRIMARY))
-
     def _confirm_clear_all(self):
         """Show confirmation before clearing all charts."""
         if not self.charts:
@@ -1832,16 +1511,24 @@ class ChartMemoryPanel:
         except Exception:
             pass
 
-        reply = QMessageBox.question(
-            self.panel,
-            "Clear All Charts",
-            f"Clear all {len(self.charts)} charts from memory?\n\n"
-            f"This cannot be undone.{extra}",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No
-        )
+        name = self._profile_name().upper()
+        where = f" from profile {name}" if name else ""
+        box = QMessageBox(self.panel)
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setWindowTitle("Clear All Charts")
+        box.setText(f"Clear all {len(self.charts):,} charts{where}? "
+                    f"The chart files stay on disk.{extra}")
+        cancel = box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+        clear = box.addButton("Clear all", QMessageBox.ButtonRole.DestructiveRole)
+        from apps.widgets.memory_pane.tokens import pane_tokens
+        tok = pane_tokens()
+        clear.setStyleSheet(
+            f"QPushButton {{ background-color: {tok['red'].name()};"
+            f" color: {tok['fg_on_accent'].name()}; }}")
+        box.setDefaultButton(cancel)
+        box.exec()
 
-        if reply == QMessageBox.StandardButton.Yes:
+        if box.clickedButton() is clear:
             self.clear_all()
 
     def _get_default_folder(self):
@@ -1928,6 +1615,121 @@ class ChartMemoryPanel:
     # produces small UI events worth flushing.
     LOAD_FOLDER_EVENT_FLUSH_INTERVAL = 20
 
+    def add_chart_files_silently(self, paths, label, *, then=None):
+        """Add chart files to memory WITHOUT displaying any of them.
+
+        The one bulk-add path, shared by Load Folder and a multi-file drop on
+        the chart tab: each file is parsed through BirthDataManager and added
+        with defer_refresh=True, so nothing is drawn per chart; the caller
+        decides which single chart to display afterwards. `then(last_added_id)`
+        runs while the loading overlay is still up, so the final display does
+        not flash the overlay off and on. `last_added_id` is the id of the
+        last genuinely-new entry (None if every file was a duplicate or failed).
+
+        Returns (loaded_count, failed_count).
+        """
+        from managers.birth_data_manager import BirthDataManager
+        from core.chart_factory import make_recipe
+
+        paths = list(paths)
+        total = len(paths)
+        # Show the shared loading overlay so a large bulk load reads as
+        # "working" instead of a frozen window. start()/finish() are
+        # ref-counted and nest safely with the load_chart() in `then`, so we
+        # pair exactly one start() with one finish() (in the finally).
+        loading_active = (
+            hasattr(self, 'gui')
+            and hasattr(self.gui, 'loading_manager')
+            and self.gui.loading_manager is not None
+        )
+        if loading_active:
+            self.gui.loading_manager.start(label)
+            self.gui.loading_manager.set_progress(0, total)
+            # Paint the overlay before the (blocking) load loop begins.
+            QApplication.processEvents()
+
+        try:
+            loaded_count = 0
+            failed_count = 0
+            # Track the LAST genuinely-new chart's stable id, not its integer
+            # position. Two reasons:
+            #   1) add_chart() returns the existing index when it dedups; tracking
+            #      that as "last added" would auto-activate an already-loaded
+            #      chart at the end of the load.
+            #   2) QApplication.processEvents() below lets the user click Remove
+            #      or Clear All mid-load. An integer index becomes stale (wrong
+            #      chart at best, IndexError at worst). A chart id survives
+            #      list-shifting because we resolve it by linear scan at the end.
+            last_added_id = None
+
+            for i, chtk_file in enumerate(paths):
+                try:
+                    # SPEC-IMPORT-001 §6.1: dispatch by extension (.chtk/.toml).
+                    # canonicalize=False: a bulk load is a read path and must NOT
+                    # write [moment].jd back into JD-less .toml files (no user consent).
+                    bd = BirthDataManager.create_birth_data_from_file(str(chtk_file), canonicalize=False)
+                    # SPEC-TZ-001 8a: console only (status bar would spam on bulk load)
+                    BirthDataManager.report_tz_warnings(
+                        BirthDataManager.validate_birth_data(bd),
+                        context=f"Memory:{getattr(chtk_file, 'name', chtk_file)}")
+                    local_h = bd.get('local_hour', 0)
+                    local_m = bd.get('local_minute', 0)
+                    local_s = bd.get('local_second', 0)
+                    timedec = local_h + local_m / 60.0 + local_s / 3600.0
+                    _recipe = make_recipe(
+                        name=bd.get('name', 'Unknown'),
+                        year=bd.get('local_year', bd['utc_year']),
+                        month=bd.get('local_month', bd['utc_month']),
+                        day=bd.get('local_day', bd['utc_day']),
+                        timedec=timedec,
+                        utcoffset=bd.get('utc_offset_hours', 0.0),
+                        timezone=bd.get('iana_timezone', 'UTC'),
+                        lat=bd.get('latitude', 0.0),
+                        lon=bd.get('longitude', 0.0),
+                        city=bd.get('city', ''),
+                        country=bd.get('country', ''),
+                        gender=bd.get('gender', 'Unknown'),
+                        time_change_flag=bd.get('time_change_flag', 0),
+                        # SPEC-IMPORT-001 §6.3: forward additive metadata (None
+                        # for CHTK -> conditionally omitted by make_recipe).
+                        rodden=bd.get('rodden'),
+                        tags=bd.get('tags'),
+                        notes=bd.get('notes'),
+                        julian_day=bd.get('julian_day'),
+                        dst_offset_hours=bd.get('dst_offset_hours'),
+                    )
+                    pre_len = len(self.charts)
+                    idx = self.add_chart(
+                        _recipe,
+                        chtk_path=str(chtk_file),
+                        defer_refresh=True,
+                    )
+                    # Only treat this as "last added" if a new entry was actually
+                    # appended (not a duplicate hit returning an existing index).
+                    if len(self.charts) > pre_len:
+                        last_added_id = self.charts[idx]['id']
+                    loaded_count += 1
+                except Exception as e:
+                    failed_count += 1
+                    print(f"[BULK LOAD] Failed: {chtk_file.name}: {e}")
+
+                if loading_active:
+                    self.gui.loading_manager.set_progress(i + 1, total)
+
+                # Drain pending Qt events periodically so the GUI stays responsive
+                # and queued deleteLater targets actually die.
+                if (i + 1) % self.LOAD_FOLDER_EVENT_FLUSH_INTERVAL == 0:
+                    QApplication.processEvents()
+
+            if then is not None:
+                then(last_added_id)
+            return loaded_count, failed_count
+        finally:
+            # Always tear the overlay down. A stuck overlay would be worse
+            # than the silent load this fix replaces.
+            if loading_active:
+                self.gui.loading_manager.finish()
+
     def load_folder_charts_from_path(self, folder_path, *, skip_confirmation=False):
         """Batch-load all CHTK files from a folder path.
 
@@ -1956,9 +1758,6 @@ class ChartMemoryPanel:
                 "over_cap": bool,      # True iff total > SOFT_CAP
             }
         """
-        from managers.birth_data_manager import BirthDataManager
-        from core.chart_factory import make_recipe
-
         folder = Path(folder_path)
         if not folder.exists() or not folder.is_dir():
             return {
@@ -2030,96 +1829,7 @@ class ChartMemoryPanel:
                         "over_cap": False,
                     }
 
-        # Show the shared loading overlay so a large bulk load reads as
-        # "working" instead of a frozen window. start()/finish() are
-        # ref-counted and nest safely with the final load_chart() below, so we
-        # pair exactly one start() with one finish() (in the finally). All the
-        # early returns above happen before this point, so they need no
-        # teardown.
-        loading_active = (
-            hasattr(self, 'gui')
-            and hasattr(self.gui, 'loading_manager')
-            and self.gui.loading_manager is not None
-        )
-        if loading_active:
-            self.gui.loading_manager.start(f"Loading {total} charts from folder...")
-            self.gui.loading_manager.set_progress(0, total)
-            # Paint the overlay before the (blocking) load loop begins.
-            QApplication.processEvents()
-
-        try:
-            loaded_count = 0
-            failed_count = 0
-            # Track the LAST genuinely-new chart's stable id, not its integer
-            # position. Two reasons:
-            #   1) add_chart() returns the existing index when it dedups; tracking
-            #      that as "last added" would auto-activate an already-loaded
-            #      chart at the end of the load.
-            #   2) QApplication.processEvents() below lets the user click Remove
-            #      or Clear All mid-load. An integer index becomes stale (wrong
-            #      chart at best, IndexError at worst). A chart id survives
-            #      list-shifting because we resolve it by linear scan at the end.
-            last_added_id = None
-
-            for i, chtk_file in enumerate(chtk_files):
-                try:
-                    # SPEC-IMPORT-001 §6.1: dispatch by extension (.chtk/.toml).
-                    # canonicalize=False: a folder scan is a read path and must NOT
-                    # write [moment].jd back into JD-less .toml files (no user consent).
-                    bd = BirthDataManager.create_birth_data_from_file(str(chtk_file), canonicalize=False)
-                    # SPEC-TZ-001 8a: console only (status bar would spam on bulk load)
-                    BirthDataManager.report_tz_warnings(
-                        BirthDataManager.validate_birth_data(bd),
-                        context=f"Memory:{getattr(chtk_file, 'name', chtk_file)}")
-                    local_h = bd.get('local_hour', 0)
-                    local_m = bd.get('local_minute', 0)
-                    local_s = bd.get('local_second', 0)
-                    timedec = local_h + local_m / 60.0 + local_s / 3600.0
-                    _recipe = make_recipe(
-                        name=bd.get('name', 'Unknown'),
-                        year=bd.get('local_year', bd['utc_year']),
-                        month=bd.get('local_month', bd['utc_month']),
-                        day=bd.get('local_day', bd['utc_day']),
-                        timedec=timedec,
-                        utcoffset=bd.get('utc_offset_hours', 0.0),
-                        timezone=bd.get('iana_timezone', 'UTC'),
-                        lat=bd.get('latitude', 0.0),
-                        lon=bd.get('longitude', 0.0),
-                        city=bd.get('city', ''),
-                        country=bd.get('country', ''),
-                        gender=bd.get('gender', 'Unknown'),
-                        time_change_flag=bd.get('time_change_flag', 0),
-                        # SPEC-IMPORT-001 §6.3: forward additive metadata (None
-                        # for CHTK -> conditionally omitted by make_recipe).
-                        rodden=bd.get('rodden'),
-                        tags=bd.get('tags'),
-                        notes=bd.get('notes'),
-                        julian_day=bd.get('julian_day'),
-                        dst_offset_hours=bd.get('dst_offset_hours'),
-                    )
-                    pre_len = len(self.charts)
-                    idx = self.add_chart(
-                        _recipe,
-                        chtk_path=str(chtk_file),
-                        defer_refresh=True,
-                    )
-                    # Only treat this as "last added" if a new entry was actually
-                    # appended (not a duplicate hit returning an existing index).
-                    if len(self.charts) > pre_len:
-                        last_added_id = self.charts[idx]['id']
-                    loaded_count += 1
-                except Exception as e:
-                    failed_count += 1
-                    print(f"[LOAD FOLDER] Failed: {chtk_file.name}: {e}")
-
-                if loading_active:
-                    self.gui.loading_manager.set_progress(i + 1, total)
-
-                # Drain pending Qt events periodically so the GUI stays responsive
-                # and queued deleteLater targets actually die.
-                if (i + 1) % self.LOAD_FOLDER_EVENT_FLUSH_INTERVAL == 0:
-                    QApplication.processEvents()
-
+        def _activate_last_new(last_added_id):
             # Resolve the tracked id back to a CURRENT index. The list may have
             # shifted during processEvents() (user clicked Remove) or shrunk
             # entirely (user clicked Clear All). If the tracked chart is gone,
@@ -2142,19 +1852,18 @@ class ChartMemoryPanel:
                 if chtk_path:
                     self.gui.load_chart(chtk_path)
 
-            return {
-                "ok": True,
-                "loaded": loaded_count,
-                "failed": failed_count,
-                "total_in_folder": total,
-                "cancelled": False,
-                "over_cap": over_cap,
-            }
-        finally:
-            # Always tear the overlay down. A stuck overlay would be worse
-            # than the silent load this fix replaces.
-            if loading_active:
-                self.gui.loading_manager.finish()
+        loaded_count, failed_count = self.add_chart_files_silently(
+            chtk_files, f"Loading {total} charts from folder...",
+            then=_activate_last_new)
+
+        return {
+            "ok": True,
+            "loaded": loaded_count,
+            "failed": failed_count,
+            "total_in_folder": total,
+            "cancelled": False,
+            "over_cap": over_cap,
+        }
 
 def create_chart_memory_panel(gui):
     """

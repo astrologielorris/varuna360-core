@@ -19,6 +19,7 @@ Pre-mortem fixes embedded:
 from PySide6.QtWidgets import QTableWidgetItem
 from PySide6.QtCore import Qt
 
+from apps.widgets.panel_controllers.duc_method import current_duc_method, subscribe_duc_method
 from state import PanelControllerBase
 
 
@@ -32,7 +33,8 @@ class AvasthaController(PanelControllerBase):
 
     # SPEC-AVA-001: the Avastha panel cycles through the pure view plus four
     # strength-refined views. "pure" is the original matrix; the rest scale every
-    # influence by the influencer's bala (Duc = mean of Dig/Uccha/Cheshta).
+    # influence by the influencer's bala (Duc = DUC Bala, by the strength.duc_method
+    # setting, SPEC-STR-001 §7.5; a change of it refreshes like a chart change).
     VIEW_ORDER = ["pure", "duc", "dig", "uccha", "cheshta"]
     # View -> the label shown on the Avastha tab button (SPEC-AVA-001 §4).
     VIEW_LABEL = {"pure": "Avastha", "duc": "Duc", "dig": "Dig",
@@ -52,6 +54,10 @@ class AvasthaController(PanelControllerBase):
         # col_idx -> {"aditya_sign", "hora_type", "trim_type"} for retinue-cell
         # clicks (SPEC-AVA-001 §12.5). Rebuilt on every refresh.
         self._retinue_cols = {}
+        # The chart the table currently shows (None = not rendered): the AI
+        # capture marks the Avastha region 'stale' otherwise (SPEC-AIC-001 INV-2).
+        self.rendered_chart = None
+        subscribe_duc_method(self, gui)
 
     def current_view(self):
         return self._view
@@ -77,7 +83,17 @@ class AvasthaController(PanelControllerBase):
     def refresh_view(self):
         """Public re-render of the current view — used by the tab-button cycle
         wiring (info_panels.on_tab2_click), which changes the view while the
-        panel is already visible (set_visible is a no-op on True->True)."""
+        panel is already visible (set_visible is a no-op on True->True).
+
+        SPEC-LAYOUT-001 B.6: a held controller (its panel folded, the Chart tab
+        hidden) does not render; the refresh waits for the unfold drain. A
+        render here satisfies any deferred or scheduled chart refresh too, so
+        the unfold / the stale timer does not render a second time (MED-1)."""
+        if not self._effective_visible():
+            self._pending_chart_refresh = True
+            return
+        self._pending_chart_refresh = False
+        self._chart_refresh_scheduled = False
         self._refresh()
 
     def sign_popup_summary(self, sign_name, ring=None, being_type=None):
@@ -96,7 +112,7 @@ class AvasthaController(PanelControllerBase):
             from AI_tools.AI_main_function.avastha_sign import sign_summary_for_chart
             return sign_summary_for_chart(
                 chart, self._state.aditya_mode, self._view,
-                sign_name, ring, being_type)
+                sign_name, ring, being_type, current_duc_method())
         except Exception:
             import traceback
             traceback.print_exc()
@@ -116,11 +132,25 @@ class AvasthaController(PanelControllerBase):
         try:
             from AI_tools.AI_main_function.avastha_sign import sign_summaries_all_views
             return sign_summaries_all_views(
-                chart, self._state.aditya_mode, sign_name, ring, being_type)
+                chart, self._state.aditya_mode, sign_name, ring, being_type,
+                current_duc_method())
         except Exception:
             import traceback
             traceback.print_exc()
             return None
+
+    def follow_popup(self, dialog, sign_name, ring=None, being_type=None):
+        """Keep an open sign popup's summaries on the DUC Bala method: a change
+        of it (Settings Apply, remote set_setting, an AI request) recomputes
+        them from the chart and frame the popup OPENED on, captured now, never
+        a chart loaded since (td-7zu14, SPEC-STR-001 §7.5)."""
+        chart = getattr(self._state, "active_chart", None) if self._state else None
+        if chart is None:
+            return
+        from functools import partial
+        from apps.widgets.sector_popup_follow import follow_duc_method, sector_summaries
+        follow_duc_method(dialog, partial(sector_summaries, chart, self._state.aditya_mode,
+                                          sign_name, ring, being_type))
 
     def _on_chart_changed(self):
         self._refresh()
@@ -129,334 +159,61 @@ class AvasthaController(PanelControllerBase):
         self._refresh()
 
     def _refresh(self):
-        if self._view == "pure":
-            self._refresh_pure()
-        else:
-            self._refresh_refined(self._view)
+        """Render the current view (pure or a strength-refined one, SPEC-AVA-001).
 
-    def _refresh_pure(self):
+        One calculation for panel, CLI and MCP (SPEC-AIC-001 INV-1): the grid is
+        core/capabilities/avastha.avastha_grid, get_avastha's data. It holds the
+        two-chart rule (matrix and retinue rows on the sidereal-rebuilt chart,
+        balas on the active chart), the pure and refined cell texts, the
+        POS/NEG/TOTAL display split and the per-cell categories and tooltips.
+        This method only puts them in the table.
+        """
         gui = self._gui
         if not hasattr(gui, "avastha_table"):
             return
-
         chart = getattr(self._state, 'active_chart', None) if self._state else None
         if not chart:
             return
-
         gui.avastha_table.clearContents()
-
+        self.rendered_chart = None
         try:
-            from AI_tools.AI_main_function.avastha import (
-                get_drishti_yuti_data, ASPECTING_PLANETS, REL_SYMBOL,
-            )
+            from core.capabilities.avastha import avastha_grid
+            view = self._view if self._view in self.VIEW_ORDER else "pure"
+            grid = avastha_grid(chart, self._state.aditya_mode, view, current_duc_method())
 
-            if self._state.aditya_mode == "sidereal":
-                from core.chart_factory import rebuild_chart
-                chart = rebuild_chart(chart, mode="sidereal")
-
-            planets = chart
-
-            data = get_drishti_yuti_data(planets)
-            matrix = data["matrix"]
-            dignity_data = data["dignity_data"]
-            shamed_planets = data["shamed_planets"]
-            shame_pairs = data.get("shame_pairs", set())
-
+            center = Qt.AlignmentFlag.AlignCenter
             cell_categories = {}
-            planet_order = list(ASPECTING_PLANETS)
 
-            # Diagonal = self-conjunction base 60 x dignity multiplier
-            # (SPEC-AVA-001 rev3: EX=120, MK=105, OH=90, none/debilitated=60).
-            from core.avastha_totals import SELF_BASE, dignity_multiplier
+            def _put(row, col, cell):
+                item = QTableWidgetItem(cell["text"])
+                item.setTextAlignment(center)
+                if cell.get("tooltip"):
+                    item.setToolTip(cell["tooltip"])
+                gui.avastha_table.setItem(row, col, item)
+                if cell.get("category") is not None:
+                    cell_categories[(row, col)] = cell["category"]
 
-            for row_idx, aspecting in enumerate(planet_order):
-                for col_idx, aspected in enumerate(planet_order):
-                    if aspecting == aspected:
-                        dig = dignity_data.get(aspecting)
-                        val = SELF_BASE * dignity_multiplier(
-                            dig["virupas"] if dig else 0)
-                        if dig:
-                            abbr = {"exaltation": "EX", "mulatrikona": "MK", "own_sign": "OH"}
-                            label = abbr.get(dig["type"], "?")
-                            # No "=" separator: 6+ chars elide in the ~45px
-                            # stretch columns ("EX=120" -> "EX=1…").
-                            text = f"{label}{val:.0f}"
-                            cell_categories[(row_idx, col_idx)] = "PROUD"
-                        else:
-                            text = f"{val:.0f}"
-                    else:
-                        entry = matrix.get((aspecting, aspected))
-                        if entry is None or (not entry.get("is_yuti") and entry["virupas"] <= 0):
-                            text = "."
-                        else:
-                            vr = entry["virupas"] if entry.get("is_yuti") else entry["virupas"]
-                            rel = entry["relationship"]
-                            sym = REL_SYMBOL.get(rel, " ")
-
-                            if (aspecting, aspected) in shame_pairs:
-                                if rel in ("NEUTRAL", "N/A"):
-                                    sym = "-"
-                                text = f"{vr:.0f}{sym}!"
-                                cell_categories[(row_idx, col_idx)] = "SHAME"
-                            elif rel == "DUAL":
-                                text = f"{vr:.0f}±"
-                                cell_categories[(row_idx, col_idx)] = "DUAL"
-                            else:
-                                text = f"{vr:.0f}{sym}"
-                                if rel in ("FRIEND", "ENEMY", "NEUTRAL"):
-                                    cell_categories[(row_idx, col_idx)] = rel
-
-                    item = QTableWidgetItem(text)
-                    item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                    gui.avastha_table.setItem(row_idx, col_idx, item)
-
-            # TOTAL row (7) + POS row (8) + NEG row (9) — SPEC-AVW-001 T1 +
-            # SPEC-AVA-001 §12.3. split_expression is the shared spine; TOTAL is
-            # rendered as POS + NEG so the rev4 invariant holds float-exact.
-            from core.avastha_totals import split_expression
-            col_totals, pos_list, neg_list = [], [], []
-            for col_idx, aspected in enumerate(planet_order):
-                up, aff = split_expression(
-                    aspected, planet_order, matrix, dignity_data, shame_pairs)
-                total = up + aff
-                col_totals.append(total)
-                pos_list.append(up)
-                neg_list.append(aff)
-                item = QTableWidgetItem(f"{total:.0f}")
-                item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                gui.avastha_table.setItem(self.ROW_TOTAL, col_idx, item)
-
-            # POS/NEG (8/9) + SIGN/HORA/TRIMSAMSA (10/11/12) — pure integers.
-            self._render_bottom_rows(
-                gui, planet_order, planets, self._state.aditya_mode,
-                pos_list, neg_list, col_totals, cell_categories, decimals=0)
+            for row_idx, row in enumerate(grid["matrix"]):
+                for col_idx, cell in enumerate(row):
+                    _put(row_idx, col_idx, cell)
+            for row_idx, label in ((self.ROW_TOTAL, "TOTAL"), (self.ROW_POS, "POS"),
+                                   (self.ROW_NEG, "NEG"), (self.ROW_SIGN, "SIGN"),
+                                   (self.ROW_HORA, "HORA"),
+                                   (self.ROW_TRIMSAMSA, "TRIMSAMSA")):
+                for col_idx, cell in enumerate(grid[label]):
+                    _put(row_idx, col_idx, cell)
+            # col_idx -> the beings a SIGN/HORA/TRIMSAMSA click opens (§12.5)
+            self._retinue_cols = dict(enumerate(grid["columns"]))
 
             if hasattr(gui, "avastha_delegate"):
                 gui.avastha_delegate.update_categories(cell_categories)
                 gui.avastha_table.viewport().update()
+            self.rendered_chart = chart
 
         except Exception as e:
             import traceback
-            print(f"Error updating Avastha: {e}")
+            print(f"Error updating Avastha ({self._view}): {e}")
             traceback.print_exc()
-
-    def _refresh_refined(self, view):
-        """Render a strength-refined view (duc/dig/uccha/cheshta) — SPEC-AVA-001.
-
-        Reuses the exact 7x7 + TOTAL + SIGN geometry of the pure view. Each
-        off-diagonal cell = yuti scaled by the influencer's bala; the diagonal
-        is the planet's own bala x dignity multiplier (EX x2, MK x1.75, OH x1.5);
-        a plain neutral is visual-only (0 in totals), but a SHAME subtracts the
-        shamer's A-scaled lack — the starved amount, never more (rev5 §3.1).
-        A DUAL gives (S-scaled) and takes (A-scaled) and shows its NET
-        contribution (rev4.1 §13).
-        """
-        gui = self._gui
-        if not hasattr(gui, "avastha_table"):
-            return
-
-        active_chart = getattr(self._state, 'active_chart', None) if self._state else None
-        if not active_chart:
-            return
-
-        gui.avastha_table.clearContents()
-
-        try:
-            from AI_tools.AI_main_function.avastha import (
-                get_drishti_yuti_data, ASPECTING_PLANETS,
-            )
-            from core.avastha_refined import refined_matrix, REFINE_KEYS
-            from core.bala_calculator import get_all_bala_data
-
-            # Matrix chart: sidereal-rebuilt like the pure path (sidereal signs).
-            matrix_chart = active_chart
-            if self._state.aditya_mode == "sidereal":
-                from core.chart_factory import rebuild_chart
-                matrix_chart = rebuild_chart(active_chart, mode="sidereal")
-
-            data = get_drishti_yuti_data(matrix_chart)
-            matrix = data["matrix"]
-            dignity_data = data["dignity_data"]
-            shame_pairs = data.get("shame_pairs", set())
-
-            # Balas follow the STRENGTH PANEL (SPEC-AVA-001 §6): pass the ACTIVE
-            # chart (not the sidereal matrix chart) — get_all_bala_data handles
-            # sidereal internally exactly like strength_controller.
-            balas = get_all_bala_data(active_chart)
-
-            planet_order = list(ASPECTING_PLANETS)
-            key = view if view in REFINE_KEYS else "duc"
-            rm = refined_matrix(planet_order, matrix, dignity_data,
-                                shame_pairs, balas, key)
-
-            cell_categories = {}
-
-            for row_idx, actor in enumerate(planet_order):
-                for col_idx, target in enumerate(planet_order):
-                    tooltip = None
-                    if actor == target:
-                        # Diagonal: own bala x dignity multiplier; the EX/MK/OH
-                        # label marks WHICH dignity amplified it.
-                        val, dtype = rm["diagonal"][actor]
-                        if dtype:
-                            abbr = {"exaltation": "EX", "mulatrikona": "MK",
-                                    "own_sign": "OH"}
-                            label = abbr.get(dtype, "?")
-                            # Integer + no "=": "EX=80.6" (7 chars) elides in the
-                            # ~45px columns; "EX81" always fits. Full precision
-                            # stays in the CLI/JSON and the popup dialog.
-                            text = f"{label}{val:.0f}"
-                            cell_categories[(row_idx, col_idx)] = "PROUD"
-                        else:
-                            text = f"{val:.1f}"
-                    else:
-                        cell = rm["cells"].get((actor, target))
-                        if cell is None:
-                            text = "."
-                        else:
-                            marker = "!" if cell["is_shame"] else ""
-                            # A two-sided cell (DUAL, or a shame over a friendly
-                            # base) shows the NET give-take (rev4.1 §13/D13,
-                            # rev5), which may be negative; the tooltip spells
-                            # out the two sides. Category is never recolored by
-                            # the net's sign.
-                            text = f"{cell['value']:.1f}{cell['symbol']}{marker}"
-                            cell_categories[(row_idx, col_idx)] = cell["category"]
-                            if cell["is_shame"] and cell["relationship"] == "FRIEND":
-                                # A shame never gives. The friendship gives and
-                                # the shame takes — say which is which.
-                                tooltip = (f"friendship gives {cell['give']:.1f} / "
-                                           f"shame takes {cell['take']:.1f}")
-                            elif cell["two_sided"]:
-                                # DUAL base (shamed or not): both sides were
-                                # already on, so neither is the shame's doing.
-                                tooltip = (f"dual gives {cell['give']:.1f} / "
-                                           f"takes {cell['take']:.1f}")
-                            elif cell["is_shame"]:
-                                tooltip = (f"shames: takes {cell['take']:.1f} "
-                                           f"({actor}'s bala lack)")
-
-                    item = QTableWidgetItem(text)
-                    item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                    if tooltip:
-                        item.setToolTip(tooltip)
-                    gui.avastha_table.setItem(row_idx, col_idx, item)
-
-            # TOTAL row (7) + POS row (8) + NEG row (9) — refined, one decimal.
-            # POS/NEG come straight from refined_matrix (SPEC-AVA-001 §12.3);
-            # TOTAL == POS + NEG float-exact by construction.
-            col_totals, pos_list, neg_list = [], [], []
-            for col_idx, target in enumerate(planet_order):
-                total = rm["totals"][target]
-                col_totals.append(total)
-                pos_list.append(rm["pos"][target])
-                neg_list.append(rm["neg"][target])
-                item = QTableWidgetItem(f"{total:.1f}")
-                item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                gui.avastha_table.setItem(self.ROW_TOTAL, col_idx, item)
-
-            # POS/NEG (8/9) + SIGN/HORA/TRIMSAMSA (10/11/12). Retinue rows follow
-            # the matrix chart (sidereal-rebuilt in sidereal mode), one decimal.
-            self._render_bottom_rows(
-                gui, planet_order, matrix_chart, self._state.aditya_mode,
-                pos_list, neg_list, col_totals, cell_categories, decimals=1)
-
-            if hasattr(gui, "avastha_delegate"):
-                gui.avastha_delegate.update_categories(cell_categories)
-                gui.avastha_table.viewport().update()
-
-        except Exception as e:
-            import traceback
-            print(f"Error updating refined Avastha ({view}): {e}")
-            traceback.print_exc()
-
-    def _render_bottom_rows(self, gui, planet_order, sign_chart, aditya_mode,
-                            pos_list, neg_list, col_totals, cell_categories,
-                            decimals):
-        """Render the POS/NEG/SIGN/HORA/TRIMSAMSA rows (SPEC-AVA-001 §12).
-
-        Shared by the pure and refined views (only the precision and the source
-        chart differ). Populates ``self._retinue_cols`` so a click on a retinue
-        cell can resolve the being (§12.5). ``sign_chart`` is the matrix chart
-        (sidereal-rebuilt in sidereal mode) — the retinue rows are frame-dependent
-        like the SIGN row.
-        """
-        from core.chart_helpers import (
-            get_planet_sign_index, get_planet_in_sign_longitude,
-            ADITYA_NAMES, TROPICAL_NAMES,
-        )
-        from core.avastha_totals import sign_total_category, display_split
-        from AI_tools.AI_main_function.retinue import (
-            get_hora, get_trimsamsa_being, ADITYA_SIGN_ORDER,
-        )
-
-        center = Qt.AlignmentFlag.AlignCenter
-        sign_names = ADITYA_NAMES if aditya_mode == "aditya" else TROPICAL_NAMES
-        self._retinue_cols = {}
-
-        def _put(row, col, text, category=None, tooltip=None):
-            item = QTableWidgetItem(text)
-            item.setTextAlignment(center)
-            if tooltip:
-                item.setToolTip(tooltip)
-            gui.avastha_table.setItem(row, col, item)
-            if category is not None:
-                cell_categories[(row, col)] = category
-
-        for col_idx, target in enumerate(planet_order):
-            pos = pos_list[col_idx]
-            neg = neg_list[col_idx]
-
-            # POS: green (FRIEND) when > 0, neutral at 0. NEG: red (ENEMY) when
-            # < 0 (keeps its minus sign), neutral at 0. (§12.4) display_split
-            # keeps the DISPLAYED invariant POS + NEG = TOTAL (NEG absorbs the
-            # rounding residue); categories follow the displayed strings so a
-            # rendered "0" is never tinted.
-            pos_s, neg_s, _ = display_split(pos, neg, decimals)
-            _put(self.ROW_POS, col_idx, pos_s,
-                 "FRIEND" if float(pos_s) > 0 else "NEUTRAL")
-            _put(self.ROW_NEG, col_idx, neg_s,
-                 "ENEMY" if float(neg_s) < 0 else "NEUTRAL")
-
-            # SIGN — colored by the planet's TOTAL (boosted/afflicted), as before.
-            sign_idx = get_planet_sign_index(sign_chart, target, default=-1)
-            in_range = 0 <= sign_idx < 12
-            sign_text = sign_names[sign_idx] if in_range else "?"
-            aditya_sign = ADITYA_SIGN_ORDER[sign_idx] if in_range else None
-            sign_tip = (f"{aditya_sign} / {TROPICAL_NAMES[sign_idx]}"
-                        if aditya_sign else None)
-            _put(self.ROW_SIGN, col_idx, sign_text,
-                 sign_total_category(col_totals[col_idx]), sign_tip)
-
-            col_info = {"aditya_sign": aditya_sign,
-                        "hora_type": None, "trim_type": None}
-
-            if aditya_sign:
-                deg = get_planet_in_sign_longitude(sign_chart, target)
-                hora = get_hora(aditya_sign, deg)
-                trim = get_trimsamsa_being(aditya_sign, deg)
-
-                side = hora.get("side", "?")
-                # Sun-hora being name follows the current mode's sign label
-                # (§12.5); Naga-hora being is the fixed Naga name.
-                hora_disp = sign_text if side == "Aditya" else hora.get("being_name", "?")
-                _put(self.ROW_HORA, col_idx, hora_disp,
-                     "HORA_ADITYA" if side == "Aditya" else "HORA_NAGA",
-                     f"{hora.get('being_name', '?')} "
-                     f"({side} side, {hora.get('lord', '?')} hora)")
-                col_info["hora_type"] = "aditya" if side == "Aditya" else "naga"
-
-                btype = trim.get("being_type", "")
-                trim_name = trim.get("being_name", "?")
-                _put(self.ROW_TRIMSAMSA, col_idx, trim_name,
-                     "TRIM_" + str(btype).upper(),
-                     f"{trim_name} ({btype}, {trim.get('element', '?')})")
-                col_info["trim_type"] = str(btype).lower()
-            else:
-                _put(self.ROW_HORA, col_idx, "?")
-                _put(self.ROW_TRIMSAMSA, col_idx, "?")
-
-            self._retinue_cols[col_idx] = col_info
 
     def open_retinue_dialog(self, row, col):
         """Open the being description for a clicked SIGN/HORA/TRIMSAMSA cell.
@@ -490,6 +247,7 @@ class AvasthaController(PanelControllerBase):
                 info["aditya_sign"], focus_ring=focus_ring,
                 focus_type=focus_type, avastha_summaries=summaries, layer=layer,
                 view=self.current_view(), parent=self._gui)
+            self.follow_popup(dlg, info["aditya_sign"], focus_ring, focus_type)
             dlg.exec()
             dlg.deleteLater()      # else hidden child dialogs pile up (Codex review)
         except Exception as e:

@@ -1,0 +1,52 @@
+{
+ "content.aditya.about": {
+  "ok": "a43f2401",
+  "src": "a43f2401",
+  "text": "À propos de {sign}"
+ },
+ "content.aditya.afflicted": {
+  "ok": "2819c6af",
+  "src": "2819c6af",
+  "text": "Expression blessée"
+ },
+ "content.aditya.annotation_hora": {
+  "ok": "c3526ecf",
+  "src": "c3526ecf",
+  "text": "{planet} à {degree} {sign} tombe directement dans cette hora."
+ },
+ "content.aditya.annotation_trimsamsa": {
+  "ok": "54941e17",
+  "src": "54941e17",
+  "text": "{planet} à {degree} {sign} tombe directement dans ce trimsamsa."
+ },
+ "content.aditya.healthy": {
+  "ok": "31c566ca",
+  "src": "31c566ca",
+  "text": "Expression saine"
+ },
+ "content.aditya.hora_aditya": {
+  "ok": "f380fc0d",
+  "src": "f380fc0d",
+  "text": "Aditya (côté Soleil)"
+ },
+ "content.aditya.hora_naga": {
+  "ok": "d753424f",
+  "src": "d753424f",
+  "text": "Naga (côté Lune)"
+ },
+ "content.aditya.not_available": {
+  "ok": "18fab9b3",
+  "src": "18fab9b3",
+  "text": "Description non disponible"
+ },
+ "content.aditya.sign": {
+  "ok": "3f4c3ec0",
+  "src": "3f4c3ec0",
+  "text": "Signe"
+ },
+ "content.aditya.theme": {
+  "ok": "56b4c80c",
+  "src": "56b4c80c",
+  "text": "Thème"
+ }
+}

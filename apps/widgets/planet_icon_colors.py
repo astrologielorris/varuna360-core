@@ -4,7 +4,8 @@ from PySide6.QtCore import QRectF
 from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
                               QComboBox, QPushButton, QColorDialog, QLabel, QListView)
-from apps.widgets.planet_icon_style import ICON_NAMES, PLANET_NAMES, colors_from
+from apps.widgets.planet_icon_style import SVG_COLOR_NAMES, PLANET_NAMES, colors_from
+from ui.sign_display_modes import VECTOR_FILES
 from apps.widgets.planet_icon_palette import PRESETS, scheme_passes
 from apps.widgets.planet_svg_provider import renderers_for, paint_renderers, PASSES
 from libaditya.optional_bodies import BODY_BY_NAME
@@ -43,7 +44,10 @@ class PaletteCombo(QComboBox):
 
 def readable_combo(items):
     combo = PaletteCombo()
-    combo.addItems(items)
+    # Each item carries its own identifier in itemData, so code reads the
+    # body name from data and the label may be translated (SPEC-LOC-002 INV-3).
+    for item in items:
+        combo.addItem(item, item)
     combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
     combo.setMinimumContentsLength(18)
     combo.setMinimumWidth(210)
@@ -61,7 +65,9 @@ class IconPreview(QWidget):
         self.setFixedSize(72, 72)
 
     def paintEvent(self, event):
-        name = self.editor.body.currentText()
+        name = self.editor.body_name()
+        if name in VECTOR_FILES:
+            return self._paint_sign(name)
         pack = 'simple-planets' if name in PLANET_NAMES else 'optional-symbols'
         scheme = self.editor.colors.get(name)
         # td-kdbb: preview an unset optional body as the shared two-tone default
@@ -77,6 +83,22 @@ class IconPreview(QWidget):
             paint_renderers(painter, QRectF(6, 6, 60, 60), renderers)
             painter.end()
 
+    def _paint_sign(self, name):
+        """Vector sign symbol in the draft scheme; unset = the chart's own ink."""
+        from PySide6.QtCore import QByteArray
+        from PySide6.QtSvg import QSvgRenderer
+        from apps.widgets.chart_glyph_theme import theme_glyph_ink
+        from ui.sign_display_modes import vector_svg
+        from ui.sign_glyph_ink import scheme_svg
+        index = VECTOR_FILES.index(name)
+        scheme = self.editor.colors.get(name)
+        data = scheme_svg(index, scheme) if scheme else vector_svg(index, theme_glyph_ink())
+        if data:
+            painter = QPainter(self)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            QSvgRenderer(QByteArray(data)).render(painter, QRectF(6, 6, 60, 60))
+            painter.end()
+
 
 class PlanetIconColors(QWidget):
     def __init__(self, parent=None):
@@ -86,8 +108,8 @@ class PlanetIconColors(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         form = QFormLayout()
         form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
-        self.body = readable_combo(ICON_NAMES)
-        form.addRow(_form_label('Body:'), self.body)
+        self.body = readable_combo(SVG_COLOR_NAMES)
+        form.addRow(_form_label('Symbol:'), self.body)
         self.preset = readable_combo(['Solid black (default)'] + [p[0] for p in PRESETS] + ['Custom colors'])
         form.addRow(_form_label('Color scheme:'), self.preset)
         self.outer = _tag_area(QPushButton(), 'buttons')
@@ -97,17 +119,17 @@ class PlanetIconColors(QWidget):
         layout.addLayout(form)
         self.preview = IconPreview(self)
         layout.addWidget(self.preview)
-        self.apply_all = _tag_area(QPushButton('Use this scheme for all 22 bodies'), 'buttons')
+        self.apply_all = _tag_area(QPushButton('Use this scheme for all 34 symbols'), 'buttons')
         layout.addWidget(self.apply_all)
         row = QHBoxLayout()
-        self.default = _tag_area(QPushButton('Reset this body'), 'buttons')
-        self.reset = _tag_area(QPushButton('Reset all to black'), 'buttons')
+        self.default = _tag_area(QPushButton('Reset this symbol'), 'buttons')
+        self.reset = _tag_area(QPushButton('Reset all'), 'buttons')
         row.addWidget(self.default); row.addWidget(self.reset); row.addStretch()
         layout.addLayout(row)
         self.status = _tag_area(QLabel(), 'info_text')
         self.status.setWordWrap(True)
         layout.addWidget(self.status)
-        hint = _tag_area(QLabel('Choose a preset or edit the two colors. To use one color, select Solid black and change the inside color. Apply saves your changes.'), 'info_text')
+        hint = _tag_area(QLabel('Choose a preset or edit the two colors. To use one color, select Solid black and change the inside color. A zodiac sign left on Chart default keeps the chart\'s own color. Apply saves your changes.'), 'info_text')
         hint.setWordWrap(True)
         layout.addWidget(hint)
         self.body.currentIndexChanged.connect(self.refresh)
@@ -123,8 +145,12 @@ class PlanetIconColors(QWidget):
         self.colors = colors_from(colors)
         self.refresh()
 
+    def body_name(self):
+        """The selected symbol's engine name (the palette key), from itemData."""
+        return self.body.currentData()
+
     def set_color(self, color):
-        name = self.body.currentText()
+        name = self.body_name()
         if color is None:
             self.colors.pop(name, None)
         else:
@@ -138,11 +164,11 @@ class PlanetIconColors(QWidget):
             _, outer, inner = PRESETS[index - 1]
             self.set_color({'outer': outer, 'inner': inner})
         else:
-            value = self.colors.get(self.body.currentText(), '#000000')
+            value = self.colors.get(self.body_name(), '#000000')
             self.set_color(value if isinstance(value, dict) else {'outer': '#000000', 'inner': value})
 
     def pick_color(self, component):
-        value = self.colors.get(self.body.currentText(), '#000000')
+        value = self.colors.get(self.body_name(), '#000000')
         initial = value.get(component) if isinstance(value, dict) else value
         color = QColorDialog.getColor(QColor(initial), self, 'Outer frame color' if component == 'outer' else 'Inside color')
         if color.isValid():
@@ -152,15 +178,24 @@ class PlanetIconColors(QWidget):
                 self.set_color(color.name())
 
     def copy_to_all(self):
-        value = self.colors.get(self.body.currentText(), '#000000')
-        self.colors = {name: deepcopy(value) for name in ICON_NAMES}
+        name = self.body_name()
+        current = self.colors.get(name)
+        # An unset sign means "Chart default": copy that (signs unset, bodies
+        # solid black); an unset body means solid black, copied to all 34.
+        chart_default = current is None and name in VECTOR_FILES
+        value = '#000000' if current is None else current
+        self.colors = {n: deepcopy(value) for n in SVG_COLOR_NAMES
+                       if not (chart_default and n in VECTOR_FILES)}
         self.refresh()
-        self.status.setText('Scheme set for all 22 bodies, including additional bodies. Apply to save.')
+        self.status.setText('Scheme set for all 34 symbols: planets, additional bodies and zodiac signs. Apply to save.')
 
     def refresh(self, *_):
-        value = self.colors.get(self.body.currentText(), '#000000')
+        sign = self.body_name() in VECTOR_FILES
+        self.preset.setItemText(0, 'Chart default' if sign else 'Solid black (default)')
+        value = self.colors.get(self.body_name(), '#000000')
         pair = isinstance(value, dict)
-        index = 0 if value == '#000000' else len(PRESETS) + 1
+        stored = self.body_name() in self.colors
+        index = 0 if value == '#000000' and not (sign and stored) else len(PRESETS) + 1
         if pair:
             index = next((i + 1 for i, (_, a, b) in enumerate(PRESETS)
                           if value == {'outer': a, 'inner': b}), len(PRESETS) + 1)
@@ -168,5 +203,8 @@ class PlanetIconColors(QWidget):
         self.outer.setEnabled(pair)
         self.outer.setText(value['outer'] if pair else 'Not used — solid color')
         self.inner.setText(value['inner'] if pair else value)
-        self.status.setText(f'{self.body.currentText()}: ' + ('two-tone' if pair else 'solid color'))
+        kind = 'two-tone' if pair else 'solid color'
+        if sign and self.body_name() not in self.colors:
+            kind = 'chart default'
+        self.status.setText(f'{self.body.currentText()}: {kind}')
         self.preview.update()

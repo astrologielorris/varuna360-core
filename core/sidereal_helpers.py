@@ -85,7 +85,8 @@ def compute_ayanamsa_for_dt(dt_utc, ayanamsa_id: int) -> float:
         if ayanamsa_id in (98, 100):
             swe.set_sid_mode(1)
         else:
-            swe.set_sid_mode(ayanamsa_id)
+            from libaditya.custom_ayanamsa import apply_sid_mode
+            apply_sid_mode(ayanamsa_id)
         return swe.get_ayanamsa_ut(jd_ut)
     except Exception as e:
         print(f"[WARNING] Failed to compute ayanamsa for {dt_utc}: {e}")

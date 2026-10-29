@@ -1,0 +1,19 @@
+{
+ "panel.varga.db.enemy": "enemy's sign",
+ "panel.varga.db.friend": "friend's sign",
+ "panel.varga.db.neutral": "neutral's sign",
+ "panel.varga.dignity.DB": "Debilitated",
+ "panel.varga.dignity.E": "Enemy",
+ "panel.varga.dignity.EX": "Exalted",
+ "panel.varga.dignity.F": "Friend",
+ "panel.varga.dignity.GE": "Great Enemy",
+ "panel.varga.dignity.GF": "Great Friend",
+ "panel.varga.dignity.MT": "Moolatrikona",
+ "panel.varga.dignity.N": "Neutral",
+ "panel.varga.dignity.OH": "Own House",
+ "panel.varga.key.dignity": "DIGNITY",
+ "panel.varga.key.dignity_tip": "Dignity on the chart (switches the Strength glow off)",
+ "panel.varga.key.style_tip": "Varga style of the table and the chart (click: Classical, Parivritti, Reversed)",
+ "panel.varga.row.lord": "lord {lord}",
+ "panel.varga.style.unchanged": "{style} · unchanged"
+}

@@ -30,6 +30,7 @@ from visualizations.wheel_constants import (
     ELEMENT_CYCLE as _WHEEL_ELEMENT_CYCLE,
 )
 from apps.widgets.sign_shadow import apply_sign_shadow
+from core.planet_label import degree_text
 
 
 class NorthIndianPlanetClickSignal(QObject):
@@ -221,12 +222,7 @@ class PlanetDegreeLabel(QGraphicsTextItem):
         """
         super().__init__(parent)
 
-        if label_override:
-            self.setPlainText(label_override)
-        else:
-            degrees = int(deg_in_sign)
-            minutes = int((deg_in_sign - degrees) * 60)
-            self.setPlainText(f"{degrees}°{minutes:02d}'")
+        self.setPlainText(label_override or degree_text(deg_in_sign))
 
         # Set font with weight
         font = QFont("Inter", font_size)
@@ -268,9 +264,11 @@ def place_sign_icon(scene, sign_display, sign_index, cx, cy, size, ink, tag,
     zodiac system per SPEC-ZOD-001). ``names`` never reaches here — the caller
     guards on show_icon. A missing or Qt-unrenderable josh glyph is skipped so
     the caller's label still draws; z=4.5 sits above the cell fill, below it."""
-    if sign_display in ('josh', 'josh_only'):
+    from ui.sign_display_modes import glyph_family
+    family = glyph_family(sign_display)
+    if family:
         from apps.widgets.aditya_glyph_render import glyph_svg, AdityaGlyphItem
-        svg_bytes = glyph_svg(sign_index, get_theme_colors()['secondary_text'])
+        svg_bytes = glyph_svg(sign_index, get_theme_colors()['secondary_text'], family)
         if not svg_bytes:
             return
         item = AdityaGlyphItem(svg_bytes, size)

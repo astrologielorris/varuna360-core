@@ -52,9 +52,9 @@ def _writer_for(path):
     """
     from pathlib import Path
     suffix = Path(str(path)).suffix.lower()
-    if suffix == ".toml":
-        from core.toml_chart import TOMLChartWriter
-        return TOMLChartWriter(), "update_toml_birth_data"
+    if suffix == ".toml":  # keeps the disk's [library]/[rating] (SPEC-LIB-001 D-23)
+        from core.library.tables import KeepingTOMLWriter
+        return KeepingTOMLWriter(), "update_toml_birth_data"
     from core.chtk_reader import CHTKWriter
     return CHTKWriter(), "update_chtk_birth_data"
 

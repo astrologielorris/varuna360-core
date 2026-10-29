@@ -3,8 +3,9 @@
 """Pure dasha compute/render engine (SPEC-DSH-002, td-t761 wave 2, w2-1).
 
 Plain functions over plain lists of row dicts — NO Qt, NO ChartGUI, NO other
-`managers.*` import. The only non-stdlib dependency is `core.time_utils`
-(display-only JD→civil helpers), whose two display settings are passed in
+`managers.*` import. The only non-stdlib dependencies are `core.time_utils`
+(display-only JD→civil helpers) and `core.dasha_age` (the age column, shared
+with the core rows and the CLIs), whose two display settings are passed in
 EXPLICITLY so the engine never reads app settings (sol r1-1).
 
 Every function is total over its own inputs (no exception escapes for well-typed
@@ -25,6 +26,9 @@ Row dicts (from `core/vimshottari_dasha.py`) carry the keys:
 from dataclasses import dataclass
 
 from core.time_utils import display_revjul, format_display_ymd
+# The age column lives in core/dasha_age.py (review round 17), so the core dasha
+# rows and the CLIs use the panel's own function; re-exported for the panel.
+from core.dasha_age import age_text  # noqa: F401
 
 # Row prefixes (moved from the manager's _PREFIX_CURRENT / _PREFIX_NORMAL).
 PREFIX_CURRENT = "▶ "
@@ -260,47 +264,6 @@ def cycle_range_text(offset):
     start = offset * CYCLE_YEARS
     end = start + CYCLE_YEARS
     return f"{start}-{end}y"
-
-
-def age_text(entry_jd, birth_ymd, years_offset=0):
-    """'Xy Zm' duration from birth to a period start (verbatim _age_str body).
-
-    An AGE IS A DURATION (td-okit c0-7): both endpoints are read in the FIXED
-    astronomical calendar (display_revjul(jd, "astronomical")), so the value is
-    invariant to display.calendar_convention and byte-equivalent to
-    core/zodiacal_releasing._age_ym. The 120-year cycle offset is applied ONCE as
-    years_offset. Returns "" when entry_jd is None or a birth component is falsy.
-    """
-    try:
-        if entry_jd is None:
-            return ""
-        birth_y, birth_m, birth_d = birth_ymd
-        if not all([birth_y, birth_m, birth_d]):
-            return ""
-
-        y, m, d, _h = display_revjul(entry_jd, "astronomical")
-        y = int(y) + years_offset
-        m, d = int(m), int(d)
-        birth_y, birth_m, birth_d = int(birth_y), int(birth_m), int(birth_d)
-
-        # Sign-aware month borrow (c0-5): valid only in the direction of elapsed
-        # time. Entry on/after birth -> months birth->entry; entry before birth
-        # -> months entry->birth, then negate.
-        if (y, m, d) >= (birth_y, birth_m, birth_d):
-            total_months = (y - birth_y) * 12 + (m - birth_m)
-            if d < birth_d:
-                total_months -= 1
-            return f"{total_months // 12}y {total_months % 12}m"
-
-        total_months = (birth_y - y) * 12 + (birth_m - m)
-        if birth_d < d:
-            total_months -= 1
-        if total_months == 0:
-            return "0y 0m"          # zero completed months carries no sign
-        month_part = f"-{total_months % 12}m" if total_months % 12 else "0m"
-        return f"-{total_months // 12}y {month_part}"
-    except Exception:
-        return ""
 
 
 def display_date_at_offset(entry_jd, years_offset, *, date_format, convention):

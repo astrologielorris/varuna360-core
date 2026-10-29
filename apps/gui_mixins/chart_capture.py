@@ -36,6 +36,9 @@ class ChartCaptureMixin:
             self.statusBar().showMessage("No chart to save", 3000)
             return
         scene_based = hasattr(current, 'scene')
+        # td-8m3kd: a font change waiting for this view's Show is applied first.
+        from managers.font_refresh_deferral import run_pending_for
+        run_pending_for(current)
 
         # Build default filename from chart name
         chart_name = "chart"
@@ -109,6 +112,8 @@ class ChartCaptureMixin:
 
         # Grab just the chart content area (Vedanga → Chart → Info → Vimshottari)
         # Excludes toolbar, memory panel, tab bar
+        from managers.font_refresh_deferral import run_pending_for  # td-8m3kd
+        run_pending_for(self.chart_content)
         pixmap = self.chart_content.grab()
         pixmap.save(filepath, "PNG", 50)
         self.statusBar().showMessage(f"Full view saved: {filepath}", 5000)

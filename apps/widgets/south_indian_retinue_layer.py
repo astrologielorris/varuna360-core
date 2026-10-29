@@ -14,6 +14,7 @@ from ui.qt_theme import desat_hex, get_scale_factor, get_area_font_size, is_ligh
 
 from apps.widgets.south_indian_material import (
     WoodBoardItem, WoodFaceItem, WoodRopeTraceItem, rounded, pigment, outer_wood_palette)
+from apps.widgets.jewel_lamp_si import strength_pass
 
 TAG = 'sic006'
 
@@ -198,7 +199,7 @@ class SouthIndianRetinueLayer:
         font=QFont('Inter')
         font.setWeight(QFont.Weight.Medium if bold else QFont.Weight.Normal)
         font.setHintingPreference(QFont.HintingPreference.PreferNoHinting)
-        floor=max(self.services.display_settings.get('planet_degrees', {}).get('font_size',14),
+        floor=max(get_area_font_size('planet_degrees'),  # Font Sizes > Planet Degrees
                   get_area_font_size('chart_labels'))*get_scale_factor()
         # Reference dimensions are scene pixels; configured readability is a
         # floor in the same units, not a second multiplication by cell scale.
@@ -257,11 +258,12 @@ class SouthIndianRetinueLayer:
                 f'Trimshamsha {start}–{end}°: {p.trim["being_name"]} '
                 f'({p.trim["being_type"]}, {p.trim["element"]})')
 
-    def rebuild(self, placements, labels, ascendant):
+    def rebuild(self, placements, labels, ascendant, strength=None):
         self.clear()
         wood = self.services.wood
         self.palette = palette = (outer_wood_palette(self.services.vector_finish)
                                   if wood else outer_palette(is_light_theme()))
+        cells = strength_pass(strength, palette, wood, self.scale, ascendant)
         self.root = QGraphicsItemGroup()
         self.root.setHandlesChildEvents(False)
         self.services.scene.addItem(self.root)
@@ -303,29 +305,19 @@ class SouthIndianRetinueLayer:
             for i, (start, end, lord, kind, element) in enumerate(partitions(sign)):
                 record = get_trimsamsa_being(ADITYA_SIGN_ORDER[sign], start)
                 rect = QRectF(*box.rect(start/30, end/30, 48, 140)).adjusted(.9*s,.9*s,-.9*s,-.9*s)
-                item = self.rect(rect, palette['trim'][element]['bg'],
-                                 opacity=wood['stain'][element]['o'] if wood else 1, pocket=bool(wood))
-                self.sectors[(sign, 'trim', i)] = item
-                item.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
-                item.setOpacity(1 if wood else .86)
-                item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemClipsChildrenToShape)
-                self.two_lines(record['being_name'], record['being_type'], rect,
-                               -90 if box.horizontal else 0,14.6,8.8,
-                               palette['trim'][element]['text'], item)
+                cells.cell(self, (sign, 'trim', i), rect, lord, palette['trim'][element]['bg'],
+                           palette['trim'][element]['text'], wood and wood['stain'][element],
+                           (record['being_name'], record['being_type'], rect,
+                            -90 if box.horizontal else 0, 14.6, 8.8))
             for half in range(2):
                 h = get_hora(ADITYA_SIGN_ORDER[sign], half*15)
                 prefix = 'sun' if h['lord'] == 'Sun' else 'moon'
                 rect = QRectF(*box.rect(half/2, (half+1)/2, 240, 288)).adjusted(.9*s,.9*s,-.9*s,-.9*s)
-                item = self.rect(rect, palette['hora'][prefix+'_bg'],
-                                 opacity=wood['hora'][h['lord']]['o'] if wood else 1, pocket=bool(wood))
-                self.sectors[(sign, 'hora', half)] = item
-                item.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
-                item.setOpacity(1 if wood else .86)
-                item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemClipsChildrenToShape)
                 lum='☉' if prefix=='sun' else '☾'
-                self.two_lines(lum+' '+h['being_name'],f'{half*15}° – {(half+1)*15}°',
-                               rect,0 if box.horizontal else -90,16,10,
-                               palette['hora'][prefix+'_text'],item)
+                cells.cell(self, (sign, 'hora', half), rect, h['lord'], palette['hora'][prefix+'_bg'],
+                           palette['hora'][prefix+'_text'], wood and wood['hora'][h['lord']],
+                           (lum+' '+h['being_name'], f'{half*15}° – {(half+1)*15}°',
+                            rect, 0 if box.horizontal else -90, 16, 10))
             ruler_clip=QGraphicsPathItem(clip_path,self.rulers)
             ruler_clip.setPen(QPen(Qt.PenStyle.NoPen))
             ruler_clip.setFlag(QGraphicsItem.GraphicsItemFlag.ItemClipsChildrenToShape)

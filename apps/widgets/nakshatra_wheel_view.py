@@ -22,6 +22,8 @@ from PySide6.QtWidgets import (
     QGraphicsEllipseItem, QGraphicsLineItem, QToolTip
 )
 from PySide6.QtCore import Qt, QPointF
+
+from apps.widgets.paint_on_show import cancel_paint, defer_paint
 from PySide6.QtGui import QPen, QBrush, QColor, QPainter, QFont, QImage, QPixmap
 
 # Project root
@@ -105,15 +107,17 @@ class NakshatraWheelView(QGraphicsView):
 
         self.gui = gui
         # Injected bindings (SPEC-NAK-LITE-001). Both editions supply these
-        # explicitly so the two ayanamsa frames and the Pro-only teacher-content
-        # outer ring are visible at the construction site, never a hidden flag:
-        #   ayanamsa_source  – callable returning the sidereal ayanamsa id. Core
-        #                      injects zodiac.ayanamsa_id; Pro injects dasha.left.
-        #                      None → legacy default (dasha.left) for bare tests.
-        #   summary_provider – Pro-only object exposing valid_modes + draw(...) for
-        #                      the teacher-content property outer ring. None
-        #                      (Core/Lite) → the ring is never drawn and no
-        #                      teacher content is reachable; property_mode "none".
+        # explicitly so the two ayanamsa frames and the property outer ring are
+        # visible at the construction site, never a hidden flag:
+        #   ayanamsa_source  – callable returning the sidereal ayanamsa id. Both
+        #                      editions inject zodiac.ayanamsa_id (the chart's).
+        #                      None → the chart's id read from the gui (bare tests).
+        #   summary_provider – object exposing valid_modes + draw(...) for the
+        #                      property outer ring (both nakshatra panels inject
+        #                      NakshatraSummaryProvider). None → the ring is
+        #                      never drawn; property_mode "none". (The sector
+        #                      double-click info dialog: each host panel
+        #                      connects nakshatra_click_signal.)
         self._ayanamsa_source = ayanamsa_source
         self._summary_provider = summary_provider
         self.scene = NakshatraWheelScene(self)
@@ -150,15 +154,16 @@ class NakshatraWheelView(QGraphicsView):
         # shared chart.cusp_glow_mode so the view opens in the current F9 state.
         self.cusp_glow_mode = get_settings().get("chart.cusp_glow_mode", 0)
         self._drawn_cusp_mode = None   # cusp mode the scene was last drawn with
-        # The teacher-content outer ring exists only when a Pro summary provider
-        # is injected. Core/Lite gets no provider, so property_mode stays "none"
-        # and the paid-edition nakshatra properties module is never imported here.
+        # The property outer ring exists only when a summary provider is
+        # injected; with none, property_mode stays "none".
         if self._summary_provider is not None:
-            saved = get_settings().get("display.nakshatra.property_mode", "none")
+            from core.settings_registry import default as _registry_default
+            key = "display.nakshatra.property_mode"
+            saved = get_settings().get(key, _registry_default(key))
             self.property_mode = saved if saved in self._summary_provider.valid_modes else "none"
         else:
             self.property_mode = "none"
-        self.danishta_mode = False    # Danishta zodiac: tropical + 90° shift (F10)
+        self.danishta_mode = False    # Danishta zodiac: tropical + 90° shift (toolbar DANISHTA button)
 
         # Transit ring state
         self.show_transit_ring = False
@@ -238,16 +243,11 @@ class NakshatraWheelView(QGraphicsView):
             return None
 
         try:
-            qimage = QImage(str(icon_path))
-            if qimage.isNull():
+            from apps.widgets.icon_prefetch import scaled_image
+            qimage = scaled_image(icon_path, size)   # off the GUI thread when prefetched
+            if qimage is None:
                 self.planet_icons[cache_key] = None
                 return None
-
-            qimage = qimage.scaled(
-                size, size,
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation
-            )
             qimage = desat_image(qimage)
             pixmap = QPixmap.fromImage(qimage)
             self.planet_icons[cache_key] = pixmap
@@ -470,6 +470,7 @@ class NakshatraWheelView(QGraphicsView):
             self.update_from_chart(self._chart)
 
     def clear_chart(self):
+        cancel_paint(self)
         self.scene.clear()
         self._chart = None
         self._engine_chart = None
@@ -567,13 +568,11 @@ class NakshatraWheelView(QGraphicsView):
     def _get_ayanamsa_settings(self):
         """Sidereal ayanamsa id, from the injected source (SPEC-NAK-LITE-001).
 
-        Core injects zodiac.ayanamsa_id; Pro injects dasha.left. With no source
-        (bare construction in tests) the legacy dasha.left default applies."""
+        Both editions inject zodiac.ayanamsa_id. With no source (bare construction
+        in tests) the chart's id is read from the gui."""
         if self._ayanamsa_source is not None:
             return self._ayanamsa_source()
-        if self.gui:
-            return self.gui.dasha_manager.ayanamsa("left") if getattr(self.gui, "dasha_manager", None) else 100
-        return 100
+        return getattr(self.gui, "chart_sidereal_ayanamsa_id", 100) if self.gui else 100
 
     # ── Dynamic Radii ─────────────────────────────────────────────
 
@@ -617,8 +616,19 @@ class NakshatraWheelView(QGraphicsView):
 
     # ── Main Drawing Pipeline ────────────────────────────────────
 
+    def _draw_shown(self):
+        """The full draw deferred to Show, with the F9 mode showEvent then seeds
+        (so revealing the wheel draws once, not at the old mode and again)."""
+        from managers.settings_manager import get_settings
+        self.cusp_glow_mode = None                 # the seed below always draws
+        self.set_cusp_glow_mode(get_settings().get("chart.cusp_glow_mode", 0))
+        if self._engine_chart is None:
+            self._draw_wheel()                     # no chart: set_cusp_glow_mode drew nothing
+
     def _draw_wheel(self):
         """Full redraw of the nakshatra wheel."""
+        if defer_paint(self, "_draw_shown"):       # hidden: drawn at its next show
+            return
         self._last_tooltip_item = None
         self.scene.clear()
         self._recalculate_radii()
@@ -722,10 +732,9 @@ class NakshatraWheelView(QGraphicsView):
         # ── Z5: Lord icons (ring 3)
         self._draw_lord_icons(cx, cy)
 
-        # ── Z6: Dasha numbers (ring 4), or the Pro teacher-content summary ring.
-        # The summary ring is drawn ONLY through an injected Pro provider; with
-        # no provider (Core/Lite) property_mode is pinned "none" and no Pro
-        # module is imported here.
+        # ── Z6: Dasha numbers (ring 4), or the property summary ring, drawn
+        # ONLY through the injected summary provider (property_mode "none" or
+        # no provider keeps the dasha numbers).
         moon_data = planet_naks.get("Moon")
         if self.property_mode == "none" or self._summary_provider is None:
             self._draw_dasha_numbers(cx, cy, moon_data)
@@ -957,7 +966,7 @@ class NakshatraWheelView(QGraphicsView):
         nakshatra rings stay on the sidereal engine rotation
         (``self.rotation_offset``); the two rings are independent.
 
-        Danishta (Pro F10) is a deliberate exception: a fixed tropical + 90°
+        Danishta (toolbar DANISHTA button) is a deliberate exception: a fixed tropical + 90°
         shift regardless of frame, so it reads the tropical ENGINE cusp, not the
         frame cusp (which is sidereal in Sidereal mode).
         """
@@ -995,9 +1004,10 @@ class NakshatraWheelView(QGraphicsView):
         # sign-name text, zodiac -> the symbol icons (default), josh -> the Aditya
         # glyphs. The frame-following name/glyph context is borrowed from the main
         # Wheel, exactly like the icon variation settings above.
-        from managers.settings_manager import get_settings
-        mode = get_settings().get('display.sign_display', 'zodiac')
-        if mode == 'names':
+        from ui.sign_display_modes import glyph_family, hides_sign_names
+        from ui.sign_numbers import NUMBERS, effective_sign_display
+        mode = effective_sign_display('nakshatra')
+        if mode in ('names', NUMBERS):
             # The mini ring is ~1/4 the main Wheel's scale (icons 48 vs 192), so
             # the Wheel's sign-name font (26) and its offset_x/offset_y (both
             # Wheel-scaled) would overflow the 245..288 band: force font_size 11
@@ -1017,16 +1027,17 @@ class NakshatraWheelView(QGraphicsView):
                             wheel_view._aditya_mode if wheel_view else 'aditya',
                             wheel_view.use_western_names if wheel_view else False,
                             wheel_view.sign_language if wheel_view else 'en',
-                            ds, z_base=2.5)
-        elif mode in ('josh', 'josh_only'):
+                            ds, z_base=2.5, as_numbers=mode == NUMBERS)
+        elif glyph_family(mode):
             # The glyph ring sits at r=265, outside the element sectors (r<=245),
             # on the wheel's themed canvas ground. Inked with primary_text (the
             # theme's polarity-opposite foreground, Rule 20) so the flat glyphs
             # read on either polarity, like the main Wheel's josh ring.
             from apps.widgets.aditya_glyph_render import draw_aditya_glyphs
             draw_aditya_glyphs(self.scene, cx, cy, 265, 48, tropical_rotation,
-                               get_theme_colors()['primary_text'], z_base=2.5)
-            if mode == 'josh':
+                               get_theme_colors()['primary_text'], z_base=2.5,
+                               family=glyph_family(mode))
+            if not hides_sign_names(mode):
                 ds = dict(wheel_view.display_settings) if wheel_view else {}
                 ds['sign_name'] = dict(ds.get('sign_name', {}), font_size=9,
                                        font_color=get_theme_colors()['primary_text'],
@@ -1109,7 +1120,7 @@ class NakshatraWheelView(QGraphicsView):
 
         Non-Danishta: the FRAME sign (``_planets`` is the frame chart), so the
         radial line's element colour matches the frame inner zodiac wheel — its
-        stated design intent (td-yi23 finding 5). Danishta (Pro F10) reads the
+        stated design intent (td-yi23 finding 5). Danishta (toolbar DANISHTA button) reads the
         tropical ENGINE chart here so the NATAL lines are tropical + 90 in every
         frame. (The transit lines have their own path,
         ``_get_tropical_sign_index_from_transit``, which reads the transit chart

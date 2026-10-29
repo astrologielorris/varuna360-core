@@ -71,6 +71,7 @@ class ChartActionBar(QWidget):
         self._bound = False
         self._pill = None                        # set by create_action_bar
         self._meta_label = None
+        self.pair = None                         # SPEC-DUAL-001 PillPair
         self.setFixedHeight(metrics.bar_h)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
@@ -190,8 +191,11 @@ class ChartActionBar(QWidget):
                 sig.connect(self._on_naming_signal)
         try:
             from managers.settings_manager import get_settings
-            get_settings().on_changed("ui.hide_human_design",
-                                      self._on_hide_hd_changed)
+            # C8: the HD button is always shown. Boot already ignores
+            # ui.hide_human_design; a live subscription here used to hide the
+            # button mid-session whenever Settings > Other > Apply rewrote a
+            # stale True (the button vanished while "playing with settings",
+            # then came back on restart). No subscriber, no mid-session hide.
             # Sol M3 major 1 (second half): the meta's Nakshatra-frame
             # segment reads gui.nakshatra_coords, which a settings change
             # rewrites without any ChartState dispatch.
@@ -218,8 +222,9 @@ class ChartActionBar(QWidget):
                 # (the meta must never show a frame the file no longer has).
                 try:
                     from managers.settings_manager import get_settings
+                    from core.settings_registry import default as _registry_default
                     gui.nakshatra_coords = get_settings().get(
-                        "zodiac.nakshatra_coords", "neither")
+                        "zodiac.nakshatra_coords", _registry_default("zodiac.nakshatra_coords"))
                 except Exception:
                     pass
                 gui._update_title()
@@ -250,18 +255,6 @@ class ChartActionBar(QWidget):
             logging.getLogger(__name__).warning(
                 "action bar render failed for reason %r", reason,
                 exc_info=True)
-
-    def _on_hide_hd_changed(self, *_):
-        """Dm3-28: prefix-matched notify — always RE-READ the value. The
-        callback renders only (Dm3-30: no dispatch, no mode mutation)."""
-        try:
-            from managers.settings_manager import get_settings
-            hidden = get_settings().get_hide_human_design()
-        except Exception:
-            hidden = False
-        if self.layout_controller is not None:
-            self.layout_controller.set_hd_visible(not hidden)
-        self.render_state("hd_swap")              # dual-role label may flip
 
     def render_state(self, reason: str = "") -> None:
         gui, ctl = self._gui, self.layout_controller
@@ -308,10 +301,12 @@ class ChartActionBar(QWidget):
                 btn.set_disabled_reason(_NO_CHART_REASON)
                 btn.setEnabled(has_chart)
         close = getattr(gui, "chart_close_button", None)
+        pair = getattr(self, "pair", None)
         if close is not None:
             close.setEnabled(has_chart)
-            close.setToolTip("Close chart" if has_chart
-                             else f"Close chart — {_NO_CHART_REASON}")
+            if pair is None or not pair.is_pair():   # the pair owns A's ✕ tip
+                close.setToolTip("Close chart" if has_chart
+                                 else f"Close chart — {_NO_CHART_REASON}")
 
         # folded-toggle lit (Dm3-38: without these the overflow menu lies
         # at every tier >= d3 — its rows read btn.lit).
@@ -525,10 +520,26 @@ def create_action_bar(gui, fs: float | None = None,
     meta.setObjectName("bar_meta")
     gui.chart_title_meta = meta
     gui.chart_close_button = CloseGlyphButton(m, tokens_fn)
+    # SPEC-DUAL-001 §4.1: the "A" letter (two-chart mode only) and the pair
+    # switch in the retired chevron's slot (COMPARE / ONE CHART).
+    from core.i18n import t as _t
+    from .paired_wells import PairSwitch, PillPair, RoleLabel
     title_well = TitleWell(gui.chart_title_label, meta,
-                           gui.chart_close_button, m, tokens_fn)
+                           gui.chart_close_button, m, tokens_fn,
+                           role_label=RoleLabel(_t("chart.pair.label_a", "A"), m, tokens_fn),
+                           switch=PairSwitch(m, tokens_fn))
     gui.chart_title_well = title_well
-    _maybe_connect(gui.chart_close_button.clicked, gui, "_close_current_chart")
+
+    def _close_a():
+        # Lorris Q1: in two-chart mode ✕ on A only removes A from the pair.
+        pair_mgr = getattr(gui, "chart_pair", None)
+        if pair_mgr is not None and pair_mgr.mode() == "two":
+            pair_mgr.close_a()
+            return
+        fn = getattr(gui, "_close_current_chart", None)
+        if callable(fn):
+            fn()
+    gui.chart_close_button.clicked.connect(_close_a)
     gui.chart_title_label.clicked.connect(
         lambda: _legacy(gui, "_search_chart_name_google_images"))
     # pill right-click menu (Sol M1 major 3)
@@ -642,47 +653,49 @@ def create_action_bar(gui, fs: float | None = None,
     # non-eliding, blue-bordered QLabels (Sol M1 BLOCKER 1).
     gui.overlay_chip_view = OverlayChip(fs=fs)
     chip_lay.addWidget(gui.overlay_chip_view)
-    # F2 / MAJOR 2: the mockup's chip is `◇ Name · info` and the slot before the
-    # base-chart close renders the well's painted downward CHEVRON (.chev, :617),
-    # NOT a second ×. The old code seated a muted `×` QPushButton in exactly that
-    # slot, painting a × OVER the chevron (CP-4 is glyph-blind, so it never
-    # caught the doubled mark). Keep an 18px control in the slot so the chip
-    # geometry stays byte-stable (the golden ◇ x is measured with the slot
-    # filled), but render NO glyph: the flat, empty, translucent button lets the
-    # well's chevron show through, and clicking it is the "back to live sky"
-    # affordance. `overlay_chip_clear` stays the clickable attribute it always
-    # was (remote / tests / back-compat).
-    gui.overlay_chip_clear = QPushButton("")
-    gui.overlay_chip_clear.setFixedSize(18, 18)
-    gui.overlay_chip_clear.setFlat(True)
+    # SPEC-DUAL-001 §4.1: the chevron is retired, so the chip gets its own
+    # visible round clear glyph in the CloseGlyphButton style (same attribute,
+    # same click: back to the live sky).
+    gui.overlay_chip_clear = CloseGlyphButton(m, tokens_fn)
     gui.overlay_chip_clear.setCursor(Qt.PointingHandCursor)
-    gui.overlay_chip_clear.setAttribute(Qt.WA_TranslucentBackground, True)
     gui.overlay_chip_clear.setToolTip(
-        "Remove overlay chart (back to live sky)")
+        _t("chart.pair.overlay_clear_tip", "Remove overlay (back to live sky)"))
     gui.overlay_chip_clear.clicked.connect(
         lambda: getattr(gui, "chart_overlay_manager", None) is not None
         and gui.chart_overlay_manager.back_to_live_sky())
+    title_well.rim_buttons.append(gui.overlay_chip_clear)
     chip_lay.addWidget(gui.overlay_chip_clear)
     gui.overlay_chip = chip
     chip.hide()
     # MINOR 6 / INV-4: the v2 chip is fully painted (OverlayChip self-themes via
-    # bar_tokens; container transparent by default; the clear control paints no
-    # glyph). It needs NO QSS, so mark it and let _style_overlay_chip skip the
+    # bar_tokens; container transparent by default; the clear glyph is a painted
+    # CloseGlyphButton). It needs NO QSS, so mark it and let _style_overlay_chip skip the
     # QSS path it keeps for the legacy bar's visible × (QSS = overflow menu only).
     gui._overlay_chip_painted = True
 
     # ---- assemble ----------------------------------------------------------
     bar = ChartActionBar(m, tokens_fn)
     gui.search_btn.setParent(bar)  # parented + hidden (spec: no stray window)
-    # chip lives in the well right-aligned BEFORE the close glyph, matching the
-    # mockup order `.names(flex) → .ovl chip → .chev → .xbtn(close)` (:607-618):
-    # the name's leftover-space stretch pushes the chip to the right, the close
-    # glyph (with its painted chevron slot) stays the far-right control. Hidden
+    # chip lives in the well right-aligned BEFORE the pair switch and the close
+    # glyph: `.names(flex) → .ovl chip + clear → COMPARE → .xbtn(close)`
+    # (SPEC-DUAL-001 §4.1; the chevron that sat here is retired). Hidden
     # children take no layout space, so goldens are untouched until an overlay
-    # shows it. (Was appended AFTER close — that put the ◇ 20px right of golden
-    # and left the close glyph mid-well; Sol M1 BLOCKER 1.)
+    # shows it.
     _well_lay = title_well.layout()
-    _well_lay.insertWidget(_well_lay.indexOf(gui.chart_close_button), chip)
+    _well_lay.insertWidget(_well_lay.indexOf(title_well.switch), chip)
+    # SPEC-DUAL-001 §4.1: the pill pair holds the well (and, in two-chart
+    # mode, ⇄ + well B). It lives on the bar, never on the GUI (Rule 4b).
+    pair = PillPair(title_well, gui, m, tokens_fn)
+    bar.pair = pair
+
+    def _pair_call(name, *args):
+        pair_mgr = getattr(gui, "chart_pair", None)
+        fn = getattr(pair_mgr, name, None)
+        if callable(fn):
+            fn(*args)
+    pair.toggle_requested.connect(lambda: _pair_call("toggle"))
+    pair.swap_requested.connect(lambda: _pair_call("swap"))
+    pair.close_b_requested.connect(lambda: _pair_call("forget_b"))      # T9
     lay = QHBoxLayout(bar)
     # D-22a second half: without SetNoConstraint the layout enforces its own
     # minimumSize on the widget (a top-level bar could never shrink below
@@ -701,12 +714,12 @@ def create_action_bar(gui, fs: float | None = None,
     lay.addWidget(left_grp)
     lay.addWidget(HairlineSep(m, tokens_fn))
     lay.addStretch(1)                          # C8: even slack, LEFT of the well
-    lay.addWidget(title_well, 0)
+    lay.addWidget(pair, 0)
     lay.addStretch(1)                          # C8: even slack, RIGHT of the well
     lay.addWidget(HairlineSep(m, tokens_fn))
     lay.addWidget(right_grp)
 
-    bar.cluster_widgets = [left_seg1, left_seg2, right_seg1, right_seg2]
+    bar.cluster_widgets = [left_seg1, left_seg2, right_seg1, right_seg2, pair.swap]
 
     # ---- M2: the layout controller (d0-d5 ladder) -------------------------
     from .layout_controller import ActionBarLayoutController
@@ -721,7 +734,7 @@ def create_action_bar(gui, fs: float | None = None,
                  "sidereal": gui.sidereal_btn, "dual": gui.dual_rim_btn},
         toggles_cluster=right_seg2, zod_cluster=zod_cluster, sep_s3=sep_s3,
         tray=tray, title_well=title_well, meta=meta,
-        overflow_btn=gui.bar_overflow_btn,
+        overflow_btn=gui.bar_overflow_btn, pair=pair,
         hd_visible=not hide_human_design)
     gui.bar_overflow_btn.clicked.connect(controller.show_overflow_menu)
     bar._scale_groups = (left_grp, right_grp)

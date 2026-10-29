@@ -10,7 +10,7 @@ but the software computes both Tropical and Sidereal with full ayanamsa
 support. It is the same calculation engine that powers the Pro edition.
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
-[![Upgrade to Pro](https://img.shields.io/badge/Pro-%E2%82%AC29.99%2Fmonth-orange)](https://360heartsinthesky.com/subscribe)
+[![Upgrade to Pro](https://img.shields.io/badge/Pro-%E2%82%AC14.99%2Fmonth-orange)](https://360heartsinthesky.com/subscribe)
 
 ![Varuna360 Core full interface with wheel chart, panels, and dasha timeline](docs/help/images/interface_full.webp)
 
@@ -54,7 +54,7 @@ across his various repositories on
 - 3 zodiac configurations: Aditya Circle (from Ernst Wilhelm's new research), Tropical Western, and Sidereal, with many ayanamsa options
 - Human Design mode (computes the astrology layer of Human Design, bodygraph coming in a later update)
 - Divisional charts (Varga D1 to D60)
-- Trimsamsa and Hora panels with full chart creation (from Ernst Wilhelm's Aditya retinue course)
+- Trimsamsa and Hora panels with full chart creation (from Ernst Wilhelm's aditya technique)
 - Interactive Vimshottari Dasha timeline
 - CHTK file import and export (Kala compatibility)
 - Automatic chart download from the web (Wikipedia biography search)
@@ -72,26 +72,27 @@ across his various repositories on
 
 ## What's in Varuna360 Pro
 
-Pro is the larger paid edition, with new screens, advanced research tools,
-and features being added over time. It is AGPL-3.0 too, like everything else
-in Varuna360: Pro subscribers receive its corresponding source. It is simply
-**not** published in this repository, and Core never imports from it. If you
-want any of these, see
+Pro is the AI edition of Varuna360, built for AI and fully connected to it.
+Almost every task the software can do is also an AI tool, so you simply ask:
+the AI computes the charts, finds the dates and searches for what you are
+looking for, interactively with the program window. It is AGPL-3.0 too, like
+everything else in Varuna360: Pro subscribers receive its corresponding
+source. It is simply **not** published in this repository, and Core never
+imports from it. If you want any of these, see
 [Varuna360 Pro](https://360heartsinthesky.com/subscribe):
 
 - All Core features
-- Full transit screen with real-time tracking
-- Eclipse and Saros panel: per-country Ascendant map plus historical Saros cycle research
+- Full AI interpretation of your charts, with local access to an AI
+- Built for AI: the software's tasks are AI tools the AI runs for you
+- Just ask: dates, ingresses, conjunctions and patterns found by the AI
+- Interactive: the AI opens charts and shows its findings in the window
+- Connect your own AI apps to Varuna360
+- Eclipse pages: per-country Ascendant map, Saros Explorer, Eclipse Reading
+- Transit page
 - Solar return screen
-- AI-assisted chart interpretation
-- Psychological pattern and trauma detection (Lajitadi)
-- Element and Modality statistical analysis
-- Chinese Lunar New Year tab
-- Nakshatra wheel with innovative display options
-- Birth Finder: reverse-engineer charts from planetary positions
-- Pattern searching across time and databases
-- Planet Ingress and Conjunction finder
-- New features added regularly
+- Chinese Lunar New Year page
+- A manual for the AI features
+- New screens and AI tools added over time
 
 ## Pricing
 
@@ -116,7 +117,7 @@ account tiers that unlock content on the web app.
 | Source (this repo) | €0                           | Every Core feature, AGPL-3.0, clone and build                                  | Available   |
 | Lite Mobile        | From €3 / month              | The Aditya wheel on Android: Hora and Trimsamsa rings, Avastha, 16 Tajika aspects, live transits and live Ascendant | Available |
 | Lite Desktop       | From €3 / month, suggested €14.99 / month | Same Core features as source plus pre-built installer, auto-updates, email help, matching website tier | Coming Soon |
-| Pro                | €29.99 / month               | Everything in Core plus the "What's in Varuna360 Pro" list above               | Coming Soon |
+| Pro                | €14.99 / month               | Everything in Core plus the "What's in Varuna360 Pro" list above               | Coming Soon |
 
 Every paid tier is a monthly recurring subscription, priced in EUR.
 
@@ -130,9 +131,10 @@ Two thresholds are worth knowing. From €9.90 / month, Lite Desktop includes
 the mobile app. From €11 / month, it also includes the Explorer website
 tier; below €11 the two subscriptions simply coexist.
 
-**The €29.99 Pro price is not final.** Pro is still growing, and the price
-may change as it does. Treat it as the current intent rather than a
-commitment.
+**€14.99 is the Pro starting price.** Pro is stable and its AI tools have
+been tested for a long time, but a few areas are still being improved. The
+price will probably rise to €20 / month over time, as Pro is fully tested
+and grows.
 
 The bundled installers and the Pro subscription go live on
 [360heartsinthesky.com](https://360heartsinthesky.com) when ready. Building
@@ -161,6 +163,19 @@ Lorris Turpin, holds the copyright and, as sole copyright holder, reserves
 the right to license his own code under other terms as well. That reservation
 does not affect the AGPL-3.0 grant on the copy you have.
 
+Two things are not under the AGPL-3.0:
+
+- **The name and the icons.** "Varuna360", "360 Hearts in the Sky" and the
+  Varuna360 cat icons are trademarks of Lorris Turpin. A modified version must
+  carry its own name and icon; you may say it is based on Varuna360.
+- **The author's astrological texts.** The Ascendant guide and the
+  user manual are Lorris Turpin's
+  writing, with all rights reserved. They may travel unchanged inside copies
+  of the program, but may not be edited, translated or reused elsewhere
+  without permission.
+
+The exact terms and the list of files are in [`NOTICE`](NOTICE).
+
 ## Contributing
 
 This repository is a **read-only mirror** of an internal canonical
@@ -185,58 +200,63 @@ To report a security vulnerability, see [`SECURITY.md`](SECURITY.md).
 <!-- Generated at sync time from VERSION + CHANGELOG.md. Edits here are
      overwritten on the next sync; edit CHANGELOG.md instead. -->
 
-## Current release: 5.0.0 (2026-09-23)
+## Current release: 6.0.0 (2026-10-29)
 
-The most requested change was less color. This release is for everyone who
-prefers an older, more natural, down to earth look, and it lets you tweak
-that look to your liking. It also makes the app comfortable on lower
-resolution screens.
+Varuna360 6.0.0 brings a new Find Chart tab, the strength of the chart drawn
+directly on the chart, six new layers on the South Indian chart, and a design
+that adapts to every screen size.
+
+Some descriptions were removed from this version for copyright reasons. The
+Trimsamsa descriptions are among them; new ones are being written and should
+come back in a coming version.
 
 ### Added
 
-- **The Aditya retinue on the South Indian chart.** Until now, seeing the
-  Aditya retinue meant switching to the Wheel chart. The South Indian chart
-  now shows the retinue just like the Wheel, so if you prefer the South
-  Indian chart you can use it fully, for everything.
-- **A natural theme for the South Indian chart.** A new theme built from
-  natural tree and wood colors, for those who prefer an older or natural look
-  with less color.
-- **Classic planet glyphs.** Standard planet glyphs, like in any astrology
-  application, for those who do not like the planet icon designs. Choose any
-  color you want for them.
-- **A guide to the Aditya structure.** It explains how to read the chart from
-  a different point of view and gives clues for interpretation, with examples
-  for each Aditya sign.
-- **A new action bar.** A major improvement in appearance, and it adapts to
-  lower resolution screens. The three zodiac choices are always visible and
-  the title shows whose chart is open. The classic bar stays available in
-  Settings.
-- **Made for lower resolution screens.** Lower resolution screens were one of
-  the main problems of the app. A lot of work went into making every page
-  adapt to them, and you can now change the font size of every text area so
-  that every character is easy to read on any screen.
-- **A better Font Sizes page in Settings,** with a clear view of each text
-  area and a preview of what it changes, and pop-up windows follow your Info
-  text size.
-- **Sign display choice.** Show signs by name, by zodiac picture or by Josh
-  Harper's Aditya glyphs, the same way on every chart style, with adjustable
-  sign shadows.
-- **Theme palette editor** to change the colors of any theme.
-- **Zodiacal Releasing.** A new dasha mode with Fortune, Spirit and the
-  Hellenistic lots as releasers, Loosing of the Bond, start time and age for
-  every period, and its own Settings tab.
-- **Human Design BodyGraph.** A new chart page with the BodyGraph, the
-  Personality and Design columns, the channel list and the incarnation cross.
-- **Surya Lagna and Chandra Lagna.** Read any chart from the Sun or the Moon
-  as Ascendant with one click.
-- **Ten optional bodies and points** from the Swiss Ephemeris, with their own
-  symbols, switched on in Settings.
-- **The Nakshatra wheel** as a chart view in Core.
-- **Chart from an image.** Paste a screenshot of birth data and an AI model
-  of your choice reads it into a new chart.
-- **Date format setting** for all dates shown in the app.
-
-Questions and bug reports: astrologielorris@gmail.com
+- **A new Find Chart tab.** Built by Josh on a design by Lorris. Search your
+  whole chart library in many systems at once: planet positions in the
+  Aditya Circle, Tropical and Sidereal zodiacs, whole sign houses,
+  nakshatras, dignities, avasthas, the retinue, Human Design gates and
+  channels, Cards of Truth and Shayanadi. Each result opens as a quick
+  chart preview, and long searches show their progress in the status bar.
+- **The Library.** Check Charts finds damaged chart files, wrong time zones
+  and copies of the same chart that disagree. Old CHTK files convert to the
+  open TOML format, with every original kept as a backup. Rate and Sort
+  lets you rate your charts and sort the library by your ratings.
+- **Strength shown on the chart.** Click a strength key in the Strength panel
+  (Digbala, Uccha, Chesta, Duc Bala) and the chart lights up: the planets
+  glow with their strength, and each sign takes the colour of its lord's
+  strength, Aditya signs included. Two styles, V1 and V2.
+- **Six new layers on the South Indian chart:**
+  - the strength display above, in the sign squares;
+  - the Vedic aspects drawn in the center;
+  - the Tajika aspects drawn in the center, with a Tour key that plays them
+    one by one;
+  - exchange chains (THREAD key), every sign exchange drawn as a metal chain,
+    ranked from gold to rust, on the wheel too;
+  - the dignity overlay (DIGNITY key), one varga at a time;
+  - an optional degree ruler around the center drawings.
+- **A design for every screen size.** The main chart tab adapts to small and
+  large screens. The info panels beside the chart fold away and can be
+  swapped. The dasha column can be full, folded into a thin rail, or moved
+  below the chart, so the chart gets the space it needs.
+- **The macOS style panel headers** across the main chart tab, and an
+  improved design in almost every part of the app.
+- **Two charts side by side**, with a quick swap between them.
+- **Back and forward** through the charts you viewed in a session.
+- **Text under the planets.** F11 cycles between degrees, names, Human Design
+  gates and nakshatras.
+- **The full Nakshatra panel**, and the nakshatra descriptions, credited to
+  Ernst Wilhelm and Michael Reed. Double click a nakshatra on the wheel to
+  read it.
+- **Hover the Hora and Trimsamsa rings** on the wheel to read their house
+  position.
+- **Custom ayanamsa** in Settings.
+- **Simple vector sign symbols**, signs shown as numbers if you prefer, and a
+  colour editor for the sign symbols.
+- **Dark Orange theme** and a Deep dark option. A new install opens in the
+  Light Blue theme, with the strength colours ready to use.
+- **French descriptions** of the Adityas.
+- **Screen recorder** on Linux, Windows and macOS, and **local voice input**.
 
 Earlier releases are in [CHANGELOG.md](CHANGELOG.md).
 

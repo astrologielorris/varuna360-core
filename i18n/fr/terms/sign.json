@@ -1,0 +1,62 @@
+{
+ "0": {
+  "name": "Bélier",
+  "ok": "f407a138",
+  "src": "f407a138"
+ },
+ "1": {
+  "name": "Taureau",
+  "ok": "125ff41a",
+  "src": "125ff41a"
+ },
+ "10": {
+  "name": "Verseau",
+  "ok": "28c33187",
+  "src": "28c33187"
+ },
+ "11": {
+  "name": "Poissons",
+  "ok": "cbf37907",
+  "src": "cbf37907"
+ },
+ "2": {
+  "name": "Gémeaux",
+  "ok": "b31723ee",
+  "src": "b31723ee"
+ },
+ "3": {
+  "name": "Cancer",
+  "ok": "abb5fd27",
+  "src": "abb5fd27"
+ },
+ "4": {
+  "name": "Lion",
+  "ok": "43464e9d",
+  "src": "43464e9d"
+ },
+ "5": {
+  "name": "Vierge",
+  "ok": "979b4868",
+  "src": "979b4868"
+ },
+ "6": {
+  "name": "Balance",
+  "ok": "71e0af28",
+  "src": "71e0af28"
+ },
+ "7": {
+  "name": "Scorpion",
+  "ok": "e6a61d5c",
+  "src": "e6a61d5c"
+ },
+ "8": {
+  "name": "Sagittaire",
+  "ok": "72eae2e5",
+  "src": "72eae2e5"
+ },
+ "9": {
+  "name": "Capricorne",
+  "ok": "feec614f",
+  "src": "feec614f"
+ }
+}

@@ -17,11 +17,13 @@ from PySide6.QtWidgets import (
     QTextBrowser
 )
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QTextCursor
 
 from ui.qt_theme import (
     get_theme_colors, scaled_area_px,
     scaled_area_factor,
 )
+from ui.accent_ink import on_accent_ink  # SPEC-THM-001 §13
 from ui.popup_fonts import (tier_px, in_dialog_button_style, popup_group_px, live_refresh,
                              live_style, fit_text_width)
 
@@ -225,7 +227,7 @@ class HelpDialog(QDialog):
             }}
             QListWidget::item:selected {{
                 background-color: {self.theme['primary']};
-                color: {self.theme['primary_text']};
+                color: {on_accent_ink(self.theme['primary'], self.theme['primary_text'])};
             }}
         """)
         self.toc_list.itemClicked.connect(self._on_toc_clicked)
@@ -269,6 +271,13 @@ class HelpDialog(QDialog):
 
         main_layout.addWidget(splitter, 1)
 
+    def keyPressEvent(self, event):
+        """Enter in the search box runs it once, never also a button (ui.dialog_keys)."""
+        from ui.dialog_keys import field_enter
+        if field_enter(self, event):
+            return
+        super().keyPressEvent(event)
+
     def _load_manual(self):
         """Read HTML manual and inject theme colors."""
         html_path = PROJECT_ROOT / "docs" / "help" / "manual.html"
@@ -304,35 +313,47 @@ class HelpDialog(QDialog):
         self._load_manual()
         bar.setValue(round(ratio * bar.maximum()))
 
+    def _anchor_block(self, anchor):
+        """The manual block that carries the HTML anchor `anchor` (<a name=...>).
+
+        Qt keeps an empty anchor placed before a heading on that heading block's
+        char format, and an anchor wrapping text on the fragment, so both are
+        checked. None when the manual has no such anchor."""
+        if not anchor:
+            return None
+        block = self.content_browser.document().begin()
+        while block.isValid():
+            if anchor in block.charFormat().anchorNames():
+                return block
+            it = block.begin()
+            while not it.atEnd():
+                fragment = it.fragment()
+                if fragment.isValid() and anchor in fragment.charFormat().anchorNames():
+                    return block
+                it += 1
+            block = block.next()
+        return None
+
     def _on_toc_clicked(self, item):
         """Scroll content browser to the clicked TOC section.
 
-        Reuses the pattern from planet_dialog.py _scroll_to_anchor (line 311-340):
-        use QTextDocument.find() to locate the header text, then scroll viewport.
+        Navigates by the row's HTML ANCHOR id (UserRole, e.g. "human-design"),
+        never by its label or the heading's English text: both are display text
+        and will be translated (SPEC-LOC-002 INV-3, R2-4). The anchor resolves to
+        the heading block it sits on; the scroll arithmetic is unchanged, so an
+        English row lands exactly where the heading-text search put it.
         """
-        title = item.text().strip()
-
-        doc = self.content_browser.document()
-        # Find the HEADING, not merely the first place the words appear. A plain
-        # doc.find() lands on prose: "Settings > Chart Display" occurs dozens of
-        # times before the Settings heading, and a sentence pointing the reader
-        # at the Glossary occurs before the Glossary itself. Both sent the
-        # reader to a random paragraph. A heading is a block whose entire text
-        # IS the title, so walk the matches until one satisfies that.
-        cursor = doc.find(title)
-        while not cursor.isNull() and cursor.block().text().strip() != title:
-            cursor = doc.find(title, cursor)
+        anchor = item.data(Qt.ItemDataRole.UserRole)
+        block = self._anchor_block(anchor)
         scrollbar = self.content_browser.verticalScrollBar()
-        if cursor.isNull():
-            # No heading carries this exact text, so there is nothing to scroll
-            # to. That is the case for the first entry, whose section is titled
-            # by the manual's <h1> rather than by its own heading. Go to the top
-            # rather than doing nothing: a contents entry that visibly ignores
-            # the click reads as a broken viewer.
+        if block is None:
+            # No such anchor in the manual: go to the top rather than doing
+            # nothing, since a contents entry that visibly ignores the click
+            # reads as a broken viewer.
             if scrollbar:
                 scrollbar.setValue(0)
             return
-        cursor.movePosition(cursor.MoveOperation.StartOfBlock)
+        cursor = QTextCursor(block)
         self.content_browser.setTextCursor(cursor)
         rect = self.content_browser.cursorRect(cursor)
         if scrollbar:

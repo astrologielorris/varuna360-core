@@ -10,6 +10,18 @@ from typing import Dict, Optional, Any
 
 from core.time_utils import resolve_total_offset
 
+# Before 1970 an IANA zone's DST history is only guaranteed for the zone's
+# reference city (America/Chicago = Chicago 1925, not Omaha 1925), so a DST
+# flag resolved from zone rules for any other place is unverified (td-jdmjg).
+DST_RELIABLE_FROM_YEAR = 1970
+
+
+def dst_unverified_note(dst_active: bool, tz_name: str) -> str:
+    """Chart-notes line for a pre-1970 DST flag taken from zone rules."""
+    return (f"TZ-CHECK: DST {int(bool(dst_active))} comes from the {tz_name} zone "
+            f"rules, which before {DST_RELIABLE_FROM_YEAR} describe only that "
+            f"reference city; unverified for this place")
+
 
 # Known city coordinates for common birthplaces (fallback when API fails)
 KNOWN_CITIES = {

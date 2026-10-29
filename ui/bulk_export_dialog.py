@@ -20,8 +20,14 @@ the software makes quietly.
 
 from PySide6.QtCore import QThread, Signal
 from PySide6.QtWidgets import (
-    QCheckBox, QDialog, QHBoxLayout, QLabel, QProgressBar, QPushButton,
-    QTextEdit, QVBoxLayout,
+    QCheckBox,
+    QDialog,
+    QHBoxLayout,
+    QLabel,
+    QProgressBar,
+    QPushButton,
+    QTextEdit,
+    QVBoxLayout,
 )
 
 from ui.qt_theme import scaled_area_px
@@ -30,7 +36,8 @@ from ui.popup_fonts import tier_px
 
 class _PlanWorker(QThread):
     """Reads sessions and builds charts. Never writes."""
-    done = Signal(object, object)          # {profile: plan}, error
+
+    done = Signal(object, object)  # {profile: plan}, error
     progress = Signal(str)
 
     def __init__(self, profiles, use_index=True):
@@ -42,15 +49,18 @@ class _PlanWorker(QThread):
         try:
             import json
             from pathlib import Path
-            from managers.bulk_export import index_positions, plan_export
+            from managers.bulk_export import (
+                index_positions,
+                plan_export,
+                store_index_entries,
+            )
             from state.user_data import get_user_data_dir
 
             haystack, position_fn = [], None
             if self.use_index:
                 try:
-                    from cache.chart_index_cache import ChartIndexCache
                     self.progress.emit("Reading the chart index…")
-                    haystack = index_positions(ChartIndexCache().get_all_entries())
+                    haystack = index_positions(store_index_entries())
                     position_fn = _make_position_fn()
                 except Exception:
                     haystack, position_fn = [], None
@@ -61,13 +71,16 @@ class _PlanWorker(QThread):
                 self.progress.emit(f"Checking {profile}…")
                 path = base / "profiles" / profile / "session.json"
                 try:
-                    charts = json.loads(path.read_text(encoding="utf-8")).get("charts") or []
+                    charts = (
+                        json.loads(path.read_text(encoding="utf-8")).get("charts") or []
+                    )
                 except Exception:
                     charts = []
-                plans[profile] = plan_export(charts, haystack=haystack,
-                                             position_fn=position_fn)
+                plans[profile] = plan_export(
+                    charts, haystack=haystack, position_fn=position_fn
+                )
             self.done.emit(plans, None)
-        except Exception as e:                          # noqa: BLE001
+        except Exception as e:  # noqa: BLE001
             self.done.emit(None, f"{type(e).__name__}: {e}")
 
 
@@ -84,12 +97,15 @@ class _WriteWorker(QThread):
     def run(self):
         try:
             from managers.bulk_export import export_entries
+
             result = export_entries(
-                self.entries, chart_folder=self.chart_folder,
+                self.entries,
+                chart_folder=self.chart_folder,
                 chart_format=self.chart_format,
-                progress_fn=lambda i, n, name: self.progress.emit(i, n, name))
+                progress_fn=lambda i, n, name: self.progress.emit(i, n, name),
+            )
             self.done.emit(result, None)
-        except Exception as e:                          # noqa: BLE001
+        except Exception as e:  # noqa: BLE001
             self.done.emit(None, f"{type(e).__name__}: {e}")
 
 
@@ -97,10 +113,14 @@ def _make_position_fn():
     from core.chart_factory import build_chart_from_recipe
 
     def _positions(entry):
-        from AI_tools.AI_main_function.chart_utils import get_planet_decimal_degrees
+        from core.chart_helpers import get_planet_decimal_degrees
+
         chart = build_chart_from_recipe(entry.get("recipe") or {}, "aditya", 100)
-        return (get_planet_decimal_degrees(chart, "Sun"),
-                get_planet_decimal_degrees(chart, "Ascendant"))
+        return (
+            get_planet_decimal_degrees(chart, "Sun"),
+            get_planet_decimal_degrees(chart, "Ascendant"),
+        )
+
     return _positions
 
 
@@ -123,16 +143,21 @@ class BulkExportDialog(QDialog):
         intro = QLabel(
             "Charts created before Varuna360 started saving a file for every "
             "chart exist only in your session. This finds them and gives each "
-            "one a file.\n\nNothing is written until you press Save.")
+            "one a file.\n\nNothing is written until you press Save."
+        )
         intro.setStyleSheet(_text_css)
         layout.addWidget(intro)
 
         self.include_flagged = QCheckBox(
-            "Also save charts that look like duplicates of a file you already have")
-        self.include_flagged.setStyleSheet(f"QCheckBox {{ font-size: {tier_px('buttons', 11)}px; }}")
+            "Also save charts that look like duplicates of a file you already have"
+        )
+        self.include_flagged.setStyleSheet(
+            f"QCheckBox {{ font-size: {tier_px('buttons', 11)}px; }}"
+        )
         self.include_flagged.setToolTip(
             "A position match is a strong hint, not proof. Leave this off to "
-            "review them yourself.")
+            "review them yourself."
+        )
         layout.addWidget(self.include_flagged)
 
         self.summary = QTextEdit()
@@ -165,11 +190,11 @@ class BulkExportDialog(QDialog):
     def _profiles(self):
         from pathlib import Path
         from state.user_data import get_user_data_dir
+
         root = Path(get_user_data_dir() or ".") / "profiles"
         if not root.is_dir():
             return []
-        return sorted(p.name for p in root.iterdir()
-                      if (p / "session.json").exists())
+        return sorted(p.name for p in root.iterdir() if (p / "session.json").exists())
 
     def _start_plan(self):
         self.summary.setPlainText("Looking for charts with no file…")
@@ -186,6 +211,7 @@ class BulkExportDialog(QDialog):
             return
         self._plans = plans or {}
         from managers.bulk_export import SKIPPED_HAS_FILE, SKIPPED_TRANSIT
+
         lines, orphans, flagged = [], 0, 0
         for profile, plan in sorted(self._plans.items()):
             if not plan.total:
@@ -197,10 +223,13 @@ class BulkExportDialog(QDialog):
             lines.append(
                 f"{profile}: {len(plan.to_write)} with no file, "
                 f"{len(plan.flagged)} possible duplicates, "
-                f"{has_file} already saved, {transits} transits (not exported)")
-        header = (f"{orphans} chart(s) have no file.\n"
-                  f"{flagged} look like a chart you already have — "
-                  f"tick the box above to save those too.\n\n")
+                f"{has_file} already saved, {transits} transits (not exported)"
+            )
+        header = (
+            f"{orphans} chart(s) have no file.\n"
+            f"{flagged} look like a chart you already have — "
+            f"tick the box above to save those too.\n\n"
+        )
         self.summary.setPlainText(header + "\n".join(lines))
         self.save_button.setEnabled(bool(orphans or flagged))
 
@@ -250,7 +279,7 @@ def make_bulk_export_button(parent=None):
     # O-6: font-size in QSS (action_buttons area).
     button.setStyleSheet(f"font-size: {scaled_area_px('action_buttons')}px;")
     button.setToolTip(
-        "Find charts that exist only in your session and give each one a file.")
-    button.clicked.connect(
-        lambda: BulkExportDialog(button.window()).exec())
+        "Find charts that exist only in your session and give each one a file."
+    )
+    button.clicked.connect(lambda: BulkExportDialog(button.window()).exec())
     return button

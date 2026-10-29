@@ -10,6 +10,55 @@ import re
 from pathlib import Path
 from datetime import datetime
 
+from core.chtk_text import (kala_gender, normalize_chtk_timezone,
+                            read_chtk_text, split_chtk_lines)
+
+
+# Kala coordinate notation (docs/CHTK_FORMAT_SPECIFICATION.md, "Coordinate
+# notation"). The hemisphere letter is CASE-INSENSITIVE: Kala's long form is
+# upper case with seconds (48N49'00, 002E08'54) and its short form is lower case
+# without seconds (39n45, 084w12); libaditya/read.py lat_to_float/long_to_float
+# read both. Older imported files also carry a space before the letter
+# (18 n32), degrees only (22n), a trailing double quote (40N42'51") or the
+# colon form DDD:MM:SS X (073:15:14 W). Upper-case input with digits glued to
+# the letter parses exactly as before this table was widened.
+_KALA_DMS_RE = re.compile(r"(\d+)\s*([NSEW])\s*(\d*)['′]?(\d*)", re.IGNORECASE)
+_COLON_DMS_RE = re.compile(
+    r"^(\d+):(\d+)(?::(\d+(?:\.\d+)?))?\s*([NSEW])\s*$", re.IGNORECASE)
+
+
+def parse_kala_coordinate(dms_str):
+    """Kala coordinate text -> signed decimal degrees (S and W negative).
+
+    The one coordinate parser for chart files: CHTKReader.dms_to_decimal and
+    the AI_tools parse_dms_to_decimal helpers delegate here. Returns 0.0 for
+    empty or unparseable text (the historical contract of dms_to_decimal).
+    """
+    if not dms_str:
+        return 0.0
+    text = str(dms_str).strip()
+
+    match = _KALA_DMS_RE.match(text)
+    if match:
+        degrees = float(match.group(1))
+        direction = match.group(2).upper()
+        minutes = float(match.group(3)) if match.group(3) else 0.0
+        seconds = float(match.group(4)) if match.group(4) else 0
+    else:
+        match = _COLON_DMS_RE.match(text)
+        if not match:
+            return 0.0
+        degrees = float(match.group(1))
+        minutes = float(match.group(2))
+        seconds = float(match.group(3)) if match.group(3) else 0
+        direction = match.group(4).upper()
+
+    decimal = degrees + (minutes / 60) + (seconds / 3600)
+    if direction in ('S', 'W'):
+        decimal = -decimal
+    return decimal
+
+
 class CHTKReader:
     """Read CHTK files (Kala astrology format) and extract birth data."""
 
@@ -36,14 +85,9 @@ class CHTKReader:
         if not chtk_path.exists():
             raise FileNotFoundError(f"CHTK file not found: {chtk_path}")
 
-        # Read file lines - try UTF-16 first (for Kala exports), then UTF-8
-        try:
-            with open(chtk_path, 'r', encoding='utf-16') as f:
-                lines = [line.rstrip('\n') for line in f.readlines()]
-        except (UnicodeDecodeError, UnicodeError):
-            # Fall back to UTF-8 if UTF-16 fails
-            with open(chtk_path, 'r', encoding='utf-8') as f:
-                lines = [line.rstrip('\n') for line in f.readlines()]
+        # UTF-16 first (Kala exports), then UTF-8; CRLF files split on CRLF
+        # only, so a lone LF in the line-8 gender blob cannot shift fields.
+        lines = split_chtk_lines(read_chtk_text(chtk_path))
 
         # Parse CHTK format (standard: 28 lines, minimum: 14 for basic birth data)
         # See docs/CHTK_FORMAT_SPECIFICATION.md for full format
@@ -75,40 +119,8 @@ class CHTKReader:
         minute = parse_int_flexible(lines[5], 0)
         second = parse_int_flexible(lines[6], 0)
 
-        # Parse gender from Line 8
-        gender_raw = lines[7].strip() if len(lines) > 7 else ''
-        gender = 'Unknown'
-
-        # Check for gender codes directly
-        if gender_raw.lower() in ['m', '1']:
-            gender = 'Male'
-        elif gender_raw.lower() in ['f', '2']:
-            gender = 'Female'
-        elif gender_raw == '0':
-            # Kala's "not set". Already the result of falling through, but
-            # stated explicitly now that the writers target it (td-n0z9) —
-            # an unstated behaviour is one a future edit removes by accident.
-            gender = 'Unknown'
-        elif 'gender' in gender_raw.lower():
-            # Extract the number from gender line (before or after " >gender")
-            gender_num = ''
-            for char in gender_raw:
-                if char.isdigit():
-                    gender_num += char
-                elif gender_num and not char.isdigit() and char != ' ':
-                    break
-
-            if gender_num:
-                gender_num = gender_num[0]  # Take first digit
-                # 1 Male, 2 Female, 0 unset — the same three codes as the
-                # bare-value branch above. This line read 0 as Female and 2
-                # as Unknown, which is neither Kala's mapping nor its own
-                # module's.
-                gender = {'1': 'Male', '2': 'Female'}.get(gender_num, 'Unknown')
-            else:
-                # Check for female codes: 'f', 'F', '2'
-                if gender_raw.lower() in ['f', '2']:
-                    gender = 'Female'
+        # Line 8: m/1 Male, f/2 Female, 0 unset, letter + Kala blob (td-n0z9)
+        gender = kala_gender(lines[7].strip() if len(lines) > 7 else '')
 
         time_change_flag = parse_int_flexible(lines[13], 0)  # Line 14: DST flag (0=Standard, 1=DST, 2=War time)
 
@@ -149,10 +161,9 @@ class CHTKReader:
                 country = ''
         # else: city already contains the correct value from line 9
 
-        # Normalize timezone format to ±HH:MM:SS (some files have incomplete format like +7:00)
-        if timezone:
-            # Parse the timezone and ensure it's in ±HH:MM:SS format
-            timezone = self._normalize_timezone_format(timezone)
+        # Normalize to ±HH:MM:SS ('+7:00', '-5 30'); tz_ok False = not an offset
+        timezone_raw = timezone
+        timezone, tz_ok = normalize_chtk_timezone(timezone) if timezone else ('', False)
 
         # Parse coordinates from DMS format
         latitude = self.dms_to_decimal(latitude_str)
@@ -184,6 +195,8 @@ class CHTKReader:
             'country': country,
             'city': city,  # Changed from 'location' to 'city'
         }
+        if not tz_ok:  # only on failure; BirthDataManager warns (SPEC-TZ-001 8a)
+            result['timezone_parse_error'] = timezone_raw
 
         # Populate notes + optional embedded metadata from the CHTK notes section.
         # SPEC-IMPORT-002 Phase 3: when the notes begin with a [Varuna360 Metadata]
@@ -222,14 +235,8 @@ class CHTKReader:
             return ""
 
         try:
-            # Try UTF-16 first (Kala native format)
-            try:
-                with open(filepath, 'r', encoding='utf-16') as f:
-                    lines = f.read().splitlines()
-            except (UnicodeDecodeError, UnicodeError):
-                # Fall back to UTF-8
-                with open(filepath, 'r', encoding='utf-8') as f:
-                    lines = f.read().splitlines()
+            # Same decode + line split as read_chtk_file
+            lines = split_chtk_lines(read_chtk_text(filepath))
 
             # Find the ~end of notes~ marker
             end_marker_idx = None
@@ -315,117 +322,19 @@ class CHTKReader:
         return rodden, tags, freeform
 
     def _normalize_timezone_format(self, tz_str):
-        """
-        Normalize timezone format to ±HH:MM:SS
-        Handles incomplete formats like +7:00 or +07:00
-        Also strips comment markers like '>timezone' found in some CHTK files
-
-        ALSO handles malformed hybrid formats like "+Europe/Lisbon:00:00"
-        where an IANA timezone name got mixed into the offset field.
-        """
-        if not tz_str:
-            return '+00:00:00'
-
-        tz_str = str(tz_str).strip()
-
-        # Strip comment markers (e.g., ">timezone", ">flag") found in some CHTK files
-        if '>' in tz_str:
-            tz_str = tz_str.split('>')[0].strip()
-
-        # Handle hybrid format bug: "+Europe/Lisbon:00:00" or "-America/New_York:00:00"
-        # This happens when IANA timezone name gets mixed with offset format
-        if '/' in tz_str:
-            # Extract original sign before processing
-            original_sign = '+'
-            if tz_str.startswith('-'):
-                original_sign = '-'
-            elif tz_str.startswith('+'):
-                original_sign = '+'
-
-            # Find the IANA name and extract what comes after
-            # e.g., "+Europe/Lisbon:00:00" -> need to extract "00:00"
-            parts = tz_str.split('/')
-            if len(parts) > 1:
-                # Take the part after the IANA name: "Lisbon:00:00" or just "Lisbon"
-                last_part = parts[-1]
-                if ':' in last_part:
-                    # "Lisbon:00:00" -> split to get ["Lisbon", "00", "00"]
-                    colon_parts = last_part.split(':')
-                    # Find the first numeric part
-                    numeric_parts = []
-                    for p in colon_parts:
-                        try:
-                            numeric_parts.append(int(p))
-                        except ValueError:
-                            continue
-
-                    if len(numeric_parts) >= 2:
-                        # Got hours:minutes (maybe seconds)
-                        hours = numeric_parts[0]
-                        minutes = numeric_parts[1]
-                        seconds = numeric_parts[2] if len(numeric_parts) > 2 else 0
-                        return f"{original_sign}{abs(hours):02d}:{abs(minutes):02d}:{abs(seconds):02d}"
-
-                # Pure IANA name with no numeric offset (e.g. "Europe/Paris").
-                # Preserve it so BirthDataManager can resolve via ZoneInfo.
-                stripped = tz_str.lstrip('+-')
-                return stripped
-
-        # Extract sign
-        if tz_str.startswith('-'):
-            sign = '-'
-            tz_str = tz_str[1:]
-        elif tz_str.startswith('+'):
-            sign = '+'
-            tz_str = tz_str[1:]
-        else:
-            sign = '+'
-
-        # Split by colon
-        parts = tz_str.split(':')
-
-        # Get hours, minutes, seconds (float() handles "10.00" from LMT-era CHTK files)
-        try:
-            hours = int(float(parts[0].strip())) if len(parts) > 0 else 0
-            minutes = int(float(parts[1].strip())) if len(parts) > 1 else 0
-            seconds = int(float(parts[2].strip())) if len(parts) > 2 else 0
-        except (ValueError, IndexError):
-            return '+00:00:00'
-
-        # Return normalized format
-        return f"{sign}{abs(hours):02d}:{abs(minutes):02d}:{abs(seconds):02d}"
+        """Normalize to ±HH:MM:SS (core.chtk_text.normalize_chtk_timezone)."""
+        return normalize_chtk_timezone(tz_str)[0]
 
     def dms_to_decimal(self, dms_str):
         """
         Convert DMS format to decimal degrees.
-        Input: "48N49'00" or "002E08'54"
-        Output: 48.8167 or 2.1483
+        Input: "48N49'00", "002E08'54", "39n45", "084w12", "073:15:14 W"
+        Output: 48.8167, 2.1483, 39.75, -84.2, -73.2539
+
+        Hemisphere letters are case-insensitive (Kala short form is lower
+        case); see parse_kala_coordinate for the full notation table.
         """
-        if not dms_str:
-            return 0.0
-
-        dms_str = str(dms_str).strip()
-
-        # Parse DMS format: DDxMM'SS where x is N/S/E/W
-        pattern = r'(\d+)([NSEW])(\d+)[\'′]?(\d*)'
-        match = re.match(pattern, dms_str)
-
-        if not match:
-            return 0.0
-
-        degrees = float(match.group(1))
-        direction = match.group(2)
-        minutes = float(match.group(3))
-        seconds = float(match.group(4)) if match.group(4) else 0
-
-        # Calculate decimal
-        decimal = degrees + (minutes / 60) + (seconds / 3600)
-
-        # Apply direction (S and W are negative)
-        if direction in ['S', 'W']:
-            decimal = -decimal
-
-        return decimal
+        return parse_kala_coordinate(dms_str)
 
     def month_to_name(self, month):
         """Convert month number to name."""
@@ -773,7 +682,7 @@ class CHTKWriter:
             raise IOError(f"Cannot decode CHTK file: {chtk_path}")
 
         raw = raw.lstrip('﻿')
-        existing_lines = raw.replace('\r\n', '\n').replace('\r', '\n').split('\n')
+        existing_lines = split_chtk_lines(raw, keep_trailing=True)  # CRLF only
 
         # Map canonical birth_data keys to CHTK line format
         lat = birth_data.get('latitude', 0)

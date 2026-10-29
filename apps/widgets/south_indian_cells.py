@@ -5,12 +5,14 @@ from PySide6.QtWidgets import QGraphicsPathItem, QGraphicsTextItem, QGraphicsLin
 from ui.qt_theme import GOLD, get_theme_colors, desat_hex, scaled_tier_size
 from visualizations.wheel_constants import ELEMENT_COLORS, get_element_for_sign, element_text_color
 from core.aditya_mode import displayed_sign_name, get_planet_display_name
+from ui.sign_numbers import sign_label
 from apps.widgets.south_indian_geometry import *
 from apps.widgets.south_indian_items import SignCardItem, HoverZoneItem, ClickablePlanetItem
 from apps.widgets.south_indian_material import WoodBoardItem, WoodFaceItem, rounded
 from apps.widgets.south_indian_sign_glyph import accompaniment_item
 from apps.widgets.cot_index_item import CotPlaque
 from apps.widgets.south_indian_badge_layout import draw_sign_badge_layout
+from apps.widgets.chart_area_size import chart_area_size
 
 def draw_chrome(scene, snapshot, style, layout, signals, center_enabled, center_draw, cot_faces, dpr):
     """Chart-independent layers: frame → medallion → cards → badges →
@@ -95,7 +97,7 @@ def badge_icon(scene, style, signals, sign_index, rect):
 def badge_text(snapshot, style, sign_index, rect, icon_item, icon_w, icon_h, icon_x, icon_y):
     pad = CONTENT_PADDING
     colors = get_theme_colors()
-    name = displayed_sign_name(sign_index, snapshot.aditya_mode, snapshot.use_western_names, style.language)
+    name = sign_label('south_indian', sign_index, snapshot.aditya_mode, snapshot.use_western_names, style.language)
     sign_settings = style.display.get('sign_name', {})
     # F-B1/F-C4 (Release 5 font audit): scale the per-element Chart Display size
     # by the chart_labels area + display scale so resolution presets and the
@@ -106,7 +108,7 @@ def badge_text(snapshot, style, sign_index, rect, icon_item, icon_w, icon_h, ico
     # setting) so a hand-edited non-int font_size cannot raise inside the paint.
     base_size = scaled_tier_size(float(sign_settings.get('font_size', 24)), 'chart_labels')
     weight = QFont.Weight.Bold if sign_settings.get('font_weight', 'bold') == 'bold' else QFont.Weight.Normal
-    emphasise = snapshot.compass_mode and snapshot.location_cell == sign_index
+    emphasise = snapshot.frame_active and snapshot.marked_cell == sign_index
     if emphasise:
         base_size = int(round(base_size * 1.25))
     pill_left = rect.left() + pad
@@ -183,7 +185,7 @@ def draw_house_numbers(scene, snapshot, style):
         superseded): element text color (INV-7) instead of gold — readable
         on all four element gradients, including Air."""
     asc = snapshot.ascendant_sign
-    si_size = scaled_tier_size(style.house_number_font, 'chart_labels')
+    si_size = chart_area_size(style.house_number_font, 'house_numbers')
     font = QFont('Inter', si_size)
     fm = QFontMetricsF(font)
     pad = CONTENT_PADDING
@@ -205,13 +207,13 @@ def draw_cusps(scene, snapshot, style):
         the house numbers (T-8 revision, spec v0.6) — only for Campanus
         cusps the chart provides; skipped silently when unavailable."""
     per_sign = dict(snapshot.cusps)
-    font = QFont('Inter', scaled_tier_size(HOUSE_NUMBER_FONT_SIZE, 'chart_labels'))
-    fm = QFontMetricsF(font)
     pad = CONTENT_PADDING
     for sign, labels in per_sign.items():
         color = style.ink('soft', element_text_color(get_element_for_sign(sign)))
         color.setAlphaF(0.7)
         text = ' '.join(labels)
+        font = _cusp_font(text, sign, snapshot.ascendant_sign, style)
+        fm = QFontMetricsF(font)
         item = QGraphicsTextItem(text)
         item.setFont(font)
         item.setDefaultTextColor(color)
@@ -220,6 +222,16 @@ def draw_cusps(scene, snapshot, style):
         item.setZValue(5)
         item.setData(Qt.ItemDataRole.UserRole, TAG_CUSP)
         scene.addItem(item)
+
+def _cusp_font(text, sign, asc, style):
+    """Cusp font; shrunk only when it would run into the card's 'H n' (big areas)."""
+    size = chart_area_size(HOUSE_NUMBER_FONT_SIZE, 'cusp_degrees')
+    house = QFontMetricsF(QFont('Inter', chart_area_size(style.house_number_font, 'house_numbers')))
+    room = cell_rect(sign).width() - 2 * CONTENT_PADDING - house.horizontalAdvance(
+        f'H {house_number_for_sign(sign, asc)}') - 6   # 6 px gap after 'H n'
+    while size > 6 and QFontMetricsF(QFont('Inter', size)).horizontalAdvance(text) > room:
+        size -= 1
+    return QFont('Inter', size)
 
 def wood_face(scene, style, rect, tag, fill=None, opacity=0, pocket=False, radius=28):
     item = WoodFaceItem(rect, style.finish, radius, fill, opacity, pocket)

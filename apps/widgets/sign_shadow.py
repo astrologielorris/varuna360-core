@@ -1,14 +1,14 @@
 from PySide6.QtGui import QColor
 from apps.widgets.sign_shadow_effect import SignShadowEffect
 
-from managers.settings_manager import DEFAULT_CHART_DISPLAY, get_settings
+from apps.widgets.chart_display_snapshot import DEFAULT_CHART_DISPLAY, chart_display_section
 from visualizations.wheel_constants import ELEMENT_CYCLE
 
 LEGACY_AIR_SHADOW, AIR_SHADOW = "#9fff05", "#F0C75E"
 
 def _shadow_settings(settings=None):
     if not isinstance(settings, dict):
-        settings = get_settings().get_chart_display_section("element_shadows")
+        settings = chart_display_section("element_shadows")
     defaults = DEFAULT_CHART_DISPLAY["element_shadows"]
     return {**defaults, **settings} if isinstance(settings, dict) else dict(defaults)
 

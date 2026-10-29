@@ -2,9 +2,8 @@
 # Licensed under AGPL-3.0 — see LICENSE file for details.
 """One controller for a Vimshottari-family dasha side (SPEC-DSH-002, td-t761 w2-2).
 
-`VimshottariSideController` drives ONE dasha side (left = Vedanga, right =
-Vimshottari-in-vimshottari-mode). Two instances live on `DashaManager`
-(`self._left_ctl`, `self._right_ctl`). It replaces the two byte-identical
+`VimshottariSideController` drives ONE dasha side while it shows Vimshottari.
+Each `DashaSide` (SPEC-DSH-004) owns one instance as its `vimshottari` renderer. It replaces the two byte-identical
 renderers and their paired helpers with a single implementation; the pure logic
 lives in `managers/dasha/engine.py`, this class executes the Qt side.
 
@@ -13,16 +12,13 @@ Boundary rules the manifest fixes (sol rounds 1-3):
   (through `self.side`) and set WIDGET state (setChecked, list items, delegate
   rows, cycle-label text, setUpdatesEnabled) — but NEVER a `ChartGUI` attribute
   (`gui.<attr> = ...`); an AST test enforces that.
-- SEAM RULE: wherever a retained manager method called ANOTHER retained manager
-  method, this controller calls the SAME manager name (`_auto_build_parent_chain`,
-  `update_<side>_dasha`, `set_<side>_level`, `scroll_to_<side>_row`,
-  `_display_date_at_offset`, `_age_str`, `_update_dasha_title`,
-  `refresh_dasha_lord_highlights`, `_select_dasha_entry`) so every `patch.object`
-  spy, `MagicMock` and call-count assertion sees the same call sequence as before.
-- The right controller does NOT know about modes: the manager's `update_right_panel`
-  / `set_right_level` / `on_right_*` keep dispatching by mode and call the right
-  controller only in vimshottari mode, exactly as they called
-  `update_vimshottari_dasha` today.
+- SEAM RULE: wherever the controller re-enters the manager it calls the
+  manager's public side-parameterised name (`update_side`, `set_level`,
+  `scroll_to_row`, `_auto_build_parent_chain`, `_display_date_at_offset`,
+  `_age_str`, `_update_dasha_title`, `refresh_dasha_lord_highlights`,
+  `_select_dasha_entry`) so spies see one call sequence (SPEC-DSH-004 §3.5).
+- The controller is the `vimshottari` renderer of the mode registry
+  (SPEC-DSH-004): `DashaSide` calls it only while its side is in that mode.
 
 Render generation token (sol round 1-2/3): `update()` bumps `self._render_gen`
 first; `_pump(gen)` pumps the event loop mid-filter and raises `_StaleRender` if a
@@ -56,37 +52,65 @@ class SideWidgets(NamedTuple):
     cycle_label: object
 
 
-# Per-side widget/method NAME table — the ONLY place the two sides differ.
-_SIDE_NAMES = {
-    "left": {
-        "title": "vedanga",                 # _update_dasha_title / _auto_build panel arg
-        "title_cap": "Vedanga",             # error-message word
-        "scroll": "scroll_to_vedanga_row",
-        "update": "update_vedanga_dasha",
-        "set_level": "set_vedanga_level",
-    },
-    "right": {
-        "title": "vimshottari",
-        "title_cap": "Vimshottari",
-        "scroll": "scroll_to_vimshottari_row",
-        "update": "update_vimshottari_dasha",
-        "set_level": "set_vimshottari_level",
-    },
-}
-
-
 class VimshottariSideController:
     """Drives one Vimshottari-family dasha side. Holds the manager (for gui,
     params, chart, title, lord highlights) and the side name; reads/writes its
     SideState through `self.side`."""
 
     def __init__(self, manager, side_name):
-        if side_name not in _SIDE_NAMES:
+        if side_name not in ("left", "right"):
             raise ValueError(f"side_name must be 'left' or 'right', got {side_name!r}")
         self.manager = manager
         self.side_name = side_name
-        self._names = _SIDE_NAMES[side_name]
         self._render_gen = 0
+
+    def capture_options(self):
+        """get_dasha options of what this side lists: level, opened periods,
+        cycle shift and ayanamsa (dates follow the frozen settings)."""
+        st = self.manager.dasha_state.side(self.side_name)
+        return {"side": self.side_name, "dasha_ayanamsa_id": int(st.ayanamsa),
+                "year_length": self.manager.dasha_state.year_length,
+                "level": int(st.level),
+                "drill": [str(lord) for lord in st.parent_chain],
+                "cycle_offset": int(st.cycle_offset)}
+
+    # ----------------------------------------------------------------------- #
+    # Renderer protocol (SPEC-DSH-004 §3.2)                                    #
+    # ----------------------------------------------------------------------- #
+
+    def render(self):
+        self.update()
+
+    def before_shape(self):
+        """The Vimshottari title is dynamic: resolve it immediately before
+        set_shape so the shape row can leave title = KEEP."""
+        self.manager._update_dasha_title(self.side_name)
+
+    def enter(self, panel):
+        """After set_shape: restore the 120-year caption (ZR uses the same label
+        for its strip) and clear the Nisarga maturation channel."""
+        self.update_cycle_label()
+        if panel.delegate is not None:
+            panel.delegate.update_maturation_highlights(set())
+
+    def checked_level(self):
+        return self.side.level
+
+    def context_cycle_offset(self):
+        return self.side.cycle_offset
+
+    def on_drill(self, item):
+        self.on_clicked(item)
+
+    def nav_prev(self):
+        self.navigate(-1)
+
+    def nav_next(self):
+        self.navigate(1)
+
+    def on_title_clicked(self):
+        """Ayanamsa dialog for this side."""
+        self.manager.gui._change_dasha_ayanamsa(self.side_name)
 
     # ----------------------------------------------------------------------- #
     # State + widget access                                                    #
@@ -120,7 +144,7 @@ class VimshottariSideController:
         panel = self.manager.panel(self.side_name)
         if panel is None:
             raise AttributeError(
-                f"{self._names['title']}_level_buttons: dasha panel for side "
+                f"level_buttons: dasha panel for side "
                 f"{self.side_name!r} is not built")
         return SideWidgets(
             list_widget=panel.list_widget,
@@ -132,8 +156,8 @@ class VimshottariSideController:
     def invalidate(self):
         """Bump the render generation so a suspended render of this side aborts at
         its next `_pump` (sol r1-2). The manager funnels every non-Vimshottari
-        right-panel reshape (configure_right_panel, update_nisarga_dasha,
-        update_zr_dasha) and reset_for_chart through here."""
+        reshape or render of this side (DashaSide.invalidate) and reset_for_chart
+        through here."""
         self._render_gen += 1
 
     def _pump(self, gen):
@@ -168,78 +192,47 @@ class VimshottariSideController:
         self._render_gen += 1
         gen = self._render_gen
 
-        n = self._names
         gui = self.manager.gui
         w = self.widgets()
 
         # title -> clear -> chart guard (verbatim order, before the try).
-        # _update_dasha_title takes the PANEL word ("vedanga"/"vimshottari"), not
-        # the side name.
-        self.manager._update_dasha_title(n["title"])
+        self.manager._update_dasha_title(self.side_name)
         w.list_widget.clear()
+        panel = self.manager.panel(self.side_name)
+        panel.mark_rendered(None)
         if not gui.current_chart_data:
             return
 
         updates_disabled = False
         error = None
         try:
-            from core.vimshottari_dasha import (
-                calculate_dasha_from_birth_data, calculate_sub_dashas_for_period)
             from AI_tools.AI_main_function.dasha import get_dasha_params
+            from core.capabilities.dasha import compute_side
 
             params = get_dasha_params(
                 gui.current_chart_data, is_human_design=gui.is_human_design)
-            year, month, day = params["year"], params["month"], params["day"]
-            hour, minute, second = params["hour"], params["minute"], params["second"]
-            tz_offset = params["tz_offset"]
-            moon_jd_override = params["moon_jd_override"]
-            nak_mode = getattr(gui, "nakshatra_coords", "neither")
-
-            if not all([year, month, day]):
+            if not all([params["year"], params["month"], params["day"]]):
                 return
 
             side = self.side
 
-            # --- compute: the engine decides the step, the controller runs it --- #
-            step = engine.decide_compute(side.level, side.parent_chain, side.rows)
-            if step.kind == "full":
-                formatted = calculate_dasha_from_birth_data(
-                    year, month, day, hour, minute, second,
-                    dlevels=step.dlevels, ayanamsa=side.ayanamsa,
-                    tz_offset_hours=tz_offset, moon_jd_override=moon_jd_override,
-                    nak_mode=nak_mode,                    # td-2yqd: full path seeds by nakshatra_coords too
-                    year_length=self.manager.year_length)  # SPEC-DSH-003
-                used_focused_calc = False
-            elif step.kind == "sub":
-                formatted = calculate_sub_dashas_for_period(
-                    step.parent["jd"], step.parent["end_jd"], step.parent_lord,
-                    ayanamsa=side.ayanamsa, tz_offset_hours=tz_offset)
-                used_focused_calc = True
-            else:                                       # "probe" -> recompute
-                fresh = calculate_dasha_from_birth_data(
-                    year, month, day, hour, minute, second,
-                    dlevels=step.dlevels, ayanamsa=side.ayanamsa,
-                    tz_offset_hours=tz_offset, moon_jd_override=moon_jd_override,
-                    nak_mode=nak_mode, year_length=self.manager.year_length)
-                step2 = engine.decide_after_probe(fresh, step.parent_lord)
-                if step2.kind == "sub":
-                    formatted = calculate_sub_dashas_for_period(
-                        step2.parent["jd"], step2.parent["end_jd"], step2.parent_lord,
-                        ayanamsa=side.ayanamsa, tz_offset_hours=tz_offset)
-                    used_focused_calc = True
-                else:                                   # "reset": absolute fallback
-                    # Applied BEFORE the fallback compute (verbatim :1263-1275).
-                    side.parent_chain = []
-                    side.level = 1
-                    if w.level_buttons is not None:
-                        for idx, btn in enumerate(w.level_buttons):
-                            btn.setChecked(idx == 0)
-                    formatted = calculate_dasha_from_birth_data(
-                        year, month, day, hour, minute, second,
-                        dlevels=step2.dlevels, ayanamsa=side.ayanamsa,
-                        tz_offset_hours=tz_offset, moon_jd_override=moon_jd_override,
-                        nak_mode=nak_mode, year_length=self.manager.year_length)
-                    used_focused_calc = False
+            # --- compute: ONE function for both sides and get_dasha (SPEC-AIC-001
+            # INV-1); the engine decides the step inside it --- #
+            def _reset_to_level_1():
+                # The drilled parent vanished: absolute fallback to level 1,
+                # applied BEFORE the fallback compute (verbatim :1263-1275).
+                side.parent_chain = []
+                side.level = 1
+                if w.level_buttons is not None:
+                    for idx, btn in enumerate(w.level_buttons):
+                        btn.setChecked(idx == 0)
+
+            formatted, used_focused_calc, _reset = compute_side(
+                params, ayanamsa=side.ayanamsa,
+                year_length=self.manager.year_length,              # SPEC-DSH-003
+                nak_mode=getattr(gui, "nakshatra_coords", "neither"),  # td-2yqd
+                level=side.level, chain=side.parent_chain, cached_rows=side.rows,
+                on_reset=_reset_to_level_1)
 
             # side.rows cached BEFORE the walk (verbatim :1286).
             side.rows = formatted
@@ -293,15 +286,15 @@ class VimshottariSideController:
             if hl and side.cycle_offset == 0:
                 current_row = max(hl)
                 delay_ms = 400 if side.level >= 4 else 150
-                scroll_name = n["scroll"]
                 QTimer.singleShot(
                     delay_ms,
                     lambda g=gen, r=current_row:
-                        self._render_gen == g and getattr(self.manager, scroll_name)(r))
+                        self._render_gen == g
+                        and self.manager.scroll_to_row(self.side_name, r))
 
-            # karaka/lord highlights (stays in the manager, seam); takes the
-            # PANEL word ("vedanga"/"vimshottari"), not the side name.
-            self.manager.refresh_dasha_lord_highlights(n["title"])
+            # karaka/lord highlights (stays in the manager, seam).
+            self.manager.refresh_dasha_lord_highlights(self.side_name)
+            panel.mark_rendered(gui.state.active_chart)
         except _StaleRender:
             pass                                        # silent: newer render owns the list
         except Exception as e:                          # noqa: BLE001 (verbatim boundary)
@@ -310,7 +303,7 @@ class VimshottariSideController:
             if updates_disabled:
                 w.list_widget.setUpdatesEnabled(True)
         if error is not None:
-            print(f"Error updating {n['title_cap']} dasha: {error}")
+            print(f"Error updating {self.side_name} Vimshottari dasha: {error}")
 
     # ----------------------------------------------------------------------- #
     # Level / navigation / click (verbatim, through the manager seam)          #
@@ -320,29 +313,29 @@ class VimshottariSideController:
         """Set this side's display level (1-5): trim the chain, auto-build when it
         empties at level >= 2 (THROUGH manager._auto_build_parent_chain so the
         spy at test_remote_control.py:1633 still intercepts), set level + buttons,
-        then re-list THROUGH manager.update_<side>_dasha (seam)."""
+        then re-list THROUGH manager.update_side(side) (seam)."""
         side = self.side
         trimmed = engine.trim_chain_for_level(side.parent_chain, level)
         if not trimmed and level >= 2:
             trimmed = self.manager._auto_build_parent_chain(
-                side.rows, level, self._names["title"])
+                side.rows, level, self.side_name)
         side.parent_chain = trimmed
         side.level = level
         buttons = self.widgets().level_buttons
         if buttons is not None:
             for idx, btn in enumerate(buttons):
                 btn.setChecked(idx + 1 == level)
-        getattr(self.manager, self._names["update"])()
+        self.manager.update_side(self.side_name)
 
     def navigate(self, delta):
         """Move the 120-year cycle by `delta` and re-list (seam)."""
         self.manager.set_cycle_offset(self.side_name, self.side.cycle_offset + delta)
-        getattr(self.manager, self._names["update"])()
+        self.manager.update_side(self.side_name)
 
     def on_clicked(self, item):
         """Click to expand (drill) or, at max depth, toggle-select (verbatim
         :519-566). Expansion sets the chain and re-levels THROUGH
-        manager.set_<side>_level (seam)."""
+        manager.set_level(side, n) (seam)."""
         entry = item.data(Qt.ItemDataRole.UserRole)
         if not entry:
             return
@@ -350,7 +343,7 @@ class VimshottariSideController:
         new_chain, new_level, expand = engine.click_expansion(clicked_lord, self.side.level)
         if expand:
             self.side.parent_chain = new_chain
-            getattr(self.manager, self._names["set_level"])(new_level)
+            self.manager.set_level(self.side_name, new_level)
             buttons = self._required_widgets().level_buttons   # sol 6: raise if unbuilt
             for i, btn in enumerate(buttons):
                 btn.setChecked((i + 1) == new_level)
@@ -385,7 +378,13 @@ class VimshottariSideController:
     def scroll_to_row(self, row):
         """Scroll this side's list to `row`, centered (verbatim)."""
         lst = self.widgets().list_widget
-        if lst is not None and lst.count() > row:
+        try:
+            count = lst.count() if lst is not None else -1
+        except RuntimeError:
+            # a deferred scroll (QTimer.singleShot) fired after the panel's
+            # list was deleted (panel rebuilt or window closed): nothing to scroll
+            return
+        if count > row:
             item = lst.item(row)
             if item:
                 lst.scrollToItem(item, QListWidget.ScrollHint.PositionAtCenter)
@@ -408,21 +407,20 @@ class VimshottariSideController:
         chain = engine.auto_chain(rows, needed)
         if len(chain) == needed:
             return chain
-        ayanamsa = self.side.ayanamsa
         try:
-            from core.vimshottari_dasha import calculate_dasha_from_birth_data
             from AI_tools.AI_main_function.dasha import get_dasha_params
+            from core.capabilities.dasha import compute_side
             gui = self.manager.gui
             params = get_dasha_params(
                 gui.current_chart_data, is_human_design=gui.is_human_design)
-            fresh = calculate_dasha_from_birth_data(
-                params["year"], params["month"], params["day"],
-                params["hour"], params["minute"], params["second"],
-                dlevels=needed, ayanamsa=ayanamsa,
-                tz_offset_hours=params["tz_offset"],
-                moon_jd_override=params["moon_jd_override"],
+            # ONE dasha calculation for both sides and get_dasha (SPEC-AIC-001
+            # INV-1): level `needed` with no chain is the full list at that
+            # depth, as get_dasha's own auto-build (dasha_side_rows).
+            fresh, _focused, _reset = compute_side(
+                params, ayanamsa=self.side.ayanamsa,
+                year_length=self.manager.year_length,
                 nak_mode=getattr(gui, "nakshatra_coords", "neither"),
-                year_length=self.manager.year_length)
+                level=needed, chain=[])
             chain = engine.auto_chain(fresh, needed)
         except Exception:
             pass

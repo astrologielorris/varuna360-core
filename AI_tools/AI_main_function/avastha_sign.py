@@ -121,10 +121,8 @@ def _hora_key(hora):
 
 def _matrix_chart(active_chart, aditya_mode):
     """The panel's matrix chart: sidereal-rebuilt iff sidereal, else the active chart."""
-    if aditya_mode == "sidereal":
-        from core.chart_factory import rebuild_chart
-        return rebuild_chart(active_chart, mode="sidereal")
-    return active_chart
+    from core.avastha_frame import avastha_frame_chart
+    return avastha_frame_chart(active_chart, aditya_mode)
 
 
 def _membership(aditya, deg):
@@ -136,7 +134,7 @@ def _membership(aditya, deg):
 
 
 def sign_summary_for_chart(active_chart, aditya_mode, view, sign_name,
-                           ring=None, being_type=None):
+                           ring=None, being_type=None, duc_method=None):
     """One sign's avastha summary in the active view/frame (SPEC-AVA-003 §3.4).
 
     ``ring`` / ``being_type`` are the clicked sub-sector (the wheel's own
@@ -170,7 +168,7 @@ def sign_summary_for_chart(active_chart, aditya_mode, view, sign_name,
     balas = None
     if view != "pure":
         from core.bala_calculator import get_all_bala_data
-        balas = get_all_bala_data(active_chart)
+        balas = get_all_bala_data(active_chart, duc_method=duc_method)
 
     focus = None if ring_c is None else {"layer": ring_c, "key": type_c}
 
@@ -180,7 +178,7 @@ def sign_summary_for_chart(active_chart, aditya_mode, view, sign_name,
 
 
 def sign_summaries_all_views(active_chart, aditya_mode, sign_name,
-                             ring=None, being_type=None):
+                             ring=None, being_type=None, duc_method=None):
     """All FIVE view summaries for one sign, computed in one pass (§11.2, D-20).
 
     The popup opens with every view ready so switching Pure/Duc/Dig/Uccha/Chesta
@@ -216,7 +214,7 @@ def sign_summaries_all_views(active_chart, aditya_mode, sign_name,
     focus = None if ring_c is None else {"layer": ring_c, "key": type_c}
 
     from core.bala_calculator import get_all_bala_data
-    balas = get_all_bala_data(active_chart)  # once; the pure view ignores it
+    balas = get_all_bala_data(active_chart, duc_method=duc_method)  # once; the pure view ignores it
 
     result = {}
     for view in VIEW_POPUP_LABEL:  # insertion order == VIEW_ORDER
@@ -227,8 +225,9 @@ def sign_summaries_all_views(active_chart, aditya_mode, sign_name,
     return result
 
 
-def all_sign_summaries(active_chart, aditya_mode, view):
-    """All twelve sign summaries (Aditya order), matrix + balas computed ONCE."""
+def all_sign_summaries(active_chart, aditya_mode, view, duc_method=None):
+    """All twelve sign summaries (Aditya order), matrix + balas computed ONCE.
+    ``duc_method`` (here and above): the DUC Bala method (None: "equal")."""
     from AI_tools.AI_main_function.avastha import get_drishti_yuti_data, ASPECTING_PLANETS
     from AI_tools.AI_main_function.retinue import ADITYA_SIGN_ORDER
     from core.chart_helpers import get_planet_sign_index, get_planet_in_sign_longitude
@@ -244,7 +243,7 @@ def all_sign_summaries(active_chart, aditya_mode, view):
     balas = None
     if view != "pure":
         from core.bala_calculator import get_all_bala_data
-        balas = get_all_bala_data(active_chart)
+        balas = get_all_bala_data(active_chart, duc_method=duc_method)
 
     sign_idx = {p: get_planet_sign_index(mc, p, default=-1) for p in planet_order}
     deg = {p: get_planet_in_sign_longitude(mc, p) for p in planet_order}

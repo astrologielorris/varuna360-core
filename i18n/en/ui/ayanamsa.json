@@ -1,0 +1,5 @@
+{
+ "ayanamsa.custom.tooltip": "Your own ayanamsa: a value in degrees at a reference year, moved by precession from there. Set its name, value and year in Settings, Zodiac & Calculation.",
+ "ayanamsa.dialog.offsets_note_chart": "The degrees after each name are the exact amount subtracted from tropical longitudes for the sidereal signs on the chart's date ({date}). A negative amount is added. Dhruva GC mid-Mula and Vedanga Jyotisha measure their nakshatras in equatorial coordinates, which is not a single shift.",
+ "ayanamsa.dialog.offsets_note_today": "The degrees after each name are the exact amount subtracted from tropical longitudes for the sidereal signs on today ({date}). A negative amount is added. Dhruva GC mid-Mula and Vedanga Jyotisha measure their nakshatras in equatorial coordinates, which is not a single shift."
+}

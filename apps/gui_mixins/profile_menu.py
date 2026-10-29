@@ -16,6 +16,7 @@ from pathlib import Path
 from PySide6.QtCore import QProcess, QSize
 from PySide6.QtGui import QIcon
 from ui.qt_theme import get_theme_colors, scaled_px
+from ui.accent_ink import on_accent_ink  # SPEC-THM-001 §13
 
 
 class ProfileMenuMixin:
@@ -57,7 +58,7 @@ class ProfileMenuMixin:
             }}
             QPushButton:hover {{
                 background-color: {theme["primary"]};
-                color: {theme["primary_text"]};
+                color: {on_accent_ink(theme["primary"], theme["primary_text"])};
             }}
         """)
 

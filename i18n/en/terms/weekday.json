@@ -1,0 +1,30 @@
+{
+ "0": {
+  "abbr": "Mon",
+  "name": "Monday"
+ },
+ "1": {
+  "abbr": "Tue",
+  "name": "Tuesday"
+ },
+ "2": {
+  "abbr": "Wed",
+  "name": "Wednesday"
+ },
+ "3": {
+  "abbr": "Thu",
+  "name": "Thursday"
+ },
+ "4": {
+  "abbr": "Fri",
+  "name": "Friday"
+ },
+ "5": {
+  "abbr": "Sat",
+  "name": "Saturday"
+ },
+ "6": {
+  "abbr": "Sun",
+  "name": "Sunday"
+ }
+}

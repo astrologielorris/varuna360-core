@@ -29,7 +29,7 @@ see :func:`grids_converge`.
 The two timing families
 -----------------------
 
-The band draws either of the two families Ernst separates -- the 7-year
+The band draws either of the two timing families -- the 7-year
 **progression** and the Age-N **quadration** -- and it draws them with one set
 of painters. :data:`FAMILIES` is to a family what :data:`LEVELS` is to a level:
 the whole difference, stated as data and resolved once in :func:`band_model`
@@ -150,7 +150,7 @@ LEVELS = {
 # the two timing FAMILIES, as data (SPEC-COT-007 INV-7)
 # ------------------------------------------------------------------ #
 
-#
+#: The two timing families: a quadration cycle and a
 #: progression, which are two different things. They are peers, not rungs of
 #: one ladder.
 PROGRESSION = "progression"

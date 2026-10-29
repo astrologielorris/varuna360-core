@@ -19,7 +19,7 @@ Originally (SAFE PLAN-1) this fullscreened ONLY the main ``chart_stack``. The
 generalization (universal-fullscreen) keeps that single reparent/fit/restore
 engine and drives it from a host-supplied descriptor so F fullscreens the
 CORRECT surface on every tab: Chart (incl. the page-3 dual body/aspect view),
-Eclipse Reading, Compatibility, Transit, Solar Return, Nakshatra, Antikythera.
+Eclipse Reading, Compatibility, Transit, Solar Return, Nakshatra, and Pro pages.
 
 The descriptor (host-owned, plain dict — no shared class, so the manager keeps
 NO import of any host and stays in the Lite/Core allowlist)
@@ -40,7 +40,7 @@ Resolved fresh on every F via ``_resolve_target()``:
                                     #   reflect whatever is visible at call time
                                     #   (overlay engaged -> [left] only, etc.).
       "refit":   bool,              # True  -> reset_zoom() each view to fill.
-                                    #   False -> free-pan surface (Antikythera):
+                                    #   False -> free-pan surface (a Pro map page):
                                     #   its showEvent recenters unconditionally,
                                     #   so on ENTER we replay the saved transform
                                     #   + scrollbars instead of refitting.
@@ -57,6 +57,9 @@ Resolved fresh on every F via ``_resolve_target()``:
                                     #   (disable tajika button, snapshot splitter).
       "on_exit":  callable | None,  # optional host hook: restore splitter,
                                     #   re-enable controls.
+      "on_settled": callable | None,# optional host hook, called AFTER the exit's
+                                    #   deferred view-state restore (queued layout
+                                    #   changes apply here, SPEC-LAYOUT-001 D1).
       "floating_controls": [dict],  # optional. Each spec builds a checkable
                                     #   toggle in the floating capsule so a
                                     #   control that lived in a now-hidden top
@@ -67,6 +70,14 @@ Resolved fresh on every F via ``_resolve_target()``:
                                     #   refit_signals so the flip both refits and
                                     #   re-syncs the capsule (single source of
                                     #   truth; QSignalBlocker breaks the loop).
+      "companion": dict | None,     # optional (SPEC-DUAL-001 pair fullscreen).
+                                    #   {"widget", "layout", "spacing"?}: a SECOND
+                                    #   surface shown BESIDE the primary
+                                    #   ([primary | companion], equal stretch).
+                                    #   Validated before anything moves, swapped
+                                    #   for a _FullscreenSlot like the primary,
+                                    #   restored first on exit. Never combined
+                                    #   with "alternate".
       "alternate": dict | None,     # optional (Compatibility). A SECOND surface
                                     #   the Chart<->x slider flips to:
                                     #     {"widget", "owner"(QSplitter),
@@ -167,6 +178,7 @@ class _FullscreenContainer(QWidget):
         lay.setSpacing(0)
         self.body_layout = lay
         self._content_stack = None      # QStackedWidget iff an alternate exists
+        self._pair_row = None           # QHBoxLayout iff a companion exists
         self._capsule = None            # floating controls QFrame, or None
         self._capsule_buttons = []      # [(QToolButton, spec_dict), ...]
         self._slider = None             # Chart<->alternate QSlider, or None
@@ -177,7 +189,7 @@ class _FullscreenContainer(QWidget):
 
     # -- content mounting -------------------------------------------------
 
-    def mount(self, primary, alternate=None):
+    def mount(self, primary, alternate=None, companion=None, spacing=6):
         """Mount the primary chart surface (and optional alternate).
 
         With an alternate the two share a ``QStackedWidget`` so the slider flips
@@ -191,18 +203,30 @@ class _FullscreenContainer(QWidget):
             stack.addWidget(alternate)      # index 1 = alternate (kuta table)
             self.body_layout.addWidget(stack)
             self._content_stack = stack
+        elif companion is not None:
+            # SPEC-DUAL-001 §4.7: [primary | companion], equal stretch.
+            row = QHBoxLayout()
+            row.setContentsMargins(0, 0, 0, 0)
+            row.setSpacing(int(spacing))
+            row.addWidget(primary, 1)
+            row.addWidget(companion, 1)
+            self.body_layout.addLayout(row)
+            self._pair_row = row
         else:
             self.body_layout.addWidget(primary)
 
-    def take_content(self, primary, alternate=None):
-        """Detach primary/alternate from the container BEFORE teardown, so
-        deleting the container cannot delete a live reparented child (Rule 18)."""
-        for w in (primary, alternate):
+    def take_content(self, primary, alternate=None, companion=None):
+        """Detach primary/alternate/companion from the container BEFORE
+        teardown, so deleting the container cannot delete a live reparented
+        child (Rule 18)."""
+        for w in (primary, alternate, companion):
             if w is None:
                 continue
             try:
                 if self._content_stack is not None:
                     self._content_stack.removeWidget(w)
+                elif self._pair_row is not None:
+                    self._pair_row.removeWidget(w)
                 else:
                     self.body_layout.removeWidget(w)
             except RuntimeError:
@@ -669,6 +693,32 @@ class ViewFloatManager(QObject):
                                     else None),
                 }
 
+        # SPEC-DUAL-001 §4.7: validate the companion (chart B) BEFORE moving
+        # anything, like the alternate; an unresolvable slot falls back to the
+        # primary alone. Never combined with an alternate.
+        companion = desc.get("companion") or None
+        comp_state = None
+        if companion and not desc.get("alternate"):
+            c_widget = companion.get("widget")
+            c_layout = companion.get("layout")
+            c_index = c_layout.indexOf(c_widget) if (
+                c_widget is not None and c_layout is not None
+                and hasattr(c_layout, "indexOf")) else -1
+            if c_index < 0:
+                print("[FSV] companion widget not in its layout; "
+                      "fullscreen proceeds with the primary alone")
+            else:
+                comp_state = {
+                    "widget": c_widget,
+                    "layout": c_layout,
+                    "index": c_index,
+                    "stretch": (c_layout.stretch(c_index)
+                                if hasattr(c_layout, "stretch") else 0),
+                    "alignment": c_layout.itemAt(c_index).alignment(),
+                    "hidden": c_widget.isHidden(),
+                    "spacing": int(companion.get("spacing", 6)),
+                }
+
         # Save the layout slot and EVERY current view's zoom state BEFORE
         # anything moves. views() is re-evaluated here so overlay/mode state at
         # enter is captured correctly.
@@ -700,6 +750,7 @@ class ViewFloatManager(QObject):
             "extra_views": [],
             "extra_view_ids": set(),
             "alt_state": alt_state,
+            "comp_state": comp_state,
             # QStackedWidget.removeWidget() (the alternate path) HIDES the removed
             # page and reinsertion into a layout does not clear that; snapshot the
             # primary's own hidden intent so exit restores it (gpt-5.6-sol F1: the
@@ -733,7 +784,18 @@ class ViewFloatManager(QObject):
                 alt_widget.setParent(None)   # detach from the owner QSplitter
             except RuntimeError:
                 alt_widget = None
-        self._container.mount(widget, alt_widget)
+        comp_widget = None
+        if comp_state is not None:
+            comp_widget = comp_state["widget"]
+            c_slot = _FullscreenSlot(comp_widget)
+            comp_state["slot"] = c_slot
+            old_item = comp_state["layout"].replaceWidget(comp_widget, c_slot)
+            del old_item
+            c_slot.setVisible(not comp_state["hidden"])
+        self._container.mount(widget, alt_widget, comp_widget,
+                              spacing=comp_state["spacing"] if comp_state else 6)
+        if comp_widget is not None:
+            comp_widget.setVisible(True)
 
         # Fullscreen on the SAME monitor as the main window. setScreen() alone
         # does not reliably move a not-yet-shown frameless window on a
@@ -746,6 +808,8 @@ class ViewFloatManager(QObject):
         self._container.showFullScreen()
         self._container.raise_()
         self._container.activateWindow()
+        from apps.widgets.time_adjust_widget import refloat_time_adjust
+        refloat_time_adjust(gui, self._container)   # popup follows the chart
 
         # A container QShortcut for F beats a focused combo's type-ahead (probe).
         # setAutoRepeat(False): otherwise HOLDING F autorepeats enter->exit->enter
@@ -769,7 +833,7 @@ class ViewFloatManager(QObject):
             for view in live_views:
                 self._refit(view)
         else:
-            # Free-pan surface (Antikythera): its showEvent recenters
+            # Free-pan surface (a Pro map page): its showEvent recenters
             # unconditionally, so replay the saved transform + scrollbars on the
             # ENTER side too, or the pan is lost the moment the container shows.
             for vs in view_states:
@@ -858,6 +922,8 @@ class ViewFloatManager(QObject):
         self._saved = None
         container = self._container
         self._container = None
+        from apps.widgets.time_adjust_widget import refloat_time_adjust
+        refloat_time_adjust(self._gui)   # out of the container before teardown
 
         desc = saved.get("descriptor") or {}
         widget = desc.get("widget")
@@ -868,6 +934,8 @@ class ViewFloatManager(QObject):
         extra_views = saved.get("extra_views") or []
         alt_state = saved.get("alt_state")
         alt_widget = alt_state["widget"] if alt_state else None
+        comp_state = saved.get("comp_state")
+        comp_widget = comp_state["widget"] if comp_state else None
 
         self._disconnect_refit_signals()
 
@@ -886,7 +954,24 @@ class ViewFloatManager(QObject):
         try:
             # Detach BOTH primary and alternate from the container first (Rule
             # 18: deleting the container must not take a live child down).
-            container.take_content(widget, alt_widget)
+            container.take_content(widget, alt_widget, comp_widget)
+
+            # SPEC-DUAL-001 §4.7: the companion slot first, then the primary
+            # (the reverse of entry).
+            if comp_state is not None and comp_widget is not None:
+                c_layout = comp_state["layout"]
+                c_slot = comp_state.get("slot")
+                try:
+                    if c_slot is not None and c_layout.indexOf(c_slot) >= 0:
+                        old_item = c_layout.replaceWidget(c_slot, comp_widget)
+                        del old_item
+                    else:
+                        c_layout.insertWidget(comp_state["index"], comp_widget,
+                                              stretch=comp_state["stretch"],
+                                              alignment=comp_state["alignment"])
+                    comp_widget.setVisible(not comp_state["hidden"])
+                except RuntimeError:
+                    pass
 
             # Restore the alternate (kuta) to its owner splitter EXACTLY: same
             # index, collapsibility, explicit-hidden intent, and sizes. The
@@ -942,8 +1027,10 @@ class ViewFloatManager(QObject):
                 except RuntimeError:
                     pass
         finally:
-            slot = saved.get("slot")
-            if slot is not None:
+            for slot in (saved.get("slot"),
+                         (comp_state or {}).get("slot")):
+                if slot is None:
+                    continue
                 try:
                     slot.hide()
                     slot.deleteLater()
@@ -961,6 +1048,7 @@ class ViewFloatManager(QObject):
 
         # Host hook (restore splitter, re-enable controls) AFTER reinsert.
         self._call_hook(desc.get("on_exit"))
+        settled = desc.get("on_settled")
 
         # Re-affirm each ENTER view's transform + pan AFTER the re-show settles
         # (the showEvent above may have recentred), and refit BACK to the
@@ -980,7 +1068,10 @@ class ViewFloatManager(QObject):
                                 self._safe_reset_zoom(v)
                         except RuntimeError:
                             pass
+                self._call_hook(settled)
             QTimer.singleShot(0, _restore)
+        else:
+            QTimer.singleShot(0, lambda: self._call_hook(settled))
 
     # -- cycle view (F2 while fullscreen) ---------------------------------
 

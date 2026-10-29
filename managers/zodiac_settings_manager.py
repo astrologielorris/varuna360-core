@@ -9,6 +9,7 @@ import weakref
 
 from PySide6.QtCore import QObject, QTimer, Signal
 
+from core.settings_registry import default as _registry_default
 from managers.settings_manager import get_settings
 from state.events import SetHouseSystem, SetZodiacMode
 
@@ -17,18 +18,13 @@ class ZodiacSettingsManager(QObject):
     frame_changed = Signal(object)
     dasha_changed = Signal(object)
 
-    DEFAULTS = {
-        "zodiac.mode": "aditya",
-        "zodiac.ayanamsa_id": 27,
-        "zodiac.house_system": "campanus",
-        "zodiac.use_western_names": False,
-        "zodiac.sign_language": "en",
-        "zodiac.nakshatra_coords": "neither",
-        "dasha.zr.releaser": "spirit",
-        "dasha.zr.spirit_shift": True,
-        "dasha.zr.show_age": True,
-        "dasha.zr.anchor": "birth",
-    }
+    # SPEC-SET-003 W3e: the factory values come from the settings registry (the
+    # retyped literals said dasha.zr.show_age True against the registry's False).
+    DEFAULTS = {key: _registry_default(key) for key in (
+        "zodiac.mode", "zodiac.ayanamsa_id", "zodiac.house_system",
+        "zodiac.use_western_names", "zodiac.sign_language", "zodiac.nakshatra_coords",
+        "dasha.zr.releaser", "dasha.zr.spirit_shift", "dasha.zr.show_age",
+        "dasha.zr.anchor")}
     FRAME_KEYS = frozenset(("zodiac.mode", "zodiac.ayanamsa_id", "zodiac.house_system"))
 
     def __init__(self, gui):
@@ -54,11 +50,63 @@ class ZodiacSettingsManager(QObject):
             settings.on_changed(key, changed)
             self.destroyed.connect(
                 lambda *_args, key=key, cb=changed, s=settings: s.remove_on_changed(key, cb))
+        # The custom ayanamsa (id 255) is engine state: install it now and on every edit.
+        from core import custom_ayanamsa_settings as _custom
+        from libaditya.custom_ayanamsa import get_custom_ayanamsa
+        _custom.install_from(settings)
+        self._custom_drawn = get_custom_ayanamsa()   # the definition on screen
+        self._custom_timer = QTimer(self)            # one redraw for the three keys
+        self._custom_timer.setSingleShot(True)
+        self._custom_timer.timeout.connect(self._on_custom_ayanamsa_changed)
+
+        def custom_changed(_key, _value, ref=ref):
+            obj = ref()
+            if obj is not None:
+                obj._custom_timer.start(0)
+        for key in _custom.KEYS:
+            settings.on_changed(key, custom_changed)
+            self.destroyed.connect(
+                lambda *_args, key=key, cb=custom_changed, s=settings: s.remove_on_changed(key, cb))
+
+    def _on_custom_ayanamsa_changed(self):
+        """Redraw whatever uses id 255 once its definition really changed."""
+        from core import custom_ayanamsa_settings as _custom
+        from libaditya.custom_ayanamsa import CUSTOM_AYANAMSA_ID, get_custom_ayanamsa
+        _custom.install_from(get_settings())
+        if get_custom_ayanamsa() == self._custom_drawn:
+            return
+        self._custom_drawn = get_custom_ayanamsa()
+        g = self.gui
+        if (g.chart_sidereal_ayanamsa_id == CUSTOM_AYANAMSA_ID
+                and g.state.aditya_mode == "sidereal" and g.state.active_chart is not None):
+            g._recalculate_chart()
+        dm = getattr(g, "dasha_manager", None)
+        if dm is not None and CUSTOM_AYANAMSA_ID in (dm.ayanamsa("left"), dm.ayanamsa("right")):
+            dm.update_all_sides()
+        g._update_title()
+        self.frame_changed.emit(frozenset({"zodiac.ayanamsa_id"}))
 
     def start(self):
         self._ready = True
         if self._pending:
             self._timer.start(0)
+        # The tools calculate in the frame on screen (AIC plan 2): publish it.
+        # Owned here, the manager of the zodiac frame (Rule 4b: not on ChartGUI).
+        from managers.live_frame_manager import LiveFrameManager
+        self.live_frame = LiveFrameManager(self.gui)
+        self.live_frame.start()
+        # The Core app endpoint (SPEC-SET-003 §4.5b), in the live frame's folder
+        # so its discovery order follows the live frame's activation order.
+        from core.app_endpoint.server import AppEndpointServer
+        self.app_endpoint = AppEndpointServer.start_in(self.gui, self.live_frame.diagnostics()["folder"])
+        # Its AI ops, owned here, Pro and up (SPEC-EDN-002 P4): set_app_setting,
+        # the request service (§4.5b, W6b), and the desktop MCP server's two
+        # ops (SPEC-LMCP-001 §4.4). Lite answers neither.
+        from core.edition_features import ai_features
+        features = ai_features()
+        self.app_requests, self.mcp_link = (
+            features.install_endpoint_services(self.gui, self.app_endpoint)
+            if features is not None else (None, None))
 
     def apply_settings(self, keys=()):
         """Flush a Settings transaction. Unrelated locked runtime choices survive."""
@@ -154,21 +202,30 @@ class ZodiacSettingsManager(QObject):
             if g.state.active_chart is not None:
                 g._apply_current_varga()
             g._update_toggle_button_styles()
-            if g.dasha_manager.right_mode == "zr":
-                g.dasha_manager.update_right_panel()
+            # Sign labels in the sign dashas follow the names (both sides).
+            g.dasha_manager.on_view_input_changed("view.sign_names")
             g.sign_names_changed.emit(mode)
         if "zodiac.nakshatra_coords" in changed:
-            g.dasha_manager.update_vedanga_dasha()
-            g.dasha_manager.update_right_panel()
+            g.dasha_manager.update_all_sides()
             self.dasha_changed.emit(frozenset({"zodiac.nakshatra_coords"}))
-        if any(k.startswith("dasha.zr.") for k in changed) and g.dasha_manager.right_mode == "zr":
-            g.dasha_manager.reset_mode_entry("zr")
-            g.dasha_manager.update_right_panel()
+        # dasha.zr.* leaf owner (SPEC-DSH-004 §4.5): every side whose mode
+        # reads a changed leaf, once, from that mode's entry state.
+        zr_changed = {k for k in changed if k.startswith("dasha.zr.")}
+        if zr_changed:
+            g.dasha_manager.relist_sides_reading(zr_changed, reset=True)
         if changed:
             g._update_title()
             g.statusBar().showMessage("Zodiac settings applied")
+            self.publish_live()
 
     def notify_dasha(self, key):
         if key == "dasha.left.ayanamsa_id":
             self.gui._update_title()
         self.dasha_changed.emit(frozenset({key}))
+        self.publish_live()
+
+    def publish_live(self):
+        """Hand a frame change to the tools at once (writes only on change)."""
+        live = getattr(self, "live_frame", None)
+        if live is not None:
+            live.publish()

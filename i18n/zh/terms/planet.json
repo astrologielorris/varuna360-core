@@ -1,0 +1,62 @@
+{
+ "Jupiter": {
+  "name": "木星",
+  "ok": "6c7d7e03",
+  "src": "6c7d7e03"
+ },
+ "Ketu": {
+  "name": "计都",
+  "ok": "487130aa",
+  "src": "487130aa"
+ },
+ "Mars": {
+  "name": "火星",
+  "ok": "d52ac519",
+  "src": "d52ac519"
+ },
+ "Mercury": {
+  "name": "水星",
+  "ok": "2ce2c63b",
+  "src": "2ce2c63b"
+ },
+ "Moon": {
+  "name": "月亮",
+  "ok": "43dee8d6",
+  "src": "43dee8d6"
+ },
+ "Neptune": {
+  "name": "海王星",
+  "ok": "5872e1f2",
+  "src": "5872e1f2"
+ },
+ "Pluto": {
+  "name": "冥王星",
+  "ok": "4ba51aed",
+  "src": "4ba51aed"
+ },
+ "Rahu": {
+  "name": "罗睺",
+  "ok": "841edd3e",
+  "src": "841edd3e"
+ },
+ "Saturn": {
+  "name": "土星",
+  "ok": "9eee4f5c",
+  "src": "9eee4f5c"
+ },
+ "Sun": {
+  "name": "太阳",
+  "ok": "69f98817",
+  "src": "69f98817"
+ },
+ "Uranus": {
+  "name": "天王星",
+  "ok": "34045031",
+  "src": "34045031"
+ },
+ "Venus": {
+  "name": "金星",
+  "ok": "a4848158",
+  "src": "a4848158"
+ }
+}

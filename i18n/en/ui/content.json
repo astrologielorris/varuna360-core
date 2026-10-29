@@ -1,0 +1,12 @@
+{
+ "content.aditya.about": "About {sign}",
+ "content.aditya.afflicted": "Afflicted Expression",
+ "content.aditya.annotation_hora": "{planet} at {degree} {sign} falls directly in this Hora.",
+ "content.aditya.annotation_trimsamsa": "{planet} at {degree} {sign} falls directly in this Trimsamsa.",
+ "content.aditya.healthy": "Healthy Expression",
+ "content.aditya.hora_aditya": "Aditya (Sun side)",
+ "content.aditya.hora_naga": "Naga (Moon side)",
+ "content.aditya.not_available": "Description not available",
+ "content.aditya.sign": "Sign",
+ "content.aditya.theme": "Theme"
+}

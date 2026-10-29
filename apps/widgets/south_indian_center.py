@@ -19,7 +19,7 @@ class CenterRequest:
     western_names: bool
     language: str
     show_outer: bool
-    show_names: bool
+    planet_label: str
     finish: str
     sign_display: str
     sign_variations: dict
@@ -93,7 +93,7 @@ class CenterContentController:
             planet set or language. The chart identity and varga code are in
             here too (a dasha-locked switch keeps the jd; D-9 -> D-10 changes
             neither jd, mode nor labels, SPEC-VGC-001 INV-8), as is the icon family."""
-        return (enabled_names(), appearance_signature(), id(chart), varga_code, request.language, request.show_outer, request.show_names, request.finish, request.sign_display, get_ui_saturation(), request.aditya_mode, request.western_names)
+        return (enabled_names(), appearance_signature(), id(chart), varga_code, request.language, request.show_outer, request.planet_label, request.finish, request.sign_display, get_ui_saturation(), request.aditya_mode, request.western_names)
 
     def _invalidate_transit_cache(self):
         """Event-based invalidation for everything that CAN change invisibly.
@@ -154,7 +154,7 @@ class CenterContentController:
         mini.appearance.foreground_only = bool(style.wood)
         mini.sign_language = request.language
         mini.show_outer_planets = request.show_outer
-        mini.show_planet_names = request.show_names
+        mini.planet_label = request.planet_label
         mini.appearance._variation_settings = dict(request.sign_variations)
         mini.appearance._planet_variation_settings = dict(request.planet_variations)
         try:

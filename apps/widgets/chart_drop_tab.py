@@ -1,10 +1,14 @@
 """Chart tab widget that accepts drag-and-drop of chart files and folders.
 
-Dropping one or more .chtk or .toml files loads each via ChartManager.load_chart; the
-last one becomes the active chart (mirrors the menu's Open Chart behavior
-with multi-select). Dropping a folder reuses the Chart Memory Panel's
-load_folder_charts_from_path, the same core used by the "📁 Load Folder"
-button. No loader logic is duplicated here — this widget only dispatches.
+Dropping one or more .chtk or .toml files adds them all to chart memory and
+displays ONLY the last one: the others go in silently through the Chart Memory
+Panel's add_chart_files_silently (the Load Folder path), then the last file is
+loaded via ChartManager.load_chart. Displaying each dropped chart in turn only
+to replace it with the next was wasted work the user watched.
+
+Dropping a folder reuses the Chart Memory Panel's load_folder_charts_from_path,
+the same core used by the "📁 Load Folder" button. No loader logic is
+duplicated here — this widget only dispatches.
 
 SPEC-TRN-006: a chart file dropped on the TRANSIT button overlays it on the
 active chart instead of loading it as active. That is handled by TransitDropButton
@@ -73,12 +77,32 @@ class ChartDropTab(QWidget):
 
         loaded = 0
         failed = 0
-        for chtk_path in chtk_files:
+        *background, last = chtk_files or [None]
+        panel = getattr(self._gui, "memory_panel_instance", None)
+
+        def _show_last(_last_added_id=None):
+            nonlocal loaded, failed
             try:
-                self._gui.chart_manager.load_chart(chtk_path)
+                self._gui.chart_manager.load_chart(last)
                 loaded += 1
             except Exception:
                 failed += 1
+
+        if background and panel is not None and hasattr(panel, "add_chart_files_silently"):
+            # Add the others to memory without drawing them, then draw the last
+            # one while the loading overlay is still up.
+            bg_loaded, bg_failed = panel.add_chart_files_silently(
+                background, f"Loading {len(chtk_files)} charts...", then=_show_last)
+            loaded += bg_loaded
+            failed += bg_failed
+        elif last is not None:
+            for chtk_path in background:
+                try:
+                    self._gui.chart_manager.load_chart(chtk_path)
+                    loaded += 1
+                except Exception:
+                    failed += 1
+            _show_last()
 
         if chtk_files:
             if failed == 0:

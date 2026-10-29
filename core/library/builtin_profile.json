@@ -1,0 +1,28 @@
+{
+  "profile": {"name": "Built-in rules", "version": 1, "written_by": "builtin",
+              "written": "2026-10-29"},
+  "rules": [
+    {"label": "folder \"family\"", "when": {"folder_word": ["family", "famille"]},
+     "guess": {"who": "family", "known": 0}, "weight": 0.8},
+    {"label": "folder \"friends\"", "when": {"folder_word": ["friend", "friends", "ami", "amis", "amies"]},
+     "guess": {"who": "friend", "known": 0}, "weight": 0.7},
+    {"label": "folder \"teacher\"", "when": {"folder_word": ["teacher", "teachers", "astrologer", "astrologers"]},
+     "guess": {"who": "follow", "known": 2}, "weight": 0.6},
+    {"label": "folder \"Private\"", "when": {"folder_word": ["private", "personal", "prive"]},
+     "guess": {"who": "short_friend", "known": 0}, "weight": 0.4},
+    {"label": "folder \"Public\"", "when": {"folder_word": ["public", "celebrity", "celebrities", "famous", "celebrity_unsorted"]},
+     "guess": {"who": "not_personal", "known": 3}, "weight": 0.5},
+    {"label": "name says \"friend\"", "when": {"name_tag": ["friend", "ami", "amie"]},
+     "guess": {"who": "friend", "known": 0}, "weight": 0.6},
+    {"label": "name says \"online\"", "when": {"name_tag": ["tinder", "bumble", "hinge", "online"]},
+     "guess": {"who": "met_online", "known": 0}, "weight": 0.6},
+    {"label": "name says \"model\"", "when": {"name_tag": ["model"]},
+     "guess": {"who": "not_personal", "known": 1}, "weight": 0.5},
+    {"label": "made by an AI tool", "when": {"origin": ["ai-made"]},
+     "guess": {"who": "not_personal", "known": 3}, "weight": 0.45},
+    {"label": "no birth time", "when": {"no_birth_time": true},
+     "guess": {"who": "short_friend"}, "weight": 0.25},
+    {"label": "3 copies or more", "when": {"copies_at_least": 3},
+     "guess": {"favourite": 3}, "weight": 0.4}
+  ]
+}
